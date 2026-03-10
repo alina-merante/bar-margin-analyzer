@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: ./backend
+    container_name: bar-margin-analyzer-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/bar_margin_analyzer
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    container_name: bar-margin-analyzer-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bar_margin_analyzer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
