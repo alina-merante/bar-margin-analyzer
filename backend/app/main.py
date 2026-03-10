@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 
 from app.routers.analytics import router as analytics_router
+from app.routers.categories import router as categories_router
 from app.routers.health import router as health_router
 from app.routers.imports import router as imports_router
 
 app = FastAPI(title="Bar Margin Analyzer API")
 app.include_router(health_router)
 app.include_router(imports_router)
+app.include_router(categories_router)
 app.include_router(analytics_router)
 
 

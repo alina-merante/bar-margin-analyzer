@@ -9,36 +9,16 @@ Initial backend scaffold for the **Bar Margin Analyzer** project.
 - **ORM:** SQLAlchemy
 - **Migrations:** Alembic
 
-## Project Structure
-
-```text
-backend/
-  app/
-    main.py
-    database.py
-    models/
-    routers/
-    services/
-  alembic/
-    versions/
-  alembic.ini
-  requirements.txt
-docker-compose.yml
-README.md
-```
-
 ## Run with Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-API will be available at:
+API available at:
+
 - `http://localhost:8000`
 - `http://localhost:8000/health`
-- `POST http://localhost:8000/imports/pos-csv`
-- `GET http://localhost:8000/analytics/top-products?month=YYYY-MM`
-- `GET http://localhost:8000/analytics/bottom-products?month=YYYY-MM`
 - Swagger docs: `http://localhost:8000/docs`
 
 ## Database Migrations (Alembic)
@@ -46,16 +26,10 @@ API will be available at:
 Run alembic commands inside the API container:
 
 ```bash
-docker compose run --rm api alembic revision -m "init"
 docker compose run --rm api alembic upgrade head
 ```
 
-## Notes
-
-- `DATABASE_URL` is wired through Docker Compose.
-- Base SQLAlchemy session/engine configuration is in `backend/app/database.py`.
-
-## POS CSV Import
+## POS CSV Import (existing)
 
 Expected CSV headers:
 
@@ -65,14 +39,29 @@ date,product,qty,total
 2026-09-01,House Wine,5,30.00
 ```
 
-Import endpoint example:
+Endpoint example:
 
 ```bash
-curl -X POST "http://localhost:8000/imports/pos-csv" \
-  -F "file=@sales.csv"
+curl -X POST "http://localhost:8000/imports/pos-csv" -F "file=@sales.csv"
 ```
 
-Example response:
+## Bank Transactions Import
+
+Expected CSV headers:
+
+```csv
+date,description,amount
+2026-09-01,CARD PURCHASE - Metro Cash & Carry,-124.80
+2026-09-02,BANK TRANSFER FROM EVENT ORGANIZER,850.00
+```
+
+Endpoint example:
+
+```bash
+curl -X POST "http://localhost:8000/imports/bank-csv" -F "file=@bank.csv"
+```
+
+Response example:
 
 ```json
 {
@@ -80,18 +69,59 @@ Example response:
 }
 ```
 
+## Categories and Rules
+
+Create category:
+
+```bash
+curl -X POST "http://localhost:8000/categories" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Supplies"}'
+```
+
+List categories:
+
+```bash
+curl "http://localhost:8000/categories"
+```
+
+Create rule:
+
+```bash
+curl -X POST "http://localhost:8000/rules" \
+  -H "Content-Type: application/json" \
+  -d '{"keyword":"metro","category_id":1}'
+```
+
+List rules:
+
+```bash
+curl "http://localhost:8000/rules"
+```
+
+Rules are applied during `/imports/bank-csv` import using case-insensitive keyword matching against `description`.
+
 ## Analytics Endpoints
 
-Top products for a month:
+Expenses by category for month:
 
 ```bash
-curl "http://localhost:8000/analytics/top-products?month=2026-09"
+curl "http://localhost:8000/analytics/expenses-by-category?month=2026-09"
 ```
 
-Bottom products for a month:
+Expenses by supplier for month:
 
 ```bash
-curl "http://localhost:8000/analytics/bottom-products?month=2026-09"
+curl "http://localhost:8000/analytics/expenses-by-supplier?month=2026-09"
 ```
 
-Response shape includes ranking by quantity and ranking by revenue.
+Behavior notes:
+
+- `month` format is `YYYY-MM`.
+- Only negative bank transactions are treated as expenses.
+- Results are ordered by descending absolute expense amount.
+
+Legacy sales analytics remain available:
+
+- `GET /analytics/top-products?month=YYYY-MM`
+- `GET /analytics/bottom-products?month=YYYY-MM`
