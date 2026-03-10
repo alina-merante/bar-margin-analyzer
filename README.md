@@ -103,6 +103,24 @@ Rules are applied during `/imports/bank-csv` import using case-insensitive keywo
 
 ## Analytics Endpoints
 
+Monthly P&L summary:
+
+```bash
+curl "http://localhost:8000/analytics/pnl?month=2026-09"
+```
+
+Year-to-date P&L with monthly breakdown:
+
+```bash
+curl "http://localhost:8000/analytics/pnl/ytd?year=2026"
+```
+
+Combined monthly overview (defaults to current month when `month` is omitted):
+
+```bash
+curl "http://localhost:8000/analytics/overview?month=2026-09"
+```
+
 Expenses by category for month:
 
 ```bash
@@ -118,8 +136,11 @@ curl "http://localhost:8000/analytics/expenses-by-supplier?month=2026-09"
 Behavior notes:
 
 - `month` format is `YYYY-MM`.
-- Only negative bank transactions are treated as expenses.
-- Results are ordered by descending absolute expense amount.
+- `year` format is `YYYY`.
+- Revenue uses `SaleLine.total` only.
+- Expenses use absolute values of negative `Transaction.amount` only.
+- Positive bank transactions are ignored in expense calculations.
+- Delta fields in `/analytics/pnl` are calculated as current month minus previous month.
 
 Legacy sales analytics remain available:
 
