@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ExpenseCategory, Product, SaleLine, Transaction
+from app.models import ExpenseCategory, Invoice, InvoiceStatus, Payment, Product, SaleLine, Transaction
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -320,4 +320,41 @@ def expenses_by_supplier(
             }
             for row in rows
         ],
+    }
+
+@router.get("/invoices-summary")
+def invoices_summary(db: Session = Depends(get_db)) -> dict:
+    total_invoices = db.scalar(select(func.count(Invoice.id))) or 0
+    pending_invoices = db.scalar(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.pending)) or 0
+    paid_invoices = db.scalar(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.paid)) or 0
+
+    pending_amount = db.scalar(
+        select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.status == InvoiceStatus.pending)
+    ) or 0
+    paid_amount = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.status == InvoiceStatus.paid)) or 0
+
+    return {
+        "total_invoices": int(total_invoices),
+        "pending_invoices": int(pending_invoices),
+        "paid_invoices": int(paid_invoices),
+        "pending_amount": float(pending_amount),
+        "paid_amount": float(paid_amount),
+    }
+
+
+@router.get("/payments-by-method")
+def payments_by_method(
+    month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)
+) -> dict:
+    start, end = parse_month(month)
+    rows = db.execute(
+        select(Payment.method.label("method"), func.coalesce(func.sum(Payment.amount), 0).label("total_amount"))
+        .where(Payment.date >= start, Payment.date < end)
+        .group_by(Payment.method)
+        .order_by(Payment.method.asc())
+    ).all()
+
+    return {
+        "month": month,
+        "items": [{"method": row.method.value, "total_amount": float(row.total_amount)} for row in rows],
     }

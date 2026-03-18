@@ -101,6 +101,96 @@ curl "http://localhost:8000/rules"
 
 Rules are applied during `/imports/bank-csv` import using case-insensitive keyword matching against `description`.
 
+## Invoice and Payment Tracking
+
+### Sample payloads
+
+Invoice payload:
+
+```json
+{
+  "supplier": "Metro Cash & Carry",
+  "invoice_number": "INV-2026-091",
+  "issue_date": "2026-09-05",
+  "due_date": "2026-09-30",
+  "total": 450.00,
+  "vat": 75.00,
+  "status": "pending"
+}
+```
+
+Payment payload:
+
+```json
+{
+  "date": "2026-09-20",
+  "amount": 300.00,
+  "method": "bank_transfer",
+  "counterparty": "Metro Cash & Carry",
+  "reference": "PAY-2026-09-20-01"
+}
+```
+
+### Invoice endpoints
+
+Create invoice:
+
+```bash
+curl -X POST "http://localhost:8000/invoices" \
+  -H "Content-Type: application/json" \
+  -d '{"supplier":"Metro Cash & Carry","invoice_number":"INV-2026-091","issue_date":"2026-09-05","due_date":"2026-09-30","total":450.00,"vat":75.00,"status":"pending"}'
+```
+
+List invoices:
+
+```bash
+curl "http://localhost:8000/invoices"
+```
+
+Filter invoices by status, supplier, and month:
+
+```bash
+curl "http://localhost:8000/invoices?status=pending&supplier=metro&month=2026-09"
+```
+
+### Payment endpoints
+
+Create payment:
+
+```bash
+curl -X POST "http://localhost:8000/payments" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2026-09-20","amount":300.00,"method":"bank_transfer","counterparty":"Metro Cash & Carry","reference":"PAY-2026-09-20-01"}'
+```
+
+List payments:
+
+```bash
+curl "http://localhost:8000/payments"
+```
+
+Filter payments by method, counterparty, and month:
+
+```bash
+curl "http://localhost:8000/payments?method=card&counterparty=metro&month=2026-09"
+```
+
+### Link payment to invoice
+
+Manual link endpoint:
+
+```bash
+curl -X POST "http://localhost:8000/invoices/1/link-payment" \
+  -H "Content-Type: application/json" \
+  -d '{"payment_id":1}'
+```
+
+Behavior notes:
+
+- A payment can be linked to one or more invoices.
+- Link creation is manual in this POC.
+- Invoice status is set to `paid` when linked payment totals are greater than or equal to invoice total.
+
 ## Analytics Endpoints
 
 Monthly P&L summary:
@@ -131,6 +221,18 @@ Expenses by supplier for month:
 
 ```bash
 curl "http://localhost:8000/analytics/expenses-by-supplier?month=2026-09"
+```
+
+Invoice summary analytics:
+
+```bash
+curl "http://localhost:8000/analytics/invoices-summary"
+```
+
+Payments grouped by method for a month:
+
+```bash
+curl "http://localhost:8000/analytics/payments-by-method?month=2026-09"
 ```
 
 Behavior notes:
