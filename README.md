@@ -235,6 +235,12 @@ Payments grouped by method for a month:
 curl "http://localhost:8000/analytics/payments-by-method?month=2026-09"
 ```
 
+Automated financial insights for a month:
+
+```bash
+curl "http://localhost:8000/analytics/insights?month=2026-09"
+```
+
 Behavior notes:
 
 - `month` format is `YYYY-MM`.
@@ -243,6 +249,9 @@ Behavior notes:
 - Expenses use absolute values of negative `Transaction.amount` only.
 - Positive bank transactions are ignored in expense calculations.
 - Delta fields in `/analytics/pnl` are calculated as current month minus previous month.
+- `/analytics/insights` compares current month to previous month and returns:
+  - `metrics`: revenue, expenses, profit, and percentage changes (rounded to 2 decimals).
+  - `insights`: text insights for significant changes in revenue/expenses/profit (>5%), top expense category change (>10%), and top supplier expense share.
 
 Legacy sales analytics remain available:
 
