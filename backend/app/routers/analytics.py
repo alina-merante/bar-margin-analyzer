@@ -67,6 +67,71 @@ def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]
     }
 
 
+def round_money(value: Decimal) -> float:
+    return round(float(value), 2)
+
+
+def round_pct(value: Decimal) -> float:
+    return round(float(value), 2)
+
+
+def calculate_change_pct(current: Decimal, previous: Decimal) -> Decimal:
+    if previous == 0:
+        if current == 0:
+            return Decimal("0")
+        return Decimal("100") if current > 0 else Decimal("-100")
+    return ((current - previous) / abs(previous)) * Decimal("100")
+
+
+def ratio_pct(part: Decimal, whole: Decimal) -> Decimal:
+    if whole == 0:
+        return Decimal("0")
+    return (part / whole) * Decimal("100")
+
+
+def top_expense_category(db: Session, start: dt.date, end: dt.date):
+    return db.execute(
+        select(
+            ExpenseCategory.name.label("category"),
+            func.coalesce(func.sum(func.abs(Transaction.amount)), 0).label("expenses"),
+        )
+        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
+        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
+        .group_by(ExpenseCategory.name)
+        .order_by(func.sum(func.abs(Transaction.amount)).desc())
+        .limit(1)
+    ).first()
+
+
+def category_expense_sum(db: Session, start: dt.date, end: dt.date, category_name: str | None) -> Decimal:
+    filters = [Transaction.date >= start, Transaction.date < end, Transaction.amount < 0]
+    if category_name is None:
+        filters.append(ExpenseCategory.name.is_(None))
+    else:
+        filters.append(ExpenseCategory.name == category_name)
+
+    value = db.execute(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0))
+        .select_from(Transaction)
+        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
+        .where(*filters)
+    )
+    return Decimal(value.scalar_one())
+
+
+def top_supplier(db: Session, start: dt.date, end: dt.date):
+    return db.execute(
+        select(
+            Transaction.counterparty.label("supplier"),
+            func.coalesce(func.sum(func.abs(Transaction.amount)), 0).label("expenses"),
+        )
+        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
+        .group_by(Transaction.counterparty)
+        .order_by(func.sum(func.abs(Transaction.amount)).desc())
+        .limit(1)
+    ).first()
+
+
 def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
     start, end = parse_month(month)
 
@@ -151,6 +216,63 @@ def pnl(month: str = Query(..., description="Month in YYYY-MM format"), db: Sess
         "revenue_delta": float(current["revenue"] - previous["revenue"]),
         "expenses_delta": float(current["expenses"] - previous["expenses"]),
         "profit_delta": float(current["profit"] - previous["profit"]),
+    }
+
+
+@router.get("/insights")
+def insights(month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)) -> dict:
+    start, end = parse_month(month)
+    prev_start, prev_end = previous_month(start)
+
+    current = monthly_pnl(db, start, end)
+    previous = monthly_pnl(db, prev_start, prev_end)
+
+    revenue_change = calculate_change_pct(current["revenue"], previous["revenue"])
+    expenses_change = calculate_change_pct(current["expenses"], previous["expenses"])
+    profit_change = calculate_change_pct(current["profit"], previous["profit"])
+
+    generated_insights: list[str] = []
+    metric_insights = [
+        ("Revenue", revenue_change),
+        ("Expenses", expenses_change),
+        ("Profit", profit_change),
+    ]
+    for label, change in metric_insights:
+        if abs(change) > Decimal("5"):
+            direction = "increased" if change > 0 else "decreased"
+            generated_insights.append(f"{label} {direction} by {round_pct(change)}% vs previous month.")
+
+    top_category = top_expense_category(db, start, end)
+    if top_category and top_category.expenses and Decimal(top_category.expenses) > 0:
+        current_category_expenses = Decimal(top_category.expenses)
+        previous_category_expenses = category_expense_sum(db, prev_start, prev_end, top_category.category)
+        category_change = calculate_change_pct(current_category_expenses, previous_category_expenses)
+        if abs(category_change) > Decimal("10"):
+            category_name = top_category.category or "Uncategorized"
+            direction = "increased" if category_change > 0 else "decreased"
+            generated_insights.append(
+                f"Top expense category '{category_name}' {direction} by {round_pct(category_change)}% vs previous month."
+            )
+
+    top_supplier_row = top_supplier(db, start, end)
+    if top_supplier_row and top_supplier_row.expenses and current["expenses"] > 0:
+        supplier_expense = Decimal(top_supplier_row.expenses)
+        supplier_share = ratio_pct(supplier_expense, current["expenses"])
+        generated_insights.append(
+            f"Top supplier '{top_supplier_row.supplier}' represents {round_pct(supplier_share)}% of total expenses."
+        )
+
+    return {
+        "month": month,
+        "insights": generated_insights,
+        "metrics": {
+            "revenue": round_money(current["revenue"]),
+            "expenses": round_money(current["expenses"]),
+            "profit": round_money(current["profit"]),
+            "revenue_change_pct": round_pct(revenue_change),
+            "expenses_change_pct": round_pct(expenses_change),
+            "profit_change_pct": round_pct(profit_change),
+        },
     }
 
 
