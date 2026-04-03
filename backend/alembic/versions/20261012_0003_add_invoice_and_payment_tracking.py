@@ -17,14 +17,10 @@ down_revision: Union[str, None] = "20261011_0002"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
-invoice_status = sa.Enum("pending", "paid", name="invoice_status")
-payment_method = sa.Enum("bank_transfer", "check", "cash", "card", name="payment_method")
-
+invoice_status = sa.Enum("pending", "paid", name="invoice_status", native_enum=False)
+payment_method = sa.Enum("bank_transfer", "check", "cash", "card", name="payment_method", native_enum=False)
 
 def upgrade() -> None:
-    invoice_status.create(op.get_bind(), checkfirst=True)
-    payment_method.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "invoices",
@@ -95,5 +91,3 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_invoices_id"), table_name="invoices")
     op.drop_table("invoices")
 
-    payment_method.drop(op.get_bind(), checkfirst=True)
-    invoice_status.drop(op.get_bind(), checkfirst=True)
