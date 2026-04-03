@@ -1,51 +1,53 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
+function formatEuro(v) {
+  return `${Number(v).toFixed(2)} €`;
+}
+
 function App() {
   const [data, setData] = useState(null);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch(`/api/analytics/overview?month=2026-10`)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        return res.json();
-      })
-      .then(setData)
-      .catch((err) => {
-        console.error(err);
-        setError(err.message);
-      });
+      .then((r) => r.json())
+      .then(setData);
   }, []);
 
-  if (error) return <p>Errore: {error}</p>;
-  if (!data) return <p>Loading...</p>;
+  if (!data) return <p style={{ padding: 20 }}>Caricamento...</p>;
+
+  const profitto = data.pnl_summary.profit;
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Bar Margin Analyzer Dashboard</h1>
+    <div style={{ padding: 30 }}>
+      <h1>Bar Margin Analyzer</h1>
 
-      <h2>Profit & Loss</h2>
-      <p>Revenue: {data.pnl_summary.revenue}</p>
-      <p>Expenses: {data.pnl_summary.expenses}</p>
-      <p>Profit: {data.pnl_summary.profit}</p>
+      <h2>📊 Panoramica</h2>
+      <div style={{ display: "flex", gap: 20 }}>
+        <div>💰 Ricavi: {formatEuro(data.pnl_summary.revenue)}</div>
+        <div>💸 Costi: {formatEuro(data.pnl_summary.expenses)}</div>
+        <div>
+          📈 Profitto:{" "}
+          <span style={{ color: profitto >= 0 ? "green" : "red" }}>
+            {formatEuro(profitto)}
+          </span>
+        </div>
+      </div>
 
-      <h2>Top Products</h2>
+      <h2>☕ Prodotti più venduti</h2>
       <ul>
-        {data.top_products_by_quantity.map((p, i) => (
-          <li key={i}>
-            {p.product} - {p.quantity} sold
+        {data.top_products_by_quantity.map((p) => (
+          <li key={p.product}>
+            {p.product} — {p.quantity} unità ({formatEuro(p.revenue)})
           </li>
         ))}
       </ul>
 
-      <h2>Top Expenses</h2>
+      <h2>📦 Spese per categoria</h2>
       <ul>
-        {data.top_expense_categories.map((c, i) => (
-          <li key={i}>
-            {c.category} - {c.expenses}
+        {data.top_expense_categories.map((c) => (
+          <li key={c.category}>
+            {c.category} — {formatEuro(c.expenses)}
           </li>
         ))}
       </ul>
