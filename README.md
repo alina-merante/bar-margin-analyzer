@@ -199,6 +199,12 @@ Monthly P&L summary:
 curl "http://localhost:8000/analytics/pnl?month=2026-09"
 ```
 
+Monthly P&L trend for the last N months (including current month):
+
+```bash
+curl "http://localhost:8000/analytics/pnl/trend?months=6"
+```
+
 Year-to-date P&L with monthly breakdown:
 
 ```bash

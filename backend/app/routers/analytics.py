@@ -41,6 +41,12 @@ def previous_month(month_start: dt.date) -> tuple[dt.date, dt.date]:
     return prev_start, prev_end
 
 
+def previous_month_start(month_start: dt.date) -> dt.date:
+    if month_start.month == 1:
+        return month_start.replace(year=month_start.year - 1, month=12)
+    return month_start.replace(month=month_start.month - 1)
+
+
 def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
     revenue = db.execute(select(func.coalesce(func.sum(SaleLine.total), 0)).where(SaleLine.date >= start, SaleLine.date < end))
     return Decimal(revenue.scalar_one())
@@ -217,6 +223,37 @@ def pnl(month: str = Query(..., description="Month in YYYY-MM format"), db: Sess
         "expenses_delta": float(current["expenses"] - previous["expenses"]),
         "profit_delta": float(current["profit"] - previous["profit"]),
     }
+
+
+@router.get("/pnl/trend")
+def pnl_trend(
+    months: int = Query(default=6, ge=1, description="Number of months to include, including current month"),
+    db: Session = Depends(get_db),
+) -> list[dict[str, float | str]]:
+    current_month_start = dt.date.today().replace(day=1)
+    month_starts: list[dt.date] = [current_month_start]
+    for _ in range(1, months):
+        month_starts.append(previous_month_start(month_starts[-1]))
+    month_starts.reverse()
+
+    trend: list[dict[str, float | str]] = []
+    for month_start in month_starts:
+        if month_start.month == 12:
+            month_end = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            month_end = month_start.replace(month=month_start.month + 1)
+
+        values = monthly_pnl(db, month_start, month_end)
+        trend.append(
+            {
+                "month": month_start.strftime("%Y-%m"),
+                "revenue": float(values["revenue"]),
+                "expenses": float(values["expenses"]),
+                "profit": float(values["profit"]),
+            }
+        )
+
+    return trend
 
 
 @router.get("/insights")

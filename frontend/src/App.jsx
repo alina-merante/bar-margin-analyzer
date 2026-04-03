@@ -1,3 +1,4 @@
+cat > src/App.jsx <<'EOF'
 import { useEffect, useState } from "react";
 import "./App.css";
 import {
@@ -177,12 +178,12 @@ function App() {
         <section className="griglia-metriche">
           <CardMetrica
             titolo="Ricavi del mese"
-            valore={formatEuro(overview.pnl_summary.revenue)}
+            valore={formatEuro(overview?.pnl_summary?.revenue)}
             variante="ricavi"
           />
           <CardMetrica
             titolo="Costi del mese"
-            valore={formatEuro(overview.pnl_summary.expenses)}
+            valore={formatEuro(overview?.pnl_summary?.expenses)}
             variante="costi"
           />
           <CardMetrica
@@ -198,7 +199,10 @@ function App() {
         </section>
 
         <section className="griglia-principale grande">
-          <CardSezione titolo="Andamento ricavi, costi e profitto" extra={<span className="badge neutro">Ultimi 6 mesi</span>}>
+          <CardSezione
+            titolo="Andamento ricavi, costi e profitto"
+            extra={<span className="badge neutro">Ultimi 6 mesi</span>}
+          >
             <div className="chart-wrapper">
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={trend}>
@@ -217,7 +221,7 @@ function App() {
 
           <CardSezione titolo="Prodotti più venduti">
             <ul className="lista-dati">
-              {overview.top_products_by_quantity.map((item) => (
+              {overview?.top_products_by_quantity?.map((item) => (
                 <li key={item.product}>
                   <div>
                     <strong>{item.product}</strong>
@@ -233,7 +237,7 @@ function App() {
         <section className="griglia-principale">
           <CardSezione titolo="Fornitori principali">
             <ul className="lista-dati">
-              {overview.top_suppliers.map((item) => (
+              {overview?.top_suppliers?.map((item) => (
                 <li key={item.supplier}>
                   <div>
                     <strong>{item.supplier}</strong>
@@ -261,7 +265,7 @@ function App() {
         <section className="griglia-principale">
           <CardSezione titolo="Categorie di spesa principali">
             <ul className="lista-dati">
-              {overview.top_expense_categories.map((item) => (
+              {overview?.top_expense_categories?.map((item) => (
                 <li key={item.category}>
                   <div>
                     <strong>{item.category}</strong>
@@ -310,3 +314,4 @@ function App() {
 }
 
 export default App;
+EOF
