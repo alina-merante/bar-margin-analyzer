@@ -1,317 +1,386 @@
-cat > src/App.jsx <<'EOF'
-import { useEffect, useState } from "react";
 import "./App.css";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
 
-function formatEuro(v) {
-  if (v === null || v === undefined) return "-";
-  return `${Number(v).toFixed(2)} €`;
-}
-
-function CardMetrica({ titolo, valore, variante = "neutra" }) {
+export default function App() {
   return (
-    <div className={`card-metrica ${variante}`}>
-      <div className="card-metrica-titolo">{titolo}</div>
-      <div className="card-metrica-valore">{valore}</div>
-    </div>
-  );
-}
-
-function CardSezione({ titolo, children, extra }) {
-  return (
-    <section className="card-sezione">
-      <div className="card-sezione-header">
-        <h3>{titolo}</h3>
-        {extra}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function BadgeStato({ stato }) {
-  const paid = stato === "paid";
-  return (
-    <span className={`badge ${paid ? "verde" : "giallo"}`}>
-      {paid ? "Pagata" : "Da pagare"}
-    </span>
-  );
-}
-
-function TooltipGrafico({ active, payload, label }) {
-  if (!active || !payload || !payload.length) return null;
-
-  return (
-    <div className="tooltip-grafico">
-      <strong>{label}</strong>
-      <div>Ricavi: {formatEuro(payload[0]?.value)}</div>
-      <div>Costi: {formatEuro(payload[1]?.value)}</div>
-      <div>Profitto: {formatEuro(payload[2]?.value)}</div>
-    </div>
-  );
-}
-
-function App() {
-  const [mese, setMese] = useState("2026-10");
-  const [overview, setOverview] = useState(null);
-  const [insights, setInsights] = useState(null);
-  const [fatture, setFatture] = useState([]);
-  const [trend, setTrend] = useState([]);
-  const [errore, setErrore] = useState("");
-  const [caricamento, setCaricamento] = useState(true);
-
-  useEffect(() => {
-    async function carica() {
-      try {
-        setCaricamento(true);
-        setErrore("");
-
-        const [overviewRes, insightsRes, fattureRes, trendRes] = await Promise.all([
-          fetch(`/api/analytics/overview?month=${mese}`),
-          fetch(`/api/analytics/insights?month=${mese}`),
-          fetch(`/api/invoices`),
-          fetch(`/api/analytics/pnl/trend?months=6`),
-        ]);
-
-        if (!overviewRes.ok) throw new Error(`Overview HTTP ${overviewRes.status}`);
-        if (!insightsRes.ok) throw new Error(`Insights HTTP ${insightsRes.status}`);
-        if (!fattureRes.ok) throw new Error(`Fatture HTTP ${fattureRes.status}`);
-        if (!trendRes.ok) throw new Error(`Trend HTTP ${trendRes.status}`);
-
-        const overviewData = await overviewRes.json();
-        const insightsData = await insightsRes.json();
-        const fattureData = await fattureRes.json();
-        const trendData = await trendRes.json();
-
-        setOverview(overviewData);
-        setInsights(insightsData);
-        setFatture(fattureData);
-        setTrend(trendData);
-      } catch (e) {
-        console.error(e);
-        setErrore("Impossibile caricare i dati della dashboard.");
-      } finally {
-        setCaricamento(false);
-      }
-    }
-
-    carica();
-  }, [mese]);
-
-  if (caricamento) {
-    return <div className="stato-pagina">Caricamento dashboard...</div>;
-  }
-
-  if (errore) {
-    return <div className="stato-pagina errore">{errore}</div>;
-  }
-
-  const profitto = overview?.pnl_summary?.profit ?? 0;
-  const profittoVariante = profitto >= 0 ? "positivo" : "negativo";
-
-  const fattureDaPagare = fatture.filter((f) => f.status !== "paid");
-  const importoDaPagare = fattureDaPagare.reduce(
-    (acc, item) => acc + Number(item.total || 0),
-    0
-  );
-
-  return (
-    <div className="layout">
+    <div className="dashboard-shell">
       <aside className="sidebar">
-        <div>
-          <div className="brand">Bar Margin</div>
-          <h1>Dashboard</h1>
-          <p className="sidebar-sottotitolo">
-            Analisi economica semplice e chiara
-          </p>
+        <div className="sidebar-logo">
+          <div className="logo-icon">☕</div>
+          <div className="logo-text">BarManager</div>
+          <div className="logo-sub">Gestione margini</div>
         </div>
 
-        <nav className="menu">
-          <a className="menu-item attivo">Panoramica</a>
-          <a className="menu-item">Prodotti</a>
-          <a className="menu-item">Fornitori</a>
-          <a className="menu-item">Fatture</a>
-          <a className="menu-item">Insight</a>
-          <a className="menu-item">Report</a>
+        <nav className="sidebar-nav">
+          <div className="nav-label">Principale</div>
+          <a className="nav-item active" href="#">
+            <span className="nav-icon">📊</span>
+            Dashboard
+          </a>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">🧾</span>
+            Fatture
+            <span className="nav-badge">3</span>
+          </a>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">📦</span>
+            Fornitori
+          </a>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">🥐</span>
+            Prodotti
+          </a>
+
+          <div className="nav-label">Documenti</div>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">⬆️</span>
+            Carica file
+          </a>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">📁</span>
+            Archivio
+          </a>
+
+          <div className="nav-label">Analisi</div>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">📈</span>
+            Report mese
+          </a>
+          <a className="nav-item" href="#">
+            <span className="nav-icon">⚙️</span>
+            Impostazioni
+          </a>
         </nav>
 
-        <div className="sidebar-box">
-          <label>Seleziona mese</label>
-          <input
-            type="month"
-            value={mese}
-            onChange={(e) => setMese(e.target.value)}
-          />
-        </div>
-
-        <div className="sidebar-info">
-          <p>Ultimo aggiornamento</p>
-          <strong>{mese}</strong>
+        <div className="sidebar-bottom">
+          <div className="month-selector">
+            <span className="month-label">◀ Marzo 2025</span>
+            <span className="month-arrow">▼</span>
+          </div>
         </div>
       </aside>
 
-      <main className="contenuto">
-        <header className="header">
+      <main className="main">
+        <div className="header">
           <div>
-            <p className="eyebrow">Dashboard gestionale</p>
-            <h2>Panoramica economica del bar</h2>
-            <p className="header-text">
-              Controlla ricavi, costi, margine, andamento mensile e fatture.
-            </p>
-          </div>
-
-          <div className="azioni-header">
-            <button className="bottone secondario">Esporta report</button>
-            <button className="bottone primario">Carica documento</button>
-          </div>
-        </header>
-
-        <section className="griglia-metriche">
-          <CardMetrica
-            titolo="Ricavi del mese"
-            valore={formatEuro(overview?.pnl_summary?.revenue)}
-            variante="ricavi"
-          />
-          <CardMetrica
-            titolo="Costi del mese"
-            valore={formatEuro(overview?.pnl_summary?.expenses)}
-            variante="costi"
-          />
-          <CardMetrica
-            titolo="Profitto del mese"
-            valore={formatEuro(profitto)}
-            variante={profittoVariante}
-          />
-          <CardMetrica
-            titolo="Fatture da pagare"
-            valore={formatEuro(importoDaPagare)}
-            variante="neutra"
-          />
-        </section>
-
-        <section className="griglia-principale grande">
-          <CardSezione
-            titolo="Andamento ricavi, costi e profitto"
-            extra={<span className="badge neutro">Ultimi 6 mesi</span>}
-          >
-            <div className="chart-wrapper">
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip content={<TooltipGrafico />} />
-                  <Legend />
-                  <Line type="monotone" dataKey="revenue" name="Ricavi" stroke="#16a34a" strokeWidth={3} />
-                  <Line type="monotone" dataKey="expenses" name="Costi" stroke="#f59e0b" strokeWidth={3} />
-                  <Line type="monotone" dataKey="profit" name="Profitto" stroke="#2563eb" strokeWidth={3} />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="header-title">Buongiorno, Marco ☕</div>
+            <div className="header-sub">
+              Panoramica marzo 2025 · Ultimo aggiornamento oggi alle 09:14
             </div>
-          </CardSezione>
+          </div>
 
-          <CardSezione titolo="Prodotti più venduti">
-            <ul className="lista-dati">
-              {overview?.top_products_by_quantity?.map((item) => (
-                <li key={item.product}>
-                  <div>
-                    <strong>{item.product}</strong>
-                    <span>Quantità venduta: {item.quantity} unità</span>
+          <div className="header-actions">
+            <button className="btn-outline">📄 Export PDF</button>
+            <button className="btn-upload">⬆ Carica documento</button>
+          </div>
+        </div>
+
+        <div className="kpi-grid">
+          <div className="kpi-card accent">
+            <div className="kpi-deco"></div>
+            <div className="kpi-label">Margine netto</div>
+            <div className="kpi-value">€ 4.820</div>
+            <span className="kpi-change up">↑ +8.4%</span>
+            <div className="kpi-sub">vs febbraio</div>
+
+            <div className="margin-meter">
+              <div className="margin-bar-wrap">
+                <div className="margin-bar-fill"></div>
+              </div>
+              <div className="margin-labels">
+                <span>0%</span>
+                <span className="margin-highlight">62%</span>
+                <span>100%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-deco"></div>
+            <div className="kpi-label">Ricavi totali</div>
+            <div className="kpi-value">€ 12.650</div>
+            <span className="kpi-change up">↑ +5.2%</span>
+            <div className="kpi-sub">847 scontrini emessi</div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-deco"></div>
+            <div className="kpi-label">Costi totali</div>
+            <div className="kpi-value">€ 7.830</div>
+            <span className="kpi-change down">↑ +1.8%</span>
+            <div className="kpi-sub">23 fatture ricevute</div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-deco"></div>
+            <div className="kpi-label">Fatture da pagare</div>
+            <div className="kpi-value">€ 1.940</div>
+            <span className="kpi-change warn">⚠ 3 in scadenza</span>
+            <div className="kpi-sub">Prossima: 5 aprile</div>
+          </div>
+        </div>
+
+        <div className="main-grid">
+          <div className="card">
+            <div className="card-title">Ricavi vs Costi</div>
+            <div className="card-sub">Andamento ultimi 6 mesi</div>
+
+            <div className="chart-area">
+              <div className="chart-bars">
+                {[
+                  ["Ott", 72, 55],
+                  ["Nov", 80, 60],
+                  ["Dic", 95, 72],
+                  ["Gen", 65, 52],
+                  ["Feb", 78, 58],
+                  ["Mar", 100, 62, true],
+                ].map(([mese, ricavi, costi, active]) => (
+                  <div className="bar-group" key={mese}>
+                    <div className="bar-pair">
+                      <div
+                        className={`bar ${active ? "active-ricavi" : "ricavi"}`}
+                        style={{ height: `${ricavi}%` }}
+                      ></div>
+                      <div
+                        className={`bar ${active ? "active-costi" : "costi"}`}
+                        style={{ height: `${costi}%` }}
+                      ></div>
+                    </div>
+                    <div className={`bar-month ${active ? "active-month" : ""}`}>
+                      {mese}
+                    </div>
                   </div>
-                  <div className="valore-destra">{formatEuro(item.revenue)}</div>
-                </li>
-              ))}
-            </ul>
-          </CardSezione>
-        </section>
+                ))}
+              </div>
 
-        <section className="griglia-principale">
-          <CardSezione titolo="Fornitori principali">
-            <ul className="lista-dati">
-              {overview?.top_suppliers?.map((item) => (
-                <li key={item.supplier}>
-                  <div>
-                    <strong>{item.supplier}</strong>
-                    <span>Costo sostenuto nel mese</span>
+              <div className="chart-legend">
+                <div className="legend-item">
+                  <div className="legend-dot legend-ricavi"></div> Ricavi
+                </div>
+                <div className="legend-item">
+                  <div className="legend-dot legend-costi"></div> Costi
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Prodotti più venduti</div>
+            <div className="card-sub">Marzo 2025 · per quantità</div>
+
+            <div className="product-list">
+              {[
+                ["☕ Caffè espresso", 100, "312", "€ 468"],
+                ["🥛 Cappuccino", 78, "243", "€ 486"],
+                ["🥐 Cornetto", 62, "194", "€ 291"],
+                ["🍊 Succo fresco", 38, "118", "€ 354"],
+                ["🫖 Tè e infusi", 22, "68", "€ 102"],
+              ].map(([nome, width, qty, rev], i) => (
+                <div className="product-item" key={nome}>
+                  <div className="product-rank">{i + 1}</div>
+                  <div className="product-info">
+                    <div className="product-name">{nome}</div>
+                    <div className="product-bar-wrap">
+                      <div
+                        className="product-bar-fill"
+                        style={{ width: `${width}%` }}
+                      ></div>
+                    </div>
                   </div>
-                  <div className="valore-destra">{formatEuro(item.expenses)}</div>
-                </li>
-              ))}
-            </ul>
-          </CardSezione>
-
-          <CardSezione titolo="Insight automatici">
-            <ul className="lista-insight">
-              {insights?.insights?.length ? (
-                insights.insights.map((item, index) => (
-                  <li key={index}>{item}</li>
-                ))
-              ) : (
-                <li>Nessun insight disponibile.</li>
-              )}
-            </ul>
-          </CardSezione>
-        </section>
-
-        <section className="griglia-principale">
-          <CardSezione titolo="Categorie di spesa principali">
-            <ul className="lista-dati">
-              {overview?.top_expense_categories?.map((item) => (
-                <li key={item.category}>
-                  <div>
-                    <strong>{item.category}</strong>
-                    <span>Voce di costo del mese</span>
+                  <div className="product-stat">
+                    <div className="product-qty">{qty}</div>
+                    <div className="product-rev">{rev}</div>
                   </div>
-                  <div className="valore-destra">{formatEuro(item.expenses)}</div>
-                </li>
+                </div>
               ))}
-            </ul>
-          </CardSezione>
+            </div>
+          </div>
 
-          <CardSezione titolo="Fatture recenti">
-            {fatture.length === 0 ? (
-              <p>Nessuna fattura presente.</p>
-            ) : (
-              <table className="tabella">
-                <thead>
-                  <tr>
-                    <th>Fornitore</th>
-                    <th>Numero</th>
-                    <th>Scadenza</th>
-                    <th>Importo</th>
-                    <th>Stato</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fatture.slice(0, 5).map((fattura) => (
-                    <tr key={fattura.id}>
-                      <td>{fattura.supplier}</td>
-                      <td>{fattura.invoice_number}</td>
-                      <td>{fattura.due_date}</td>
-                      <td>{formatEuro(fattura.total)}</td>
-                      <td>
-                        <BadgeStato stato={fattura.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </CardSezione>
-        </section>
+          <div className="card">
+            <div className="card-title">Categorie di spesa</div>
+            <div className="card-sub">Totale costi marzo</div>
+
+            <div className="donut-wrap">
+              <div className="donut-chart">
+                <svg viewBox="0 0 100 100" width="130" height="130">
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="35"
+                    fill="none"
+                    stroke="#c8813a"
+                    strokeWidth="16"
+                    strokeDasharray="83.5 148.7"
+                    strokeDashoffset="0"
+                    transform="rotate(-90 50 50)"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="35"
+                    fill="none"
+                    stroke="#e0d0bc"
+                    strokeWidth="16"
+                    strokeDasharray="48.3 184"
+                    strokeDashoffset="-83.5"
+                    transform="rotate(-90 50 50)"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="35"
+                    fill="none"
+                    stroke="#2d7a4f"
+                    strokeWidth="16"
+                    strokeDasharray="39.6 192.6"
+                    strokeDashoffset="-131.8"
+                    transform="rotate(-90 50 50)"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="35"
+                    fill="none"
+                    stroke="#5a3e28"
+                    strokeWidth="16"
+                    strokeDasharray="30.8 201.4"
+                    strokeDashoffset="-171.4"
+                    transform="rotate(-90 50 50)"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="35"
+                    fill="none"
+                    stroke="#d4b896"
+                    strokeWidth="16"
+                    strokeDasharray="17.6 214.5"
+                    strokeDashoffset="-202.2"
+                    transform="rotate(-90 50 50)"
+                  />
+                </svg>
+
+                <div className="donut-center">
+                  <div className="donut-center-value">€7.8k</div>
+                  <div className="donut-center-label">totale</div>
+                </div>
+              </div>
+
+              <div className="donut-legend">
+                {[
+                  ["☕ Caffè & torref.", "€2.975", "38%", "#c8813a"],
+                  ["🥛 Lattiero-caseari", "€1.723", "22%", "#e0d0bc"],
+                  ["🥐 Pasticceria", "€1.409", "18%", "#2d7a4f"],
+                  ["🍹 Bevande", "€1.096", "14%", "#5a3e28"],
+                  ["📦 Altro", "€626", "8%", "#d4b896"],
+                ].map(([name, val, pct, color]) => (
+                  <div className="donut-leg-item" key={name}>
+                    <div
+                      className="donut-leg-dot"
+                      style={{ background: color }}
+                    ></div>
+                    <span className="donut-leg-name">{name}</span>
+                    <span className="donut-leg-val">{val}</span>
+                    <span className="donut-leg-pct">{pct}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bottom-grid">
+          <div className="card">
+            <div className="card-title">Top Fornitori</div>
+            <div className="card-sub">Per spesa · marzo 2025</div>
+
+            <div className="supplier-list">
+              {[
+                ["☕", "Torrefazione Vergnano", "Caffè & miscele", "€ 1.840", "3 fatture", "#fff5e8"],
+                ["🥛", "Cooperativa Latte Milano", "Latte & derivati", "€ 1.230", "4 fatture", "#f0f8f4"],
+                ["🥐", "Pasticceria De Luca", "Cornetti & dolci", "€ 980", "8 consegne", "#fff8f0"],
+                ["🍹", "Distributori Riuniti", "Bevande & soft drink", "€ 754", "2 fatture", "#f5f0ff"],
+              ].map(([icon, name, cat, total, inv, bg]) => (
+                <div className="supplier-item" key={name}>
+                  <div className="supplier-avatar" style={{ background: bg }}>
+                    {icon}
+                  </div>
+                  <div>
+                    <div className="supplier-name">{name}</div>
+                    <div className="supplier-cat">{cat}</div>
+                  </div>
+                  <div className="supplier-amount">
+                    <div className="supplier-total">{total}</div>
+                    <div className="supplier-invoices">{inv}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">Fatture recenti</div>
+            <div className="card-sub">
+              Stato pagamenti · ultimo aggiornamento oggi
+            </div>
+
+            <div className="invoice-list">
+              <div className="invoice-item paid">
+                <div className="invoice-dot"></div>
+                <div className="invoice-info">
+                  <div className="invoice-name">Torrefazione Vergnano</div>
+                  <div className="invoice-date">Emessa: 1 mar · Pagata: 8 mar</div>
+                </div>
+                <div className="invoice-amount">€ 612</div>
+                <div className="invoice-status">Pagata</div>
+              </div>
+
+              <div className="invoice-item due">
+                <div className="invoice-dot"></div>
+                <div className="invoice-info">
+                  <div className="invoice-name">Pasticceria De Luca</div>
+                  <div className="invoice-date">Emessa: 20 mar · Scade: 5 apr</div>
+                </div>
+                <div className="invoice-amount">€ 490</div>
+                <div className="invoice-status">In scadenza</div>
+              </div>
+
+              <div className="invoice-item overdue">
+                <div className="invoice-dot"></div>
+                <div className="invoice-info">
+                  <div className="invoice-name">Distributori Riuniti</div>
+                  <div className="invoice-date">Emessa: 15 mar · Scaduta: 30 mar</div>
+                </div>
+                <div className="invoice-amount">€ 378</div>
+                <div className="invoice-status">Scaduta</div>
+              </div>
+
+              <div className="invoice-item paid">
+                <div className="invoice-dot"></div>
+                <div className="invoice-info">
+                  <div className="invoice-name">Cooperativa Latte</div>
+                  <div className="invoice-date">Emessa: 5 mar · Pagata: 12 mar</div>
+                </div>
+                <div className="invoice-amount">€ 308</div>
+                <div className="invoice-status">Pagata</div>
+              </div>
+            </div>
+
+            <div className="upload-zone">
+              <div className="upload-icon">📂</div>
+              <div className="upload-title">Trascina qui i tuoi documenti</div>
+              <div className="upload-sub">
+                L'AI legge e categorizza tutto automaticamente
+              </div>
+              <div className="upload-types">
+                <span className="upload-tag">PDF</span>
+                <span className="upload-tag">XML SDI</span>
+                <span className="upload-tag">Excel</span>
+                <span className="upload-tag">CSV Cassa</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
   );
 }
-
-export default App;
-EOF
