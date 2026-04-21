@@ -10,6 +10,7 @@ import {
 import "./App.css";
 import Sidebar from "./components/Sidebar";
 import UploadPage from "./pages/UploadPage";
+import InvoicesPage from "./pages/InvoicesPage";
 
 const CATEGORY_COLORS = ["#c8813a", "#d8c7af", "#2d7a4f", "#6b4529", "#eadcc8"];
 
@@ -530,6 +531,55 @@ export default function App() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [invoiceUploadMessage, setInvoiceUploadMessage] = useState("");
+  const [invoiceUploadError, setInvoiceUploadError] = useState("");
+  const [invoiceUploading, setInvoiceUploading] = useState(false);
+
+async function handleInvoiceDocumentUpload(file) {
+  if (!file) return;
+
+  try {
+    setInvoiceUploading(true);
+    setInvoiceUploadError("");
+    setInvoiceUploadMessage("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/invoices/extract", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || `Upload fattura fallito (${response.status})`);
+    }
+
+    const result = await response.json();
+
+    const extractedMonth = result.issue_date?.slice(0, 7) || month;
+
+    setInvoiceUploadMessage(
+      `Fattura acquisita: ${result.supplier || "fornitore rilevato"} · ${
+        result.invoice_number || "numero non disponibile"
+      }`
+    );
+
+    if (result.issue_date) {
+      setMonth(extractedMonth);
+    }
+
+    await loadDashboardData(extractedMonth);
+  } catch (err) {
+    console.error(err);
+    setInvoiceUploadError(
+      "Errore durante il caricamento della fattura o nell'estrazione dati."
+    );
+  } finally {
+    setInvoiceUploading(false);
+  }
+}
 
   async function loadDashboardData(selectedMonth) {
     const [
@@ -707,7 +757,20 @@ export default function App() {
               />
             }
           />
-
+          <Route
+            path="/invoices"
+            element={
+              <InvoicesPage
+                month={month}
+                setMonth={setMonth}
+                invoices={invoices}
+                invoiceUploadMessage={invoiceUploadMessage}
+                invoiceUploadError={invoiceUploadError}
+                invoiceUploading={invoiceUploading}
+                handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
+              />
+            }
+          />
           <Route
             path="/upload"
             element={

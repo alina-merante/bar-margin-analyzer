@@ -7,6 +7,11 @@ from app.routers.finance import router as finance_router
 from app.routers.health import router as health_router
 from app.routers.imports import router as imports_router
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 app = FastAPI(title="Bar Margin Analyzer API")
 
 # ✅ CORS FIX

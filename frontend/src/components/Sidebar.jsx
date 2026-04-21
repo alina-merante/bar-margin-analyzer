@@ -29,11 +29,14 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
           Dashboard
         </NavLink>
 
-        <a className="nav-item" href="#">
+        <NavLink
+          to="/invoices"
+          className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+        >
           <span className="nav-icon">🧾</span>
           Fatture
           <span className="nav-badge">{pendingInvoices}</span>
-        </a>
+        </NavLink>
 
         <a className="nav-item" href="#">
           <span className="nav-icon">📦</span>
