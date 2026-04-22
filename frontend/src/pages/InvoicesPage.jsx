@@ -53,6 +53,8 @@ export default function InvoicesPage({
   invoiceUploadError,
   invoiceUploading,
   handleInvoiceDocumentUpload,
+  handleDeleteInvoice,
+  invoiceDeleteError,
 }) {
   const [supplierFilter, setSupplierFilter] = useState("");
 
@@ -121,6 +123,9 @@ export default function InvoicesPage({
               ) : null}
               {invoiceUploadMessage ? (
                 <p className="upload-feedback success">{invoiceUploadMessage}</p>
+              ) : null}
+              {invoiceDeleteError ? (
+                <p className="upload-feedback error">{invoiceDeleteError}</p>
               ) : null}
               {invoiceUploadError ? (
                 <p className="upload-feedback error">{invoiceUploadError}</p>
@@ -230,6 +235,7 @@ export default function InvoicesPage({
                 <div>Scadenza</div>
                 <div>Totale</div>
                 <div>Stato</div>
+                <div>Azioni</div>
               </div>
 
               {filteredInvoices.map((invoice) => {
@@ -249,6 +255,20 @@ export default function InvoicesPage({
                       <span className={`invoice-status ${visualStatus}`}>
                         {getInvoiceStatusLabel(invoice.status, invoice.due_date)}
                       </span>
+                    </div>
+                    <div>
+                      <button
+                        type="button"
+                        className="invoice-delete-btn"
+                        onClick={() => {
+                          if (window.confirm("Vuoi eliminare questa fattura?")) {
+                            handleDeleteInvoice(invoice.id);
+                          }
+                        }}
+                        title="Elimina fattura"
+                      >
+                        🗑️
+                      </button>
                     </div>
                   </div>
                 );

@@ -1400,7 +1400,7 @@ body {
 .invoice-table-head,
 .invoice-table-row {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr 90px;
   gap: 16px;
   align-items: center;
 }
@@ -1473,4 +1473,20 @@ body {
 .month-nav-btn:hover {
   background: #f8f4ee;
   border-color: #d7c2a7;
+}
+
+.invoice-delete-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  transition: 0.2s ease;
+}
+
+.invoice-delete-btn:hover {
+  background: #fff3f0;
+  border-color: #d9a79d;
 }
