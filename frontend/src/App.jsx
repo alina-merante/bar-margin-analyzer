@@ -534,6 +534,29 @@ export default function App() {
   const [invoiceUploadMessage, setInvoiceUploadMessage] = useState("");
   const [invoiceUploadError, setInvoiceUploadError] = useState("");
   const [invoiceUploading, setInvoiceUploading] = useState(false);
+  const [invoiceDeleteError, setInvoiceDeleteError] = useState("");
+
+async function handleDeleteInvoice(invoiceId) {
+  if (!invoiceId) return;
+
+  try {
+    setInvoiceDeleteError("");
+
+    const response = await fetch(`/api/invoices/delete/${invoiceId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || `Delete fattura fallito (${response.status})`);
+    }
+
+    await loadDashboardData(month);
+  } catch (err) {
+    console.error(err);
+    setInvoiceDeleteError("Errore durante l'eliminazione della fattura.");
+  }
+}
 
 async function handleInvoiceDocumentUpload(file) {
   if (!file) return;
@@ -768,6 +791,8 @@ async function handleInvoiceDocumentUpload(file) {
                 invoiceUploadError={invoiceUploadError}
                 invoiceUploading={invoiceUploading}
                 handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
+                handleDeleteInvoice={handleDeleteInvoice}
+                invoiceDeleteError={invoiceDeleteError}
               />
             }
           />
