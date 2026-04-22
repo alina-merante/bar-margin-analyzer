@@ -16,6 +16,23 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatMonthHuman(month) {
+  if (!month) return "-";
+  const [year, monthNum] = month.split("-").map(Number);
+  return new Intl.DateTimeFormat("it-IT", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(year, monthNum - 1, 1));
+}
+
+function shiftMonth(month, delta) {
+  if (!month) return month;
+  const [year, monthNum] = month.split("-").map(Number);
+  const date = new Date(year, monthNum - 1 + delta, 1);
+  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+  return `${date.getFullYear()}-${nextMonth}`;
+}
+
 function getInvoiceStatusLabel(status, dueDate) {
   if (status === "paid") return "Pagata";
   if (dueDate && new Date(dueDate) < new Date()) return "Scaduta";
@@ -160,11 +177,26 @@ export default function InvoicesPage({
           <div className="invoice-filters-grid">
             <div className="invoice-filter-field">
               <label>Mese selezionato</label>
-              <input
-                type="month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-              />
+
+              <div className="month-filter-pretty">
+                <button
+                  type="button"
+                  className="month-nav-btn"
+                  onClick={() => setMonth(shiftMonth(month, -1))}
+                >
+                  ◀
+                </button>
+
+                <div className="month-filter-value">{formatMonthHuman(month)}</div>
+
+                <button
+                  type="button"
+                  className="month-nav-btn"
+                  onClick={() => setMonth(shiftMonth(month, 1))}
+                >
+                  ▶
+                </button>
+              </div>
             </div>
 
             <div className="invoice-filter-field">

@@ -1435,3 +1435,42 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.month-filter-pretty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.month-filter-value {
+  min-width: 220px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-dark);
+  text-transform: capitalize;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.month-nav-btn {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--espresso);
+  font-size: 16px;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.month-nav-btn:hover {
+  background: #f8f4ee;
+  border-color: #d7c2a7;
+}

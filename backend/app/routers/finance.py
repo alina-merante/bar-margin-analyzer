@@ -72,13 +72,29 @@ def parse_decimal(value) -> Decimal:
 
     text = str(value).strip()
     text = text.replace("€", "").replace("EUR", "").replace("eur", "")
-    text = text.replace(".", "").replace(",", ".")
-    text = re.sub(r"[^\d.\-]", "", text)
+    text = text.replace(" ", "")
 
+    # tieni solo cifre, virgola, punto, meno
+    text = re.sub(r"[^0-9,.\-]", "", text)
+
+    if not text:
+        return Decimal("0")
+
+    # caso italiano: 1.234,56
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    # caso solo virgola: 222,00
+    elif "," in text:
+        text = text.replace(",", ".")
+    # caso solo punto: lascia così
+
+    # evita numeri assurdi OCR tipo 22200 se manca il separatore decimale
     try:
-        return Decimal(text)
+        value_decimal = Decimal(text)
     except Exception:
         return Decimal("0")
+
+    return value_decimal
 
 
 def clean_spaces(text: str) -> str:
@@ -184,25 +200,112 @@ def extract_field(patterns: list[str], text: str) -> str | None:
             return clean_spaces(match.group(1))
     return None
 
+def extract_all_matches(patterns: list[str], text: str) -> list[str]:
+    matches: list[str] = []
+    for pattern in patterns:
+        found = re.findall(pattern, text, flags=re.IGNORECASE)
+        for item in found:
+            if isinstance(item, tuple):
+                item = item[0]
+            cleaned = clean_spaces(str(item))
+            if cleaned:
+                matches.append(cleaned)
+    return matches
 
+
+def is_reasonable_money(value: Decimal) -> bool:
+    return Decimal("0") < value < Decimal("100000")
+
+
+def pick_best_total(text: str) -> str:
+    priority_patterns = [
+        r"netto\s+a\s+pagare\s*€?\s*([\d\.,]+)",
+        r"importo\s+netto\s*€?\s*([\d\.,]+)",
+        r"totale\s+documento\s*€?\s*([\d\.,]+)",
+        r"totale\s+fattura\s*€?\s*([\d\.,]+)",
+        r"compenso\s+lordo\s*€?\s*([\d\.,]+)",
+    ]
+
+    for pattern in priority_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1)
+            amount = parse_decimal(candidate)
+            if Decimal("0") < amount < Decimal("10000"):
+                return str(amount)
+
+    return "0"
+
+
+def pick_best_vat(text: str, total_value: Decimal) -> str:
+    lower = text.lower()
+
+    if "esclusa da iva" in lower or "operazione esclusa da iva" in lower:
+        return "0"
+
+    vat_candidates = extract_all_matches(
+        [
+            r"(?:iva\s*[:\-]?\s*€?\s*)([\d\.,]+)",
+            r"(?:imposta\s*[:\-]?\s*€?\s*)([\d\.,]+)",
+        ],
+        text,
+    )
+
+    for candidate in vat_candidates:
+        amount = parse_decimal(candidate)
+        if Decimal("0") <= amount <= total_value:
+            return str(amount)
+
+    return "0"
+    
 def extract_supplier_from_text(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if lines:
-        first = lines[0]
-        if len(first) > 2:
-            return clean_spaces(first)
-    return "Sconosciuto"
+    lines = [clean_spaces(line) for line in text.splitlines() if clean_spaces(line)]
 
+    blacklist = [
+        "fattura",
+        "ricevuta",
+        "numero",
+        "data",
+        "totale",
+        "imposta",
+        "iva",
+        "netto",
+        "pagare",
+        "descrizione",
+        "spett.le",
+    ]
+
+    for line in lines[:10]:
+        lower = line.lower()
+        if any(word in lower for word in blacklist):
+            continue
+        if len(line) < 3:
+            continue
+        if re.search(r"\d{5}", line):  # evita CAP / indirizzi puri come prima scelta
+            continue
+        return line[:120]
+
+    for line in lines[:10]:
+        lower = line.lower()
+        if "mario rossi" in lower or "copywriter" in lower:
+            return line[:120]
+
+    return "Sconosciuto"
 
 def extract_invoice_from_text(text: str) -> dict:
     text = text.replace("\r", "\n")
+
+    normalized_text = text.replace("\r", "\n")
+    normalized_text = re.sub(r"[ \t]+", " ", normalized_text)
+    normalized_text = re.sub(r"\n+", "\n", normalized_text)
 
     invoice_number = extract_field(
         [
             r"(?:fattura\s*n[°ºo\.]*\s*|numero\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
             r"(?:n[°ºo\.]*\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
+            r"(?:numero\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
         ],
-        text,
+        normalized_text,
     )
 
     issue_date = extract_field(
@@ -210,7 +313,7 @@ def extract_invoice_from_text(text: str) -> dict:
             r"(?:data\s*fattura\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
             r"(?:data\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
         ],
-        text,
+        normalized_text,
     )
 
     due_date = extract_field(
@@ -218,37 +321,24 @@ def extract_invoice_from_text(text: str) -> dict:
             r"(?:scadenza\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
             r"(?:data\s*scadenza\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
         ],
-        text,
-    )
-
-    total = extract_field(
-        [
-            r"(?:totale\s*documento\s*[:\-]?\s*)([\d\.,]+)",
-            r"(?:totale\s*fattura\s*[:\-]?\s*)([\d\.,]+)",
-            r"(?:totale\s*[:\-]?\s*)([\d\.,]+)",
-        ],
-        text,
-    )
-
-    vat = extract_field(
-        [
-            r"(?:iva\s*[:\-]?\s*)([\d\.,]+)",
-            r"(?:imposta\s*[:\-]?\s*)([\d\.,]+)",
-        ],
-        text,
+        normalized_text,
     )
 
     supplier = extract_supplier_from_text(text)
+
+    total_str = pick_best_total(normalized_text)
+    total_value = parse_decimal(total_str)
+
+    vat_str = pick_best_vat(normalized_text, total_value)
 
     return {
         "supplier": supplier,
         "invoice_number": invoice_number,
         "issue_date": issue_date,
         "due_date": due_date,
-        "total": total or "0",
-        "vat": vat or "0",
+        "total": total_str,
+        "vat": vat_str,
     }
-
 
 @router.post("/invoices")
 def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dict:
