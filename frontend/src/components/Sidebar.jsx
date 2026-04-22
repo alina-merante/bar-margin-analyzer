@@ -35,7 +35,6 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
         >
           <span className="nav-icon">🧾</span>
           Fatture
-          <span className="nav-badge">{pendingInvoices}</span>
         </NavLink>
 
         <a className="nav-item" href="#">
