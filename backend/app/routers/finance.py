@@ -427,8 +427,18 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"invoice extraction failed: {exc}") from exc
 
+@router.delete("/invoices/delete/{invoice_id}")
+def delete_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="invoice not found")
 
-@router.get("/invoices")
+    db.delete(invoice)
+    db.commit()
+
+    return {"ok": True, "deleted_invoice_id": invoice_id}
+
+@router.get("/invoices")  
 def list_invoices(
     status: InvoiceStatus | None = Query(default=None),
     supplier: str | None = Query(default=None),
