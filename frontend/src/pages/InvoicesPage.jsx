@@ -1,4 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const MONTH_NAMES = [
+  { value: "01", label: "Gennaio" },
+  { value: "02", label: "Febbraio" },
+  { value: "03", label: "Marzo" },
+  { value: "04", label: "Aprile" },
+  { value: "05", label: "Maggio" },
+  { value: "06", label: "Giugno" },
+  { value: "07", label: "Luglio" },
+  { value: "08", label: "Agosto" },
+  { value: "09", label: "Settembre" },
+  { value: "10", label: "Ottobre" },
+  { value: "11", label: "Novembre" },
+  { value: "12", label: "Dicembre" },
+];
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -9,16 +24,22 @@ function formatEuro(value) {
 
 function formatDate(value) {
   if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
     month: "long",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatMonthHuman(month) {
   if (!month) return "-";
+
   const [year, monthNum] = month.split("-").map(Number);
+
   return new Intl.DateTimeFormat("it-IT", {
     month: "long",
     year: "numeric",
@@ -26,22 +47,79 @@ function formatMonthHuman(month) {
 }
 
 function shiftMonth(month, delta) {
-  if (!month) return month;
-  const [year, monthNum] = month.split("-").map(Number);
+  const baseMonth = month || new Date().toISOString().slice(0, 7);
+  const [year, monthNum] = baseMonth.split("-").map(Number);
+
   const date = new Date(year, monthNum - 1 + delta, 1);
   const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+
   return `${date.getFullYear()}-${nextMonth}`;
+}
+
+function getInvoiceMonthKey(issueDate) {
+  if (!issueDate) return "";
+
+  if (typeof issueDate === "string") {
+    const isoMatch = issueDate.match(/^(\d{4})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+
+    const italianMatch = issueDate.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (italianMatch) return `${italianMatch[3]}-${italianMatch[2]}`;
+  }
+
+  const date = new Date(issueDate);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}`;
+}
+
+function buildYearOptions(invoices = [], selectedMonth) {
+  const years = new Set();
+
+  invoices.forEach((invoice) => {
+    const invoiceMonth = getInvoiceMonthKey(invoice.issue_date);
+    const year = invoiceMonth.slice(0, 4);
+
+    if (year) years.add(year);
+  });
+
+  if (selectedMonth) {
+    years.add(selectedMonth.slice(0, 4));
+  }
+
+  const currentYear = new Date().getFullYear();
+
+  for (let i = 0; i < 6; i += 1) {
+    years.add(String(currentYear - i));
+  }
+
+  return [...years].sort((a, b) => Number(b) - Number(a));
 }
 
 function getInvoiceStatusLabel(status, dueDate) {
   if (status === "paid") return "Pagata";
-  if (dueDate && new Date(dueDate) < new Date()) return "Scaduta";
+
+  const date = dueDate ? new Date(dueDate) : null;
+
+  if (date && !Number.isNaN(date.getTime()) && date < new Date()) {
+    return "Scaduta";
+  }
+
   return "In scadenza";
 }
 
 function getInvoiceStatusClass(status, dueDate) {
   if (status === "paid") return "paid";
-  if (dueDate && new Date(dueDate) < new Date()) return "overdue";
+
+  const date = dueDate ? new Date(dueDate) : null;
+
+  if (date && !Number.isNaN(date.getTime()) && date < new Date()) {
+    return "overdue";
+  }
+
   return "due";
 }
 
@@ -56,20 +134,53 @@ export default function InvoicesPage({
   handleDeleteInvoice,
   invoiceDeleteError,
 }) {
+  const initialMonth = month || new Date().toISOString().slice(0, 7);
+
   const [supplierFilter, setSupplierFilter] = useState("");
+  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(initialMonth.slice(0, 4));
+
+  useEffect(() => {
+    if (!month) {
+      setMonth(initialMonth);
+      return;
+    }
+
+    setPickerYear(month.slice(0, 4));
+  }, [month, setMonth, initialMonth]);
 
   const suppliers = useMemo(() => {
     const unique = [...new Set(invoices.map((i) => i.supplier).filter(Boolean))];
+
     return unique.sort((a, b) => a.localeCompare(b, "it"));
   }, [invoices]);
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter((invoice) => {
-      const matchesMonth = !month || invoice.issue_date?.slice(0, 7) === month;
-      const matchesSupplier = !supplierFilter || invoice.supplier === supplierFilter;
+      const invoiceMonth = getInvoiceMonthKey(invoice.issue_date);
+      const matchesMonth = !month || invoiceMonth === month;
+      const matchesSupplier =
+        !supplierFilter || invoice.supplier === supplierFilter;
+
       return matchesMonth && matchesSupplier;
     });
   }, [invoices, month, supplierFilter]);
+
+  const yearOptions = buildYearOptions(invoices, month);
+  const selectedMonthNumber = month?.slice(5, 7) || "01";
+
+  function applyMonthYear(nextMonthNumber, nextYear) {
+    setMonth(`${nextYear}-${nextMonthNumber}`);
+    setIsMonthPickerOpen(false);
+  }
+
+  function goToPreviousMonth() {
+    setMonth(shiftMonth(month, -1));
+  }
+
+  function goToNextMonth() {
+    setMonth(shiftMonth(month, 1));
+  }
 
   return (
     <main className="main invoices-page">
@@ -121,12 +232,15 @@ export default function InvoicesPage({
               {invoiceUploading ? (
                 <p className="upload-feedback">Estrazione dati in corso...</p>
               ) : null}
+
               {invoiceUploadMessage ? (
                 <p className="upload-feedback success">{invoiceUploadMessage}</p>
               ) : null}
+
               {invoiceDeleteError ? (
                 <p className="upload-feedback error">{invoiceDeleteError}</p>
               ) : null}
+
               {invoiceUploadError ? (
                 <p className="upload-feedback error">{invoiceUploadError}</p>
               ) : null}
@@ -153,9 +267,7 @@ export default function InvoicesPage({
               <div className="invoice-summary-box">
                 <div className="invoice-summary-label">Da pagare</div>
                 <div className="invoice-summary-value">
-                  {
-                    filteredInvoices.filter((i) => i.status === "pending").length
-                  }
+                  {filteredInvoices.filter((i) => i.status === "pending").length}
                 </div>
               </div>
 
@@ -183,34 +295,86 @@ export default function InvoicesPage({
             <div className="invoice-filter-field">
               <label>Mese selezionato</label>
 
-              <div className="month-filter-pretty">
+              <div className="month-filter-pretty month-filter-popup-wrap">
                 <button
                   type="button"
                   className="month-nav-btn"
-                  onClick={() => setMonth(shiftMonth(month, -1))}
+                  onClick={goToPreviousMonth}
+                  title="Mese precedente"
                 >
                   ◀
                 </button>
 
-                <div className="month-filter-value">{formatMonthHuman(month)}</div>
+                <button
+                  type="button"
+                  className="month-filter-trigger"
+                  onClick={() => setIsMonthPickerOpen((prev) => !prev)}
+                >
+                  <span>{formatMonthHuman(month)}</span>
+                  <span className="month-filter-trigger-icon">▾</span>
+                </button>
 
                 <button
                   type="button"
                   className="month-nav-btn"
-                  onClick={() => setMonth(shiftMonth(month, 1))}
+                  onClick={goToNextMonth}
+                  title="Mese successivo"
                 >
                   ▶
                 </button>
+
+                {isMonthPickerOpen ? (
+                  <div className="month-picker-popover">
+                    <div className="month-picker-popover-title">
+                      Seleziona periodo
+                    </div>
+
+                    <div className="month-picker-year-list">
+                      {yearOptions.map((year) => (
+                        <button
+                          key={year}
+                          type="button"
+                          className={`month-picker-year-btn ${
+                            pickerYear === year ? "active" : ""
+                          }`}
+                          onClick={() => setPickerYear(year)}
+                        >
+                          {year}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="month-picker-grid">
+                      {MONTH_NAMES.map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={`month-picker-month-btn ${
+                            selectedMonthNumber === item.value &&
+                            month?.slice(0, 4) === pickerYear
+                              ? "active"
+                              : ""
+                          }`}
+                          onClick={() => applyMonthYear(item.value, pickerYear)}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
             <div className="invoice-filter-field">
               <label>Fornitore</label>
+
               <select
                 value={supplierFilter}
                 onChange={(e) => setSupplierFilter(e.target.value)}
               >
                 <option value="">Tutti i fornitori</option>
+
                 {suppliers.map((supplier) => (
                   <option key={supplier} value={supplier}>
                     {supplier}
@@ -251,11 +415,13 @@ export default function InvoicesPage({
                     <div>{formatDate(invoice.issue_date)}</div>
                     <div>{formatDate(invoice.due_date)}</div>
                     <div>{formatEuro(invoice.total)}</div>
+
                     <div>
                       <span className={`invoice-status ${visualStatus}`}>
                         {getInvoiceStatusLabel(invoice.status, invoice.due_date)}
                       </span>
                     </div>
+
                     <div>
                       <button
                         type="button"
@@ -275,7 +441,9 @@ export default function InvoicesPage({
               })}
             </div>
           ) : (
-            <p className="small-muted">Nessuna fattura disponibile con i filtri selezionati.</p>
+            <p className="small-muted">
+              Nessuna fattura disponibile con i filtri selezionati.
+            </p>
           )}
         </div>
       </section>
