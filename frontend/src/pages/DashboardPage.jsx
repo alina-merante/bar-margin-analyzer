@@ -1,9 +1,11 @@
+import { Link } from "react-router-dom";
 import { useMemo } from "react";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
     style: "currency",
     currency: "EUR",
+    maximumFractionDigits: 0,
   }).format(Number(value) || 0);
 }
 
@@ -24,190 +26,447 @@ function formatMonthShort(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
+function formatShortDate(value) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+}
+
+function daysAgoLabel(value) {
+  if (!value) return "MANCANTE";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "MANCANTE";
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  date.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 0) return "OGGI";
+  if (diffDays === 1) return "IERI";
+
+  return `${diffDays} GIORNI FA`;
+}
+
+function getReminderTone(value, fallbackTone = "danger") {
+  if (!value) return fallbackTone;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallbackTone;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  date.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 1) return "neutral";
+  if (diffDays <= 3) return "warning";
+
+  return "danger";
+}
+
+function isOverdue(invoice) {
+  if (invoice.status === "paid") return false;
+  if (!invoice.due_date) return false;
+  return new Date(invoice.due_date) < new Date();
+}
+
+function isDue(invoice) {
+  if (invoice.status === "paid") return false;
+  if (!invoice.due_date) return true;
+  return new Date(invoice.due_date) >= new Date();
+}
+
+function productIcon(name = "") {
+  const lower = name.toLowerCase();
+
+  if (lower.includes("caff")) return "☕";
+  if (lower.includes("cappuccino")) return "🥛";
+  if (lower.includes("cornetto") || lower.includes("croissant")) return "🥐";
+  if (lower.includes("spritz") || lower.includes("drink")) return "🍹";
+
+  return "🍽️";
+}
+
 export default function DashboardPage({
   month,
-  pnl,
-  trend,
-  topProductsList,
-  pendingInvoices,
-  pendingInvoicesAmount,
-  invoices,
+  loading,
+  error,
+  pnl = { revenue: 0, expenses: 0, profit: 0 },
+  trend = [],
+  topProductsList = [],
+  pendingInvoices = [],
+  pendingInvoicesAmount = 0,
+  invoices = [],
+  latestPosUploadDate = null,
+  latestBankUploadDate = null,
 }) {
-  // 🔴 FATTURE CRITICHE
-  const criticalInvoices = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (inv.status === "paid") return false;
+  const monthLabel = formatMonthLabel(month);
 
-      if (!inv.due_date) return true;
+  const currentMonthInvoices = useMemo(() => {
+    return invoices.filter((invoice) => invoice.issue_date?.slice(0, 7) === month);
+  }, [invoices, month]);
 
-      return new Date(inv.due_date) < new Date();
-    });
-  }, [invoices]);
+  const paidInvoices = currentMonthInvoices.filter((i) => i.status === "paid");
+  const overdueInvoices = currentMonthInvoices.filter(isOverdue);
+  const dueInvoices = currentMonthInvoices.filter(isDue);
 
-  // 🧠 PROMEMORIA INTELLIGENTI
-  const reminders = useMemo(() => {
-    const list = [];
+  const criticalInvoices = [...overdueInvoices, ...dueInvoices].slice(0, 3);
 
-    if (!topProductsList.length) {
-      list.push("⚠️ Nessun dato vendite per questo mese");
-    }
-
-    if (!trend.length) {
-      list.push("⚠️ Andamento non disponibile");
-    }
-
-    if (pendingInvoices.length > 0) {
-      list.push(`🧾 Hai ${pendingInvoices.length} fatture da pagare`);
-    }
-
-    const overdue = criticalInvoices.filter(
-      (i) => i.due_date && new Date(i.due_date) < new Date()
-    );
-
-    if (overdue.length > 0) {
-      list.push(`🚨 ${overdue.length} fatture sono scadute`);
-    }
-
-    if (!list.length) {
-      list.push("✅ Tutto sotto controllo");
-    }
-
-    return list;
-  }, [pendingInvoices, criticalInvoices, trend, topProductsList]);
+  const marginPercent =
+    Number(pnl.revenue) > 0
+      ? Math.max(0, (Number(pnl.profit) / Number(pnl.revenue)) * 100)
+      : 0;
 
   const trendMax = Math.max(
-    ...trend.flatMap((t) => [Number(t.revenue) || 0, Number(t.expenses) || 0]),
+    ...trend.flatMap((item) => [
+      Number(item.revenue) || 0,
+      Number(item.expenses) || 0,
+    ]),
     1
   );
 
-  return (
-    <main className="main">
-      {/* HEADER */}
-      <div className="header">
-        <div>
-          <div className="header-title">Buongiorno ☕</div>
-          <div className="header-sub">
-            {formatMonthLabel(month)} · panoramica operativa
-          </div>
-        </div>
+  const maxProductQty = Math.max(
+    ...topProductsList.map((p) => Number(p.quantity) || 0),
+    1
+  );
 
-        <div className="header-actions">
-          <button className="btn-outline">📄 Export</button>
-        </div>
-      </div>
+  const todayLabel = new Intl.DateTimeFormat("it-IT", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(new Date());
 
-      {/* KPI */}
-      <div className="kpi-grid">
-        <div className="kpi-card accent">
-          <div className="kpi-label">Margine</div>
-          <div className="kpi-value">{formatEuro(pnl.profit)}</div>
-        </div>
+  const firstOverdueInvoice = overdueInvoices[0];
+  const firstDueInvoice = dueInvoices[0];
 
-        <div className="kpi-card">
-          <div className="kpi-label">Ricavi</div>
-          <div className="kpi-value">{formatEuro(pnl.revenue)}</div>
-        </div>
+  const reminders = [
+    {
+      icon: "🖨️",
+      badge: daysAgoLabel(latestPosUploadDate),
+      title: "Cassa",
+      text: latestPosUploadDate
+        ? `Ultimo export caricato il ${formatShortDate(latestPosUploadDate)}`
+        : "Export POS non ancora caricato",
+      action: latestPosUploadDate ? "Aggiorna" : "Carica ora",
+      to: "/upload",
+      tone: getReminderTone(latestPosUploadDate, "danger"),
+    },
+    {
+      icon: "🏦",
+      badge: daysAgoLabel(latestBankUploadDate),
+      title: "Movimenti bancari",
+      text: latestBankUploadDate
+        ? `Ultimo aggiornamento il ${formatShortDate(latestBankUploadDate)}`
+        : "Movimenti bancari non ancora caricati",
+      action: latestBankUploadDate ? "Aggiorna" : "Carica ora",
+      to: "/upload",
+      tone: getReminderTone(latestBankUploadDate, "warning"),
+    },
+    {
+      icon: "🧾",
+      badge: firstOverdueInvoice ? "SCADUTA" : "OK",
+      title: firstOverdueInvoice?.supplier || "Fatture scadute",
+      text: firstOverdueInvoice
+        ? `${formatEuro(firstOverdueInvoice.total)} · scaduta il ${formatShortDate(
+            firstOverdueInvoice.due_date
+          )}`
+        : "Nessuna fattura scaduta.",
+      action: firstOverdueInvoice ? "Paga ora" : "Vedi dettagli",
+      to: "/invoices",
+      tone: firstOverdueInvoice ? "danger" : "neutral",
+    },
+    {
+      icon: "⏰",
+      badge: firstDueInvoice ? "TRA POCO" : "OK",
+      title: firstDueInvoice?.supplier || "Prossime scadenze",
+      text: firstDueInvoice
+        ? `${formatEuro(firstDueInvoice.total)} · scade il ${formatShortDate(
+            firstDueInvoice.due_date
+          )}`
+        : "Nessuna scadenza aperta.",
+      action: "Vedi dettagli",
+      to: "/invoices",
+      tone: firstDueInvoice ? "warning" : "neutral",
+    },
+  ];
 
-        <div className="kpi-card">
-          <div className="kpi-label">Costi</div>
-          <div className="kpi-value">{formatEuro(pnl.expenses)}</div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-label">Da pagare</div>
-          <div className="kpi-value">
-            {formatEuro(pendingInvoicesAmount)}
-          </div>
-        </div>
-      </div>
-
-      {/* GRID PRINCIPALE */}
-      <div className="main-grid">
-        {/* GRAFICO */}
+  if (loading) {
+    return (
+      <main className="main">
         <div className="card">
+          <div className="card-title">Caricamento dashboard</div>
+          <div className="card-sub">Sto recuperando i dati del mese selezionato.</div>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="main">
+        <div className="card">
+          <div className="card-title">Errore caricamento</div>
+          <div className="card-sub">{error}</div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="main dashboard-page">
+      <div className="dashboard-header">
+        <div>
+          <h1 className="dashboard-title">Buongiorno ☕</h1>
+          <p className="dashboard-subtitle">
+            Panoramica {monthLabel} · aggiornata con i dati disponibili
+          </p>
+        </div>
+
+        <div className="dashboard-actions">
+          <button type="button" className="dashboard-export-btn">
+            📄 Export PDF
+          </button>
+
+          <Link to="/upload" className="dashboard-upload-btn">
+            ⬆️ Carica documento
+          </Link>
+        </div>
+      </div>
+
+      <section className="dashboard-kpi-grid">
+        <article className="dashboard-kpi-card dark">
+          <div className="kpi-label">Margine netto</div>
+          <div className="kpi-value">{formatEuro(pnl.profit)}</div>
+
+          <div className="margin-meter">
+            <div className="margin-bar-wrap">
+              <div
+                className="margin-bar-fill"
+                style={{ width: `${Math.min(100, Math.max(8, marginPercent))}%` }}
+              />
+            </div>
+
+            <div className="margin-labels">
+              <span>0%</span>
+              <span className="margin-highlight">{marginPercent.toFixed(0)}%</span>
+              <span>100%</span>
+            </div>
+          </div>
+        </article>
+
+        <article className="dashboard-kpi-card">
+          <div className="kpi-label">Ricavi totali</div>
+          <div className="kpi-value">{formatEuro(pnl.revenue)}</div>
+          <span className="kpi-pill green">↑ Ricavi registrati</span>
+        </article>
+
+        <article className="dashboard-kpi-card">
+          <div className="kpi-label">Costi totali</div>
+          <div className="kpi-value">{formatEuro(pnl.expenses)}</div>
+          <span className="kpi-pill red">↑ Spese registrate</span>
+        </article>
+
+        <article className="dashboard-kpi-card">
+          <div className="kpi-label">Da pagare</div>
+          <div className="kpi-value">{formatEuro(pendingInvoicesAmount)}</div>
+          <span className="kpi-pill yellow">⚠ {pendingInvoices.length} in sospeso</span>
+        </article>
+      </section>
+
+      <section className="dashboard-content-grid">
+        <article className="card dashboard-chart-card">
           <div className="card-title">Ricavi vs Costi</div>
-          <div className="chart-area">
-            <div className="chart-bars">
-              {trend.map((item, i) => {
-                const r = Number(item.revenue) || 0;
-                const e = Number(item.expenses) || 0;
+          <div className="card-sub">Ultimi 6 mesi</div>
+
+          <div className="chart-bars dashboard-chart-bars">
+            {trend.map((item) => {
+              const revenue = Number(item.revenue) || 0;
+              const expenses = Number(item.expenses) || 0;
+              const active = item.month === month;
+
+              return (
+                <div className="bar-group" key={item.month}>
+                  <div className="bar-pair">
+                    <div
+                      className={`bar ricavi ${active ? "active-bar" : ""}`}
+                      style={{ height: `${Math.max(8, (revenue / trendMax) * 100)}%` }}
+                    />
+                    <div
+                      className={`bar costi ${active ? "active-cost-bar" : ""}`}
+                      style={{ height: `${Math.max(8, (expenses / trendMax) * 100)}%` }}
+                    />
+                  </div>
+
+                  <div className={`bar-month ${active ? "active-month" : ""}`}>
+                    {formatMonthShort(item.month)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="chart-legend">
+            <div className="legend-item">
+              <span className="legend-dot legend-ricavi" /> Ricavi
+            </div>
+            <div className="legend-item">
+              <span className="legend-dot legend-costi" /> Costi
+            </div>
+          </div>
+        </article>
+
+        <div className="dashboard-right-column">
+          <article className="card">
+            <div className="card-title">Prodotti top</div>
+            <div className="card-sub">Per quantità venduta · {monthLabel}</div>
+
+            <div className="product-list">
+              {topProductsList.slice(0, 3).map((product, index) => {
+                const qty = Number(product.quantity) || 0;
+                const width = (qty / maxProductQty) * 100;
 
                 return (
-                  <div className="bar-group" key={item.month}>
-                    <div className="bar-pair">
-                      <div
-                        className="bar ricavi"
-                        style={{ height: `${(r / trendMax) * 100}%` }}
-                      />
-                      <div
-                        className="bar costi"
-                        style={{ height: `${(e / trendMax) * 100}%` }}
-                      />
+                  <div className="product-item" key={product.product || index}>
+                    <div className="product-rank">{index + 1}</div>
+
+                    <div className="product-info">
+                      <div className="product-name">
+                        <span>{productIcon(product.product)}</span> {product.product}
+                      </div>
+
+                      <div className="product-bar-wrap">
+                        <div
+                          className="product-bar-fill"
+                          style={{ width: `${Math.max(12, width)}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="bar-month">
-                      {formatMonthShort(item.month)}
+
+                    <div className="product-stat">
+                      <div className="product-qty">{qty.toFixed(0)}</div>
+                      <div className="product-rev">{formatEuro(product.revenue)}</div>
                     </div>
                   </div>
                 );
               })}
+
+              {!topProductsList.length ? (
+                <p className="small-muted">Nessun prodotto disponibile.</p>
+              ) : null}
             </div>
-          </div>
-        </div>
+          </article>
 
-        {/* TOP PRODOTTI */}
-        <div className="card">
-          <div className="card-title">Prodotti top</div>
-
-          {topProductsList.slice(0, 3).map((p, i) => (
-            <div key={i} className="product-item">
-              <div className="product-rank">{i + 1}</div>
-
-              <div className="product-info">
-                <div className="product-name">{p.product}</div>
-              </div>
-
-              <div className="product-stat">
-                {p.quantity}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* PROMEMORIA */}
-        <div className="card">
-          <div className="card-title">Promemoria</div>
-
-          <ul className="insights-list">
-            {reminders.map((r, i) => (
-              <li key={i}>{r}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* FATTURE CRITICHE */}
-      <div className="card">
-        <div className="card-title">Fatture da controllare</div>
-
-        {criticalInvoices.length ? (
-          criticalInvoices.slice(0, 5).map((inv) => (
-            <div key={inv.id} className="invoice-item overdue">
-              <div className="invoice-info">
-                <div className="invoice-name">{inv.supplier}</div>
-                <div className="invoice-date">
-                  Scade: {inv.due_date}
+          <article className="card dashboard-invoices-card">
+            <div className="invoice-card-head">
+              <div>
+                <div className="card-title">Fatture</div>
+                <div className="card-sub">
+                  {monthLabel} · {currentMonthInvoices.length} totali
                 </div>
               </div>
 
-              <div className="invoice-amount">
-                {formatEuro(inv.total)}
+              <Link to="/invoices" className="see-all-btn">
+                Vedi tutte →
+              </Link>
+            </div>
+
+            <div className="invoice-mini-stats">
+              <div className="invoice-mini-stat paid">
+                <strong>{paidInvoices.length}</strong>
+                <span>Pagate</span>
+              </div>
+
+              <div className="invoice-mini-stat due">
+                <strong>{dueInvoices.length}</strong>
+                <span>In scadenza</span>
+              </div>
+
+              <div className="invoice-mini-stat overdue">
+                <strong>{overdueInvoices.length}</strong>
+                <span>Scadute</span>
               </div>
             </div>
-          ))
-        ) : (
-          <p className="small-muted">Nessuna criticità</p>
-        )}
-      </div>
+
+            <div className="invoice-critical-list">
+              {criticalInvoices.length ? (
+                criticalInvoices.map((invoice) => {
+                  const overdue = isOverdue(invoice);
+
+                  return (
+                    <div
+                      key={invoice.id}
+                      className={`invoice-critical-item ${
+                        overdue ? "overdue" : "due"
+                      }`}
+                    >
+                      <div className="invoice-critical-icon">
+                        {overdue ? "🧾" : "⏰"}
+                      </div>
+
+                      <div className="invoice-critical-info">
+                        <strong>{invoice.supplier || "Fornitore"}</strong>
+                        <span>
+                          {overdue ? "scaduta il" : "scade il"}{" "}
+                          {formatShortDate(invoice.due_date)}
+                        </span>
+                      </div>
+
+                      <div className="invoice-critical-amount">
+                        {formatEuro(invoice.total)}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="small-muted">Nessuna fattura critica.</p>
+              )}
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="daily-reminder-card">
+        <div className="daily-reminder-head">
+          <div className="daily-reminder-icon">☀️</div>
+
+          <div>
+            <h2>Promemoria di oggi — {todayLabel}</h2>
+            <p>Controlla questi punti prima di iniziare la giornata</p>
+          </div>
+        </div>
+
+        <div className="daily-reminder-scroll">
+          {reminders.map((item) => (
+            <Link
+              to={item.to}
+              className={`daily-reminder-item ${item.tone}`}
+              key={item.title}
+            >
+              <div className="daily-reminder-top">
+                <span className="daily-reminder-big-icon">{item.icon}</span>
+                <span className="daily-reminder-badge">{item.badge}</span>
+              </div>
+
+              <strong>{item.title}</strong>
+              <p>{item.text}</p>
+
+              <span className="daily-reminder-action">{item.action} →</span>
+            </Link>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }

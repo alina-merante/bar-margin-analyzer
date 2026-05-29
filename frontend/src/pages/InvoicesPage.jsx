@@ -1,24 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-
-const MONTH_NAMES = [
-  { value: "01", label: "Gennaio" },
-  { value: "02", label: "Febbraio" },
-  { value: "03", label: "Marzo" },
-  { value: "04", label: "Aprile" },
-  { value: "05", label: "Maggio" },
-  { value: "06", label: "Giugno" },
-  { value: "07", label: "Luglio" },
-  { value: "08", label: "Agosto" },
-  { value: "09", label: "Settembre" },
-  { value: "10", label: "Ottobre" },
-  { value: "11", label: "Novembre" },
-  { value: "12", label: "Dicembre" },
-];
+import { useMemo, useState } from "react";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
     style: "currency",
     currency: "EUR",
+    maximumFractionDigits: 0,
   }).format(Number(value) || 0);
 }
 
@@ -30,7 +16,7 @@ function formatDate(value) {
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
-    month: "long",
+    month: "2-digit",
     year: "numeric",
   }).format(date);
 }
@@ -46,407 +32,584 @@ function formatMonthHuman(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
-function shiftMonth(month, delta) {
-  const baseMonth = month || new Date().toISOString().slice(0, 7);
-  const [year, monthNum] = baseMonth.split("-").map(Number);
-
-  const date = new Date(year, monthNum - 1 + delta, 1);
-  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
-
-  return `${date.getFullYear()}-${nextMonth}`;
-}
-
 function getInvoiceMonthKey(issueDate) {
   if (!issueDate) return "";
 
   if (typeof issueDate === "string") {
     const isoMatch = issueDate.match(/^(\d{4})-(\d{2})/);
     if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
-
-    const italianMatch = issueDate.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-    if (italianMatch) return `${italianMatch[3]}-${italianMatch[2]}`;
   }
 
   const date = new Date(issueDate);
   if (Number.isNaN(date.getTime())) return "";
 
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-
-  return `${year}-${month}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function buildYearOptions(invoices = [], selectedMonth) {
-  const years = new Set();
-
-  invoices.forEach((invoice) => {
-    const invoiceMonth = getInvoiceMonthKey(invoice.issue_date);
-    const year = invoiceMonth.slice(0, 4);
-
-    if (year) years.add(year);
-  });
-
-  if (selectedMonth) {
-    years.add(selectedMonth.slice(0, 4));
-  }
-
-  const currentYear = new Date().getFullYear();
-
-  for (let i = 0; i < 6; i += 1) {
-    years.add(String(currentYear - i));
-  }
-
-  return [...years].sort((a, b) => Number(b) - Number(a));
+function isOverdue(invoice) {
+  if (invoice.status === "paid") return false;
+  if (!invoice.due_date) return false;
+  return new Date(invoice.due_date) < new Date();
 }
 
-function getInvoiceStatusLabel(status, dueDate) {
-  if (status === "paid") return "Pagata";
-
-  const date = dueDate ? new Date(dueDate) : null;
-
-  if (date && !Number.isNaN(date.getTime()) && date < new Date()) {
-    return "Scaduta";
-  }
-
-  return "In scadenza";
+function isDue(invoice) {
+  if (invoice.status === "paid") return false;
+  if (!invoice.due_date) return true;
+  return new Date(invoice.due_date) >= new Date();
 }
 
-function getInvoiceStatusClass(status, dueDate) {
-  if (status === "paid") return "paid";
-
-  const date = dueDate ? new Date(dueDate) : null;
-
-  if (date && !Number.isNaN(date.getTime()) && date < new Date()) {
-    return "overdue";
-  }
-
+function getInvoiceStatus(invoice) {
+  if (invoice.status === "paid") return "paid";
+  if (isOverdue(invoice)) return "overdue";
   return "due";
 }
 
+function getStatusLabel(invoice) {
+  const status = getInvoiceStatus(invoice);
+
+  if (status === "paid") return "Pagata";
+  if (status === "overdue") return "Scaduta";
+  return "In scadenza";
+}
+
+function getCategoryIcon(category = "") {
+  const lower = category.toLowerCase();
+
+  if (lower.includes("caff")) return "☕";
+  if (lower.includes("latte") || lower.includes("lattiero")) return "🥛";
+  if (lower.includes("dolci") || lower.includes("pane")) return "🥐";
+  if (lower.includes("bevande")) return "🍹";
+
+  return "🧾";
+}
+
+function getInvoiceDocumentUrl(invoice) {
+  const rawUrl =
+    invoice?.file_url ||
+    invoice?.document_url ||
+    invoice?.document_path ||
+    invoice?.url ||
+    "";
+
+  if (!rawUrl) return "";
+
+  if (rawUrl.startsWith("http")) return rawUrl;
+
+  return `/api${rawUrl}`;
+}
+
+const EMPTY_MANUAL_FORM = {
+  supplier: "",
+  invoice_number: "",
+  issue_date: "",
+  due_date: "",
+  category: "",
+  total: "",
+  vat: "",
+};
+
 export default function InvoicesPage({
   month,
-  setMonth,
   invoices = [],
   invoiceUploadMessage,
   invoiceUploadError,
   invoiceUploading,
-  handleInvoiceDocumentUpload,
   handleDeleteInvoice,
   invoiceDeleteError,
+  handleCreateManualInvoice,
+  handleInvoiceDocumentUpload,
 }) {
-  const initialMonth = month || new Date().toISOString().slice(0, 7);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
 
-  const [supplierFilter, setSupplierFilter] = useState("");
-  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
-  const [pickerYear, setPickerYear] = useState(initialMonth.slice(0, 4));
+  const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
+  const [manualError, setManualError] = useState("");
+  const [manualSaving, setManualSaving] = useState(false);
 
-  useEffect(() => {
-    if (!month) {
-      setMonth(initialMonth);
+  function updateManualForm(field, value) {
+    setManualForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+
+    if (manualError) setManualError("");
+  }
+
+  function closeManualModal() {
+    if (manualSaving) return;
+
+    setManualOpen(false);
+    setManualError("");
+    setManualForm(EMPTY_MANUAL_FORM);
+  }
+
+  function closeInvoicePreview() {
+    setSelectedInvoice(null);
+  }
+
+  async function submitManualInvoice() {
+    const requiredFields = [
+      "supplier",
+      "invoice_number",
+      "issue_date",
+      "due_date",
+      "category",
+      "total",
+      "vat",
+    ];
+
+    const hasEmptyFields = requiredFields.some(
+      (field) => !String(manualForm[field] || "").trim()
+    );
+
+    if (hasEmptyFields) {
+      setManualError("Compila tutti i campi prima di salvare la fattura.");
       return;
     }
 
-    setPickerYear(month.slice(0, 4));
-  }, [month, setMonth, initialMonth]);
+    if (Number(manualForm.total) <= 0) {
+      setManualError("Il totale deve essere maggiore di zero.");
+      return;
+    }
 
-  const suppliers = useMemo(() => {
-    const unique = [...new Set(invoices.map((i) => i.supplier).filter(Boolean))];
+    if (Number(manualForm.vat) < 0) {
+      setManualError("L'IVA non può essere negativa.");
+      return;
+    }
 
-    return unique.sort((a, b) => a.localeCompare(b, "it"));
-  }, [invoices]);
+    if (new Date(manualForm.due_date) < new Date(manualForm.issue_date)) {
+      setManualError("La scadenza non può essere precedente alla data di emissione.");
+      return;
+    }
+
+    if (!handleCreateManualInvoice) {
+      setManualError("Funzione di salvataggio manuale non collegata.");
+      return;
+    }
+
+    try {
+      setManualSaving(true);
+      setManualError("");
+
+      await handleCreateManualInvoice({
+        supplier: manualForm.supplier.trim(),
+        invoice_number: manualForm.invoice_number.trim(),
+        issue_date: manualForm.issue_date,
+        due_date: manualForm.due_date,
+        category: manualForm.category.trim(),
+        total: Number(manualForm.total),
+        vat: Number(manualForm.vat),
+        status: "pending",
+      });
+
+      setManualForm(EMPTY_MANUAL_FORM);
+      setManualOpen(false);
+    } catch (err) {
+      console.error(err);
+      setManualError("Errore durante il salvataggio della fattura.");
+    } finally {
+      setManualSaving(false);
+    }
+  }
+
+  const currentMonthInvoices = useMemo(() => {
+    return invoices.filter((invoice) => getInvoiceMonthKey(invoice.issue_date) === month);
+  }, [invoices, month]);
+
+  const paidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
+  const dueInvoices = currentMonthInvoices.filter(isDue);
+  const overdueInvoices = currentMonthInvoices.filter(isOverdue);
+
+  const categories = useMemo(() => {
+    return [
+      ...new Set(currentMonthInvoices.map((invoice) => invoice.category).filter(Boolean)),
+    ].sort((a, b) => a.localeCompare(b, "it"));
+  }, [currentMonthInvoices]);
 
   const filteredInvoices = useMemo(() => {
-    return invoices.filter((invoice) => {
-      const invoiceMonth = getInvoiceMonthKey(invoice.issue_date);
-      const matchesMonth = !month || invoiceMonth === month;
+    return currentMonthInvoices.filter((invoice) => {
+      const status = getInvoiceStatus(invoice);
+      const matchesStatus = statusFilter === "all" || status === statusFilter;
+
       const matchesSupplier =
-        !supplierFilter || invoice.supplier === supplierFilter;
+        !supplierSearch ||
+        invoice.supplier?.toLowerCase().includes(supplierSearch.toLowerCase());
 
-      return matchesMonth && matchesSupplier;
+      const matchesCategory = !categoryFilter || invoice.category === categoryFilter;
+
+      return matchesStatus && matchesSupplier && matchesCategory;
     });
-  }, [invoices, month, supplierFilter]);
+  }, [currentMonthInvoices, statusFilter, supplierSearch, categoryFilter]);
 
-  const yearOptions = buildYearOptions(invoices, month);
-  const selectedMonthNumber = month?.slice(5, 7) || "01";
+  const totalAmount = currentMonthInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
 
-  function applyMonthYear(nextMonthNumber, nextYear) {
-    setMonth(`${nextYear}-${nextMonthNumber}`);
-    setIsMonthPickerOpen(false);
-  }
+  const paidAmount = paidInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
 
-  function goToPreviousMonth() {
-    setMonth(shiftMonth(month, -1));
-  }
+  const dueAmount = dueInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
 
-  function goToNextMonth() {
-    setMonth(shiftMonth(month, 1));
-  }
+  const overdueAmount = overdueInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
+
+  const selectedInvoiceDocumentUrl = getInvoiceDocumentUrl(selectedInvoice);
 
   return (
-    <main className="main invoices-page">
-      <section className="upload-hero">
-        <h1 className="upload-page-title">Fatture 🧾</h1>
-        <p className="upload-page-subtitle">
-          Carica una foto o un PDF della fattura e l&apos;AI estrae automaticamente i dati
-        </p>
-      </section>
+    <main className="main invoices-dashboard-page">
+      <section className="invoices-dashboard-header">
+        <div>
+          <h1 className="invoices-dashboard-title">Fatture 🧾</h1>
+          <p className="invoices-dashboard-subtitle">
+            {formatMonthHuman(month)} · {currentMonthInvoices.length} fatture ·{" "}
+            {formatEuro(totalAmount)} totale
+          </p>
+        </div>
 
-      <section className="upload-section">
-        <div className="upload-section-label">📥 Acquisizione fatture</div>
+        <div className="invoices-dashboard-actions">
+          <button
+            type="button"
+            className="invoice-manual-btn"
+            onClick={() => setManualOpen(true)}
+          >
+            ✏️ Inserisci manuale
+          </button>
 
-        <div className="invoice-top-grid">
-          <article className="upload-doc-card warm">
-            <div className="upload-doc-head">
-              <div className="upload-doc-icon">🧾</div>
-              <div>
-                <h2 className="upload-doc-title">Carica fattura</h2>
-                <p className="upload-doc-text">
-                  Puoi caricare foto, scansioni o PDF. Il sistema prova a leggere automaticamente
-                  fornitore, numero, date e importi.
-                </p>
-              </div>
-            </div>
+          <label className="invoice-upload-btn">
+            ⬆️ Carica fattura
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,.xml"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
 
-            <div className="upload-doc-tags">
-              <span className="upload-doc-tag">PDF</span>
-              <span className="upload-doc-tag">JPG</span>
-              <span className="upload-doc-tag">PNG</span>
-              <span className="upload-doc-tag">XML SDI</span>
-            </div>
+                if (file && handleInvoiceDocumentUpload) {
+                  handleInvoiceDocumentUpload(file);
+                }
 
-            <label className="upload-dropzone">
-              <input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.xml"
-                hidden
-                onChange={(e) => handleInvoiceDocumentUpload(e.target.files?.[0])}
-              />
-              <div className="upload-dropzone-icon">📂</div>
-              <div className="upload-dropzone-title">Trascina fattura o foto</div>
-              <div className="upload-dropzone-sub">
-                oppure <span>clicca per selezionare</span>
-              </div>
-            </label>
-
-            <div className="upload-feedback-area">
-              {invoiceUploading ? (
-                <p className="upload-feedback">Estrazione dati in corso...</p>
-              ) : null}
-
-              {invoiceUploadMessage ? (
-                <p className="upload-feedback success">{invoiceUploadMessage}</p>
-              ) : null}
-
-              {invoiceDeleteError ? (
-                <p className="upload-feedback error">{invoiceDeleteError}</p>
-              ) : null}
-
-              {invoiceUploadError ? (
-                <p className="upload-feedback error">{invoiceUploadError}</p>
-              ) : null}
-            </div>
-          </article>
-
-          <article className="upload-doc-card cool">
-            <div className="upload-doc-head">
-              <div className="upload-doc-icon">📊</div>
-              <div>
-                <h2 className="upload-doc-title">Riepilogo fatture</h2>
-                <p className="upload-doc-text">
-                  Vista operativa delle fatture acquisite nel mese selezionato.
-                </p>
-              </div>
-            </div>
-
-            <div className="invoice-summary-grid">
-              <div className="invoice-summary-box">
-                <div className="invoice-summary-label">Totali</div>
-                <div className="invoice-summary-value">{filteredInvoices.length}</div>
-              </div>
-
-              <div className="invoice-summary-box">
-                <div className="invoice-summary-label">Da pagare</div>
-                <div className="invoice-summary-value">
-                  {filteredInvoices.filter((i) => i.status === "pending").length}
-                </div>
-              </div>
-
-              <div className="invoice-summary-box">
-                <div className="invoice-summary-label">Importo totale</div>
-                <div className="invoice-summary-value">
-                  {formatEuro(
-                    filteredInvoices.reduce(
-                      (sum, invoice) => sum + (Number(invoice.total) || 0),
-                      0
-                    )
-                  )}
-                </div>
-              </div>
-            </div>
-          </article>
+                event.target.value = "";
+              }}
+            />
+          </label>
         </div>
       </section>
 
-      <section className="upload-section">
-        <div className="upload-section-label">🔎 Filtri</div>
+      <section className="invoice-kpi-grid">
+        <article className="invoice-kpi-card">
+          <div className="invoice-kpi-label">Totale fatture</div>
+          <div className="invoice-kpi-value">{formatEuro(totalAmount)}</div>
+          <span className="invoice-kpi-pill blue">
+            {currentMonthInvoices.length} documenti
+          </span>
+        </article>
 
-        <div className="invoice-filters-card">
-          <div className="invoice-filters-grid">
-            <div className="invoice-filter-field">
-              <label>Mese selezionato</label>
+        <article className="invoice-kpi-card">
+          <div className="invoice-kpi-label">Pagate</div>
+          <div className="invoice-kpi-value">{formatEuro(paidAmount)}</div>
+          <span className="invoice-kpi-pill green">✓ {paidInvoices.length} fatture</span>
+        </article>
 
-              <div className="month-filter-pretty month-filter-popup-wrap">
-                <button
-                  type="button"
-                  className="month-nav-btn"
-                  onClick={goToPreviousMonth}
-                  title="Mese precedente"
-                >
-                  ◀
-                </button>
+        <article className="invoice-kpi-card">
+          <div className="invoice-kpi-label">In scadenza</div>
+          <div className="invoice-kpi-value">{formatEuro(dueAmount)}</div>
+          <span className="invoice-kpi-pill yellow">⏰ {dueInvoices.length} fatture</span>
+        </article>
 
-                <button
-                  type="button"
-                  className="month-filter-trigger"
-                  onClick={() => setIsMonthPickerOpen((prev) => !prev)}
-                >
-                  <span>{formatMonthHuman(month)}</span>
-                  <span className="month-filter-trigger-icon">▾</span>
-                </button>
+        <article className="invoice-kpi-card dark">
+          <div className="invoice-kpi-label">Scadute</div>
+          <div className="invoice-kpi-value">{formatEuro(overdueAmount)}</div>
+          <span className="invoice-kpi-pill red">⚠ Pagamento urgente</span>
+        </article>
+      </section>
 
-                <button
-                  type="button"
-                  className="month-nav-btn"
-                  onClick={goToNextMonth}
-                  title="Mese successivo"
-                >
-                  ▶
-                </button>
+      <section className="invoice-filters-row">
+        <button
+          type="button"
+          className={`invoice-status-filter ${statusFilter === "all" ? "active" : ""}`}
+          onClick={() => setStatusFilter("all")}
+        >
+          Tutte ({currentMonthInvoices.length})
+        </button>
 
-                {isMonthPickerOpen ? (
-                  <div className="month-picker-popover">
-                    <div className="month-picker-popover-title">
-                      Seleziona periodo
-                    </div>
+        <button
+          type="button"
+          className={`invoice-status-filter ${statusFilter === "paid" ? "active" : ""}`}
+          onClick={() => setStatusFilter("paid")}
+        >
+          ✓ Pagate ({paidInvoices.length})
+        </button>
 
-                    <div className="month-picker-year-list">
-                      {yearOptions.map((year) => (
-                        <button
-                          key={year}
-                          type="button"
-                          className={`month-picker-year-btn ${
-                            pickerYear === year ? "active" : ""
-                          }`}
-                          onClick={() => setPickerYear(year)}
-                        >
-                          {year}
-                        </button>
-                      ))}
-                    </div>
+        <button
+          type="button"
+          className={`invoice-status-filter ${statusFilter === "due" ? "active" : ""}`}
+          onClick={() => setStatusFilter("due")}
+        >
+          ⏰ In scadenza ({dueInvoices.length})
+        </button>
 
-                    <div className="month-picker-grid">
-                      {MONTH_NAMES.map((item) => (
-                        <button
-                          key={item.value}
-                          type="button"
-                          className={`month-picker-month-btn ${
-                            selectedMonthNumber === item.value &&
-                            month?.slice(0, 4) === pickerYear
-                              ? "active"
-                              : ""
-                          }`}
-                          onClick={() => applyMonthYear(item.value, pickerYear)}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+        <button
+          type="button"
+          className={`invoice-status-filter ${
+            statusFilter === "overdue" ? "active danger" : ""
+          }`}
+          onClick={() => setStatusFilter("overdue")}
+        >
+          ✗ Scadute ({overdueInvoices.length})
+        </button>
+
+        <div className="invoice-search-box">
+          🔍
+          <input
+            value={supplierSearch}
+            onChange={(event) => setSupplierSearch(event.target.value)}
+            placeholder="Cerca fornitore..."
+          />
+        </div>
+
+        <select
+          className="invoice-category-select"
+          value={categoryFilter}
+          onChange={(event) => setCategoryFilter(event.target.value)}
+        >
+          <option value="">Categoria</option>
+          {categories.map((category) => (
+            <option key={category} value={category}>
+              {category}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      <section className="invoice-modern-table-card">
+      <div className="invoice-clean-table-head">
+        <div>FORNITORE</div>
+        <div>N° FATTURA</div>
+        <div>EMESSA</div>
+        <div>SCADENZA</div>
+        <div>CATEGORIA</div>
+        <div>TOTALE</div>
+        <div>VISUALIZZA</div>
+        <div>ELIMINA</div>
+      </div>
+
+        {filteredInvoices.length ? (
+          filteredInvoices.map((invoice) => {
+            const status = getInvoiceStatus(invoice);
+
+            return (
+              <div className={`invoice-clean-table-row ${status}`} key={invoice.id}>
+                <div className="invoice-modern-supplier">
+                  {invoice.supplier || "Fornitore"}
+                </div>
+
+                <div className="invoice-modern-number">
+                  {invoice.invoice_number || "-"}
+                </div>
+
+                <div>{formatDate(invoice.issue_date)}</div>
+
+                <div className="invoice-modern-due">{formatDate(invoice.due_date)}</div>
+
+                <div className="invoice-modern-category">
+                  {getCategoryIcon(invoice.category)} {invoice.category || "Altro"}
+                </div>
+
+                <div className="invoice-modern-total">{formatEuro(invoice.total)}</div>
+
+                <div className="invoice-action-cell">
+  <button
+    type="button"
+    className="invoice-icon-btn"
+    onClick={() => setSelectedInvoice(invoice)}
+    title="Visualizza fattura"
+  >
+    👁️
+  </button>
+</div>
+
+<div className="invoice-action-cell">
+  <button
+    type="button"
+    className="invoice-icon-btn delete"
+    onClick={() => {
+      if (window.confirm("Vuoi eliminare questa fattura?")) {
+        handleDeleteInvoice(invoice.id);
+      }
+    }}
+    title="Elimina fattura"
+  >
+    🗑️
+  </button>
+</div>
               </div>
+            );
+          })
+        ) : (
+          <p className="small-muted">
+            Nessuna fattura disponibile con i filtri selezionati.
+          </p>
+        )}
+
+        {filteredInvoices.length ? (
+          <div className="invoice-table-footer">
+            Mostrate {filteredInvoices.length} di {currentMonthInvoices.length} fatture
+          </div>
+        ) : null}
+      </section>
+
+      <div className="upload-feedback-area">
+        {invoiceUploading ? <p className="upload-feedback">Caricamento in corso...</p> : null}
+
+        {invoiceUploadMessage ? (
+          <p className="upload-feedback success">{invoiceUploadMessage}</p>
+        ) : null}
+
+        {invoiceDeleteError ? (
+          <p className="upload-feedback error">{invoiceDeleteError}</p>
+        ) : null}
+
+        {invoiceUploadError ? (
+          <p className="upload-feedback error">{invoiceUploadError}</p>
+        ) : null}
+      </div>
+
+     {selectedInvoice ? (
+  <div className="invoice-preview-backdrop">
+    <div className="invoice-preview-modal only-document">
+      <button
+        type="button"
+        className="invoice-preview-floating-close"
+        onClick={closeInvoicePreview}
+      >
+        ✕
+      </button>
+
+      <div className="invoice-preview-body invoice-preview-body-only-document">
+        {selectedInvoiceDocumentUrl ? (
+          <div className="invoice-preview-document full">
+            {selectedInvoiceDocumentUrl.match(/\.(jpg|jpeg|png|webp)$/i) ? (
+              <img
+                src={selectedInvoiceDocumentUrl}
+                alt="Fattura"
+              />
+            ) : (
+              <iframe
+                title="Documento fattura"
+                src={selectedInvoiceDocumentUrl}
+              />
+            )}
+          </div>
+        ) : (
+          <div className="invoice-preview-empty">
+            <div>🧾</div>
+            <h3>Documento non disponibile</h3>
+            <p>
+              Questa fattura non ha un file associato.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+) : null}
+
+      {manualOpen ? (
+        <div className="invoice-manual-modal-backdrop">
+          <div className="invoice-manual-modal">
+            <div className="invoice-manual-modal-head">
+              <div>
+                <h2>Inserisci fattura manuale</h2>
+                <p>Compila tutti i campi per salvare la fattura.</p>
+              </div>
+
+              <button type="button" onClick={closeManualModal} disabled={manualSaving}>
+                ✕
+              </button>
             </div>
 
-            <div className="invoice-filter-field">
-              <label>Fornitore</label>
+            <div className="invoice-manual-grid">
+              <input
+                value={manualForm.supplier}
+                onChange={(event) => updateManualForm("supplier", event.target.value)}
+                placeholder="Fornitore"
+              />
 
-              <select
-                value={supplierFilter}
-                onChange={(e) => setSupplierFilter(e.target.value)}
+              <input
+                value={manualForm.invoice_number}
+                onChange={(event) =>
+                  updateManualForm("invoice_number", event.target.value)
+                }
+                placeholder="Numero fattura"
+              />
+
+              <input
+                type="date"
+                value={manualForm.issue_date}
+                onChange={(event) => updateManualForm("issue_date", event.target.value)}
+              />
+
+              <input
+                type="date"
+                value={manualForm.due_date}
+                onChange={(event) => updateManualForm("due_date", event.target.value)}
+              />
+
+              <input
+                value={manualForm.category}
+                onChange={(event) => updateManualForm("category", event.target.value)}
+                placeholder="Categoria"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualForm.total}
+                onChange={(event) => updateManualForm("total", event.target.value)}
+                placeholder="Totale"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualForm.vat}
+                onChange={(event) => updateManualForm("vat", event.target.value)}
+                placeholder="IVA"
+              />
+            </div>
+
+            {manualError ? <p className="upload-feedback error">{manualError}</p> : null}
+
+            <div className="invoice-manual-actions">
+              <button type="button" onClick={closeManualModal} disabled={manualSaving}>
+                Annulla
+              </button>
+
+              <button
+                type="button"
+                className="invoice-upload-btn"
+                onClick={submitManualInvoice}
+                disabled={manualSaving}
               >
-                <option value="">Tutti i fornitori</option>
-
-                {suppliers.map((supplier) => (
-                  <option key={supplier} value={supplier}>
-                    {supplier}
-                  </option>
-                ))}
-              </select>
+                {manualSaving ? "Salvataggio..." : "Salva fattura"}
+              </button>
             </div>
           </div>
         </div>
-      </section>
-
-      <section className="upload-section">
-        <div className="upload-section-label">📋 Elenco fatture</div>
-
-        <div className="invoice-list-card">
-          {filteredInvoices.length ? (
-            <div className="invoice-table">
-              <div className="invoice-table-head">
-                <div>Fornitore</div>
-                <div>Numero</div>
-                <div>Emissione</div>
-                <div>Scadenza</div>
-                <div>Totale</div>
-                <div>Stato</div>
-                <div>Azioni</div>
-              </div>
-
-              {filteredInvoices.map((invoice) => {
-                const visualStatus = getInvoiceStatusClass(
-                  invoice.status,
-                  invoice.due_date
-                );
-
-                return (
-                  <div className="invoice-table-row" key={invoice.id}>
-                    <div>{invoice.supplier || "-"}</div>
-                    <div>{invoice.invoice_number || "-"}</div>
-                    <div>{formatDate(invoice.issue_date)}</div>
-                    <div>{formatDate(invoice.due_date)}</div>
-                    <div>{formatEuro(invoice.total)}</div>
-
-                    <div>
-                      <span className={`invoice-status ${visualStatus}`}>
-                        {getInvoiceStatusLabel(invoice.status, invoice.due_date)}
-                      </span>
-                    </div>
-
-                    <div>
-                      <button
-                        type="button"
-                        className="invoice-delete-btn"
-                        onClick={() => {
-                          if (window.confirm("Vuoi eliminare questa fattura?")) {
-                            handleDeleteInvoice(invoice.id);
-                          }
-                        }}
-                        title="Elimina fattura"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="small-muted">
-              Nessuna fattura disponibile con i filtri selezionati.
-            </p>
-          )}
-        </div>
-      </section>
+      ) : null}
     </main>
   );
 }

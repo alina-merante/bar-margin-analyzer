@@ -3,7 +3,9 @@ import io
 import re
 import xml.etree.ElementTree as ET
 from decimal import Decimal
-
+import os
+import uuid
+from sqlalchemy import func, select
 import pytesseract
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pdf2image import convert_from_bytes
@@ -363,8 +365,9 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
         "total": float(invoice.total),
         "vat": float(invoice.vat),
         "status": invoice.status.value,
-    }
+        "file_url": row.file_url,
 
+    }
 
 @router.post("/invoices/extract")
 async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
@@ -378,6 +381,17 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
     try:
+        os.makedirs("uploads/invoices", exist_ok=True)
+
+        extension = filename.rsplit(".", 1)[-1]
+        safe_filename = f"{uuid.uuid4()}.{extension}"
+        file_path = os.path.join("uploads", "invoices", safe_filename)
+
+        with open(file_path, "wb") as output:
+            output.write(content)
+
+        file_url = f"/uploads/invoices/{safe_filename}"
+
         if filename.endswith(".xml"):
             extracted = extract_invoice_from_xml(content)
 
@@ -397,6 +411,37 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
         normalized = normalize_extracted_invoice(extracted)
 
+        existing_invoice = db.scalar(
+            select(Invoice).where(
+                Invoice.supplier == normalized["supplier"],
+                Invoice.invoice_number == normalized["invoice_number"],
+            )
+        )
+
+        if existing_invoice:
+            existing_invoice.file_url = file_url
+            existing_invoice.issue_date = normalized["issue_date"]
+            existing_invoice.due_date = normalized["due_date"]
+            existing_invoice.total = normalized["total"]
+            existing_invoice.vat = normalized["vat"]
+            existing_invoice.status = InvoiceStatus.pending
+
+            db.commit()
+            db.refresh(existing_invoice)
+
+            return {
+                "id": existing_invoice.id,
+                "supplier": existing_invoice.supplier,
+                "invoice_number": existing_invoice.invoice_number,
+                "issue_date": existing_invoice.issue_date.isoformat(),
+                "due_date": existing_invoice.due_date.isoformat(),
+                "total": float(existing_invoice.total),
+                "vat": float(existing_invoice.vat),
+                "status": existing_invoice.status.value,
+                "file_url": existing_invoice.file_url,
+                "already_exists": True,
+            }
+
         invoice = Invoice(
             supplier=normalized["supplier"],
             invoice_number=normalized["invoice_number"],
@@ -405,6 +450,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             total=normalized["total"],
             vat=normalized["vat"],
             status=InvoiceStatus.pending,
+            file_url=file_url,
         )
 
         db.add(invoice)
@@ -420,6 +466,8 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             "total": float(invoice.total),
             "vat": float(invoice.vat),
             "status": invoice.status.value,
+            "file_url": invoice.file_url,
+            "already_exists": False,
         }
 
     except HTTPException:
@@ -466,6 +514,7 @@ def list_invoices(
             "total": float(row.total),
             "vat": float(row.vat),
             "status": row.status.value,
+            "file_url": row.file_url,
         }
         for row in invoices
     ]

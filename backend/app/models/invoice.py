@@ -2,11 +2,12 @@ import datetime as dt
 import enum
 from decimal import Decimal
 
-from sqlalchemy import Date, Enum, Numeric, String
+from sqlalchemy import Column, Date, Enum, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+from sqlalchemy import String
 
 class InvoiceStatus(str, enum.Enum):
     pending = "pending"
@@ -29,5 +30,5 @@ class Invoice(Base):
         default=InvoiceStatus.pending,
         index=True,
     )
-
+    file_url = Column(String, nullable=True)
     payment_links = relationship("InvoicePaymentLink", back_populates="invoice", cascade="all, delete-orphan")
