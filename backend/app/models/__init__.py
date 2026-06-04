@@ -7,6 +7,7 @@ from app.models.payment import Payment, PaymentMethod
 from app.models.product import Product
 from app.models.sale_line import SaleLine
 from app.models.transaction import Transaction
+from app.models.document import Document
 
 __all__ = [
     "Base",

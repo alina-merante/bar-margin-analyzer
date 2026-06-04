@@ -22,6 +22,15 @@ function formatMonthLabel(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
+function getDocumentPreviewUrl(document) {
+  const rawUrl = document?.preview_url || document?.file_url || "";
+
+  if (!rawUrl) return "";
+  if (rawUrl.startsWith("http")) return rawUrl;
+
+  return `/api${rawUrl}`;
+}
+
 export default function UploadPage({
   month,
   handleUpload,
@@ -33,75 +42,58 @@ export default function UploadPage({
   invoiceCountThisMonth,
   latestInvoiceDate,
   handleInvoiceDocumentUpload,
+
+  documents = [],
+  handleGenericDocumentUpload,
+  handleDeleteDocument,
+  documentUploading,
+  documentUploadMessage,
+  documentUploadError,
+  documentDeleteError,
 }) {
   const navigate = useNavigate();
 
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
-  const [documentMessage, setDocumentMessage] = useState("");
-  const [otherDocuments, setOtherDocuments] = useState([]);
-  const [otherDocumentProcessing, setOtherDocumentProcessing] = useState(false);
+  const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
+  const [localDocumentMessage, setLocalDocumentMessage] = useState("");
+
+  const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
+
+function openOtherDocumentPreview(document) {
+  setSelectedOtherDocument(document);
+}
 
   async function uploadInvoiceAndGoToInvoices(file) {
     if (!file || !handleInvoiceDocumentUpload) return;
 
     try {
-      setDocumentMessage("");
+      setLocalDocumentMessage("");
       await handleInvoiceDocumentUpload(file);
       navigate("/invoices");
     } catch (err) {
       console.error(err);
-      setDocumentMessage("Errore durante il caricamento della fattura.");
+      setLocalDocumentMessage("Errore durante il caricamento della fattura.");
     }
   }
 
-  function handleCashDocument(file) {
+  async function handleCashDocument(file) {
     if (!file) return;
 
-    setDocumentMessage(
-      `Prima nota selezionata: ${file.name}. Collegamento backend da completare.`
-    );
+    if (handleGenericDocumentUpload) {
+      await handleGenericDocumentUpload(file);
+    }
+
     setActiveHistoryTab("cash");
   }
 
   async function handleOtherDocument(file) {
     if (!file) return;
 
-    setOtherDocumentProcessing(true);
-    setDocumentMessage("");
+    if (handleGenericDocumentUpload) {
+      await handleGenericDocumentUpload(file);
+    }
+
     setActiveHistoryTab("other");
-
-    const extension = file.name.split(".").pop()?.toUpperCase() || "FILE";
-
-    setTimeout(() => {
-      const newDocument = {
-        id: `${file.name}-${Date.now()}`,
-        name: file.name,
-        type: extension,
-        category:
-          extension === "PDF"
-            ? "Documento PDF"
-            : ["XLS", "XLSX", "CSV"].includes(extension)
-            ? "Documento tabellare"
-            : ["JPG", "JPEG", "PNG", "WEBP"].includes(extension)
-            ? "Immagine"
-            : "Documento generico",
-        result:
-          extension === "PDF"
-            ? "Testo rilevato e pronto per classificazione"
-            : ["XLS", "XLSX", "CSV"].includes(extension)
-            ? "Dati strutturati rilevati"
-            : ["JPG", "JPEG", "PNG", "WEBP"].includes(extension)
-            ? "Immagine acquisita per lettura AI"
-            : "Documento acquisito",
-        uploadedAt: new Date().toISOString(),
-        status: "Elaborato",
-      };
-
-      setOtherDocuments((prev) => [newDocument, ...prev]);
-
-      setDocumentMessage(`Documento analizzato: ${file.name}`);
-      setOtherDocumentProcessing(false);
-    }, 1200);
   }
 
   return (
@@ -141,6 +133,7 @@ export default function UploadPage({
                 onChange={(e) => {
                   handleUpload(e.target.files?.[0], "pos");
                   setActiveHistoryTab("cash");
+                  e.target.value = "";
                 }}
               />
               <div className="upload-dropzone-icon">📂</div>
@@ -182,7 +175,10 @@ export default function UploadPage({
                 type="file"
                 accept=".csv,.xlsx,.xls,.pdf"
                 hidden
-                onChange={(e) => handleUpload(e.target.files?.[0], "bank")}
+                onChange={(e) => {
+                  handleUpload(e.target.files?.[0], "bank");
+                  e.target.value = "";
+                }}
               />
               <div className="upload-dropzone-icon">📂</div>
               <div className="upload-dropzone-title">
@@ -204,7 +200,9 @@ export default function UploadPage({
         </div>
 
         <div className="upload-feedback-area">
-          {uploading ? <p className="upload-feedback">Import in corso...</p> : null}
+          {uploading || documentUploading ? (
+            <p className="upload-feedback">Import in corso...</p>
+          ) : null}
 
           {uploadMessage ? (
             <p className="upload-feedback success">{uploadMessage}</p>
@@ -214,12 +212,20 @@ export default function UploadPage({
             <p className="upload-feedback error">{uploadError}</p>
           ) : null}
 
-          {otherDocumentProcessing ? (
-            <p className="upload-feedback">AI in analisi documento...</p>
+          {documentUploadMessage ? (
+            <p className="upload-feedback success">{documentUploadMessage}</p>
           ) : null}
 
-          {documentMessage ? (
-            <p className="upload-feedback success">{documentMessage}</p>
+          {documentUploadError ? (
+            <p className="upload-feedback error">{documentUploadError}</p>
+          ) : null}
+
+          {documentDeleteError ? (
+            <p className="upload-feedback error">{documentDeleteError}</p>
+          ) : null}
+
+          {localDocumentMessage ? (
+            <p className="upload-feedback error">{localDocumentMessage}</p>
           ) : null}
         </div>
       </section>
@@ -386,23 +392,52 @@ export default function UploadPage({
           </div>
 
           {activeHistoryTab === "other" ? (
-            otherDocuments.length ? (
+            documents.length ? (
               <div className="upload-history-table">
-                <div className="upload-history-table-head">
+                <div className="upload-history-table-head other-docs-table">
                   <div>Documento</div>
                   <div>Tipo</div>
                   <div>Categoria rilevata</div>
                   <div>Risultato AI</div>
                   <div>Stato</div>
+                  <div>Visualizza</div>
+                  <div>Elimina</div>
                 </div>
 
-                {otherDocuments.map((document) => (
-                  <div className="upload-history-table-row" key={document.id}>
-                    <div className="upload-history-name">{document.name}</div>
-                    <div>{document.type}</div>
+                {documents.map((document) => (
+                  <div
+                    className="upload-history-table-row other-docs-table"
+                    key={document.id}
+                  >
+                    <div className="upload-history-name">
+                      {document.original_filename}
+                    </div>
+                    <div>{document.document_type}</div>
                     <div>{document.category}</div>
                     <div>{document.result}</div>
                     <div className="upload-history-status">{document.status}</div>
+
+                    <div className="upload-history-action-cell">
+                      <button
+                        type="button"
+                        className="invoice-icon-btn"
+                        onClick={() => openOtherDocumentPreview(document)}
+                        title="Visualizza documento"
+                      >
+                        👁️
+                      </button>
+                    </div>
+
+                    <div className="upload-history-action-cell">
+                      <button
+                        type="button"
+                        className="invoice-icon-btn delete"
+                        onClick={() => handleDeleteDocument(document.id)}
+                        title="Elimina documento"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -460,6 +495,40 @@ export default function UploadPage({
           )}
         </div>
       </section>
+
+      {selectedOtherDocument ? (
+        <div className="invoice-preview-backdrop">
+          <div className="invoice-preview-modal only-document">
+            <button
+              type="button"
+              className="invoice-preview-floating-close"
+              onClick={() => setSelectedOtherDocument(null)}
+            >
+              ✕
+            </button>
+
+            <div className="invoice-preview-body invoice-preview-body-only-document">
+              <div className="invoice-preview-document full">
+                {selectedOtherDocumentUrl ? (
+  <img
+    src={selectedOtherDocumentUrl}
+    alt="Documento"
+    className="document-preview-image"
+  />
+) : (
+  <div className="invoice-preview-empty">
+    <div>📎</div>
+    <h3>Documento non disponibile</h3>
+    <p>
+      Il documento è stato salvato, ma non è disponibile un file di anteprima.
+    </p>
+  </div>
+)}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

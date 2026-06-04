@@ -428,31 +428,31 @@ export default function InvoicesPage({
 
                 <div className="invoice-modern-total">{formatEuro(invoice.total)}</div>
 
-                <div className="invoice-action-cell">
-  <button
-    type="button"
-    className="invoice-icon-btn"
-    onClick={() => setSelectedInvoice(invoice)}
-    title="Visualizza fattura"
-  >
-    👁️
-  </button>
-</div>
+            <div className="invoice-action-cell">
+              <button
+                type="button"
+                className="invoice-icon-btn"
+                onClick={() => setSelectedInvoice(invoice)}
+                title="Visualizza fattura"
+              >
+                👁️
+              </button>
+            </div>
 
-<div className="invoice-action-cell">
-  <button
-    type="button"
-    className="invoice-icon-btn delete"
-    onClick={() => {
-      if (window.confirm("Vuoi eliminare questa fattura?")) {
-        handleDeleteInvoice(invoice.id);
-      }
-    }}
-    title="Elimina fattura"
-  >
-    🗑️
-  </button>
-</div>
+            <div className="invoice-action-cell">
+              <button
+                type="button"
+                className="invoice-icon-btn delete"
+                onClick={() => {
+                  if (window.confirm("Vuoi eliminare questa fattura?")) {
+                    handleDeleteInvoice(invoice.id);
+                  }
+                }}
+                title="Elimina fattura"
+              >
+                🗑️
+              </button>
+            </div>
               </div>
             );
           })

@@ -51,6 +51,13 @@ export default function App() {
   const [invoiceUploading, setInvoiceUploading] = useState(false);
   const [invoiceDeleteError, setInvoiceDeleteError] = useState("");
 
+  const [documents, setDocuments] = useState([]);
+
+  const [documentUploadMessage, setDocumentUploadMessage] = useState("");
+  const [documentUploadError, setDocumentUploadError] = useState("");
+  const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentDeleteError, setDocumentDeleteError] = useState("");
+
   async function loadDashboardData(selectedMonth) {
     const [
       overviewData,
@@ -102,7 +109,10 @@ export default function App() {
       try {
         setLoading(true);
         setError("");
-        await loadDashboardData(month);
+        await Promise.all([
+  loadDashboardData(month),
+  loadDocuments(),
+]);
       } catch (err) {
         console.error(err);
 
@@ -155,7 +165,10 @@ export default function App() {
         } righe importate.`
       );
 
-      await loadDashboardData(month);
+      await Promise.all([
+  loadDashboardData(month),
+  loadDocuments(),
+]);
     } catch (err) {
       console.error(err);
       setUploadError("Errore durante l'import del file.");
@@ -223,7 +236,10 @@ export default function App() {
       throw new Error(errorBody || `Creazione fattura fallita (${response.status})`);
     }
 
-    await loadDashboardData(month);
+    await Promise.all([
+  loadDashboardData(month),
+  loadDocuments(),
+]);
   }
 
   async function handleDeleteInvoice(invoiceId) {
@@ -241,12 +257,84 @@ export default function App() {
         throw new Error(errorBody || `Delete fattura fallito (${response.status})`);
       }
 
-      await loadDashboardData(month);
+      await Promise.all([
+  loadDashboardData(month),
+  loadDocuments(),
+]);
     } catch (err) {
       console.error(err);
       setInvoiceDeleteError("Errore durante l'eliminazione della fattura.");
     }
   }
+
+  async function loadDocuments() {
+  const documentsData = await fetchJsonOrThrow("/api/documents");
+  setDocuments(safeArray(documentsData));
+}
+
+async function handleGenericDocumentUpload(file) {
+  if (!file) return;
+
+  try {
+    setDocumentUploading(true);
+    setDocumentUploadError("");
+    setDocumentUploadMessage("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/documents/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(errorBody || `Upload documento fallito (${response.status})`);
+    }
+
+    const result = await response.json();
+
+    setDocumentUploadMessage(
+      `Documento acquisito: ${result.original_filename}`
+    );
+
+    await loadDocuments();
+  } catch (err) {
+    console.error(err);
+    setDocumentUploadError(
+      "Errore durante il caricamento del documento."
+    );
+  } finally {
+    setDocumentUploading(false);
+  }
+}
+
+async function handleDeleteDocument(documentId) {
+  if (!documentId) return;
+
+  try {
+    setDocumentDeleteError("");
+
+    const response = await fetch(`/api/documents/${documentId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        errorBody || `Delete documento fallito (${response.status})`
+      );
+    }
+
+    await loadDocuments();
+  } catch (err) {
+    console.error(err);
+    setDocumentDeleteError(
+      "Errore durante l'eliminazione del documento."
+    );
+  }
+}
 
   const pendingInvoices = useMemo(
     () => invoices.filter((invoice) => invoice.status === "pending"),
@@ -349,6 +437,14 @@ export default function App() {
                 invoiceCountThisMonth={currentMonthInvoices.length}
                 latestInvoiceDate={latestInvoiceDate}
                 handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
+                documents={documents}
+                handleGenericDocumentUpload={handleGenericDocumentUpload}
+                handleDeleteDocument={handleDeleteDocument}
+
+                documentUploading={documentUploading}
+                documentUploadMessage={documentUploadMessage}
+                documentUploadError={documentUploadError}
+                documentDeleteError={documentDeleteError}
               />
             }
           />

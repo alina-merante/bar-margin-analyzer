@@ -3469,3 +3469,204 @@ body {
 .upload-history-table-row:last-child {
   border-bottom: none;
 }
+
+.invoice-clean-table-head,
+.invoice-clean-table-row {
+  display: grid !important;
+  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 0.8fr 100px 90px !important;
+  align-items: center !important;
+  column-gap: 18px !important;
+}
+
+.invoice-clean-table-head {
+  padding: 18px 22px !important;
+  border-bottom: 1px solid #eee2d2 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: #8b5e3c !important;
+}
+
+.invoice-clean-table-row {
+  padding: 20px 22px !important;
+  border-bottom: 1px solid #f3e6d7 !important;
+}
+
+.invoice-clean-table-head > div,
+.invoice-clean-table-row > div {
+  min-width: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.invoice-clean-table-head > div:nth-child(2),
+.invoice-clean-table-head > div:nth-child(3),
+.invoice-clean-table-head > div:nth-child(4),
+.invoice-clean-table-head > div:nth-child(6),
+.invoice-clean-table-head > div:nth-child(7),
+.invoice-clean-table-head > div:nth-child(8),
+.invoice-clean-table-row > div:nth-child(2),
+.invoice-clean-table-row > div:nth-child(3),
+.invoice-clean-table-row > div:nth-child(4),
+.invoice-clean-table-row > div:nth-child(6),
+.invoice-clean-table-row > div:nth-child(7),
+.invoice-clean-table-row > div:nth-child(8) {
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.invoice-modern-supplier {
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
+}
+
+.invoice-modern-total {
+  font-weight: 800 !important;
+}
+
+.invoice-modern-category {
+  justify-content: flex-start !important;
+}
+
+.invoice-action-cell {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.invoice-icon-btn {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 14px !important;
+  border: 1px solid #ead9c6 !important;
+  background: #fffaf5 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  font-size: 18px !important;
+}
+
+.invoice-icon-btn:hover {
+  transform: translateY(-2px);
+  background: #f6ede3 !important;
+}
+
+.invoice-icon-btn.delete:hover {
+  background: #fde8e8 !important;
+}
+
+.upload-history-table-head.other-docs-table,
+.upload-history-table-row.other-docs-table {
+  grid-template-columns: 1.4fr 0.55fr 1fr 1.4fr 0.7fr 90px 80px;
+}
+
+.upload-history-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-history-table-head.other-docs-table,
+.upload-history-table-row.other-docs-table {
+  grid-template-columns: 1.4fr 0.55fr 1fr 1.4fr 0.7fr 90px 80px;
+}
+
+.upload-history-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.csv-preview-box {
+  width: min(900px, calc(100vw - 360px));
+  max-height: 82vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 24px;
+  padding: 24px;
+}
+
+.csv-preview-box table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.csv-preview-box td {
+  border: 1px solid #ead9c6;
+  padding: 10px 12px;
+  color: #4b3522;
+}
+
+.csv-preview-box tr:first-child td {
+  font-weight: 800;
+  background: #f8f4ee;
+}
+
+.invoice-preview-modal.only-document {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+
+.invoice-preview-document.full iframe {
+  background: white;
+  border: none;
+  width: 760px;
+  height: 86vh;
+  border-radius: 0;
+}
+
+.document-preview-image {
+  display: block;
+  width: auto;
+  max-width: min(720px, 85vw);
+  max-height: 88vh;
+  object-fit: contain;
+  background: white;
+  border: none;
+  box-shadow: none;
+}
+
+.invoice-preview-modal.only-document {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.invoice-preview-document.full {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+.document-preview-pdf {
+  width: 100%;
+  height: 80vh;
+  border: none;
+  border-radius: 18px;
+  background: white;
+}
+
+.document-preview-csv {
+  width: 100%;
+  max-height: 80vh;
+  overflow: auto;
+  background: white;
+  border-radius: 18px;
+  padding: 20px;
+}
+
+.document-preview-csv table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.document-preview-csv td {
+  border: 1px solid #ead8c4;
+  padding: 8px;
+  font-size: 13px;
+}
