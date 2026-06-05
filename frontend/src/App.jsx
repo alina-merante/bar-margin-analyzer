@@ -5,6 +5,8 @@ import Sidebar from "./components/Sidebar";
 import UploadPage from "./pages/UploadPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
+import imageCompression from "browser-image-compression";
+import { PDFDocument } from "pdf-lib";
 
 function getCurrentMonth() {
   const now = new Date();
@@ -111,7 +113,7 @@ export default function App() {
         setError("");
         await Promise.all([
   loadDashboardData(month),
-  loadDocuments(),
+  loadDocuments(month),
 ]);
       } catch (err) {
         console.error(err);
@@ -132,6 +134,23 @@ export default function App() {
       cancelled = true;
     };
   }, [month]);
+
+  async function compressPdf(file) {
+  const bytes = await file.arrayBuffer();
+
+  const pdf = await PDFDocument.load(bytes);
+
+  const compressedBytes = await pdf.save({
+    useObjectStreams: true,
+    addDefaultPage: false,
+  });
+
+  return new File(
+    [compressedBytes],
+    file.name,
+    { type: "application/pdf" }
+  );
+}
 
   async function handleUpload(file, type) {
     if (!file) return;
@@ -267,8 +286,11 @@ export default function App() {
     }
   }
 
-  async function loadDocuments() {
-  const documentsData = await fetchJsonOrThrow("/api/documents");
+  async function loadDocuments(selectedMonth = month) {
+  const documentsData = await fetchJsonOrThrow(
+    `/api/documents?month=${selectedMonth}`
+  );
+
   setDocuments(safeArray(documentsData));
 }
 
@@ -280,8 +302,31 @@ async function handleGenericDocumentUpload(file) {
     setDocumentUploadError("");
     setDocumentUploadMessage("");
 
+    let fileToUpload = file;
+
+    const maxSizeMB = 20;
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+
+    if (file.size > maxSizeBytes) {
+      if (file.type.startsWith("image/")) {
+        fileToUpload = await imageCompression(file, {
+          maxSizeMB: 5,
+          maxWidthOrHeight: 2000,
+          useWebWorker: true,
+        });
+      } else {
+        setDocumentUploadError(
+          `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(
+            1
+          )} MB). Va compresso prima di caricarlo.`
+        );
+        return;
+      }
+    }
+
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", fileToUpload);
+    formData.append("month", month);
 
     const response = await fetch("/api/documents/upload", {
       method: "POST",
@@ -290,7 +335,9 @@ async function handleGenericDocumentUpload(file) {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(errorBody || `Upload documento fallito (${response.status})`);
+      throw new Error(
+        errorBody || `Upload documento fallito (${response.status})`
+      );
     }
 
     const result = await response.json();
@@ -299,12 +346,10 @@ async function handleGenericDocumentUpload(file) {
       `Documento acquisito: ${result.original_filename}`
     );
 
-    await loadDocuments();
+    await loadDocuments(month);
   } catch (err) {
     console.error(err);
-    setDocumentUploadError(
-      "Errore durante il caricamento del documento."
-    );
+    setDocumentUploadError("Errore durante il caricamento del documento.");
   } finally {
     setDocumentUploading(false);
   }

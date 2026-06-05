@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function formatShortDate(value) {
@@ -56,8 +56,19 @@ export default function UploadPage({
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
   const [localDocumentMessage, setLocalDocumentMessage] = useState("");
+    useEffect(() => {
+      setSelectedOtherDocument(null);
+    }, [month, activeHistoryTab]);
 
   const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
+
+  const selectedOtherDocumentUrls = selectedOtherDocument?.preview_url
+  ? selectedOtherDocument.preview_url
+      .split(",")
+      .map((url) => (url.startsWith("http") ? url : `/api${url}`))
+  : selectedOtherDocumentUrl
+  ? [selectedOtherDocumentUrl]
+  : [];
 
 function openOtherDocumentPreview(document) {
   setSelectedOtherDocument(document);
@@ -509,21 +520,26 @@ function openOtherDocumentPreview(document) {
 
             <div className="invoice-preview-body invoice-preview-body-only-document">
               <div className="invoice-preview-document full">
-                {selectedOtherDocumentUrl ? (
-  <img
-    src={selectedOtherDocumentUrl}
-    alt="Documento"
-    className="document-preview-image"
-  />
-) : (
-  <div className="invoice-preview-empty">
-    <div>📎</div>
-    <h3>Documento non disponibile</h3>
-    <p>
-      Il documento è stato salvato, ma non è disponibile un file di anteprima.
-    </p>
-  </div>
-)}
+                {selectedOtherDocumentUrls.length ? (
+                <div className="document-preview-scroll">
+                  {selectedOtherDocumentUrls.map((url, index) => (
+                    <img
+                      key={url}
+                      src={url}
+                      alt={`Pagina ${index + 1}`}
+                      className="document-preview-image"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="invoice-preview-empty">
+                  <div>📎</div>
+                  <h3>Documento non disponibile</h3>
+                  <p>
+                    Il documento è stato salvato, ma non è disponibile un file di anteprima.
+                  </p>
+                </div>
+                )}
               </div>
             </div>
           </div>

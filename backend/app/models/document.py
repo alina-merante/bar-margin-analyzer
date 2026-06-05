@@ -11,6 +11,8 @@ class Document(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
+    month: Mapped[str] = mapped_column(String(7), nullable=False)
+
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_filename: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -22,7 +24,11 @@ class Document(Base):
     file_url: Mapped[str] = mapped_column(String(500), nullable=False)
     preview_url: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="Elaborato")
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="Elaborato",
+    )
 
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime,

@@ -4,7 +4,7 @@ import uuid
 from io import StringIO
 
 from PIL import Image, ImageDraw, ImageFont
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pdf2image import convert_from_bytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,6 +36,7 @@ def classify_document(filename: str) -> tuple[str, str]:
 def document_to_dict(document: Document) -> dict:
     return {
         "id": document.id,
+        "month": document.month,
         "original_filename": document.original_filename,
         "stored_filename": document.stored_filename,
         "document_type": document.document_type,
@@ -100,44 +101,46 @@ def create_text_preview_image(
     return f"/uploads/previews/{preview_filename}"
 
 
-def create_pdf_preview_image(
+def create_pdf_preview_images(
     content: bytes,
     stored_stem: str,
 ) -> str | None:
     try:
         os.makedirs("uploads/previews", exist_ok=True)
 
-        preview_filename = f"{stored_stem}.png"
-        preview_path = os.path.join("uploads", "previews", preview_filename)
+        pages = convert_from_bytes(content, dpi=130)
 
-        pages = convert_from_bytes(
-            content,
-            first_page=1,
-            last_page=1,
-            dpi=130,
-        )
+        preview_urls = []
 
-        if not pages:
+        for index, page in enumerate(pages):
+            preview_filename = f"{stored_stem}_{index + 1}.png"
+            preview_path = os.path.join("uploads", "previews", preview_filename)
+
+            page.thumbnail((1200, 1600))
+            page.save(preview_path, "PNG")
+
+            preview_urls.append(f"/uploads/previews/{preview_filename}")
+
+        if not preview_urls:
             return None
 
-        page = pages[0]
-        page.thumbnail((1200, 1600))
-        page.save(preview_path, "PNG")
-
-        return f"/uploads/previews/{preview_filename}"
+        return ",".join(preview_urls)
 
     except Exception as exc:
         print(f"Errore creazione preview PDF: {exc}")
         return None
 
-
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
+    month: str = Form(...),
     db: Session = Depends(get_db),
 ) -> dict:
     if not file.filename:
         raise HTTPException(status_code=400, detail="file is required")
+
+    if not month:
+        raise HTTPException(status_code=400, detail="month is required")
 
     content = await file.read()
 
@@ -160,7 +163,7 @@ async def upload_document(
     generated_preview_url = None
 
     if extension == "pdf":
-        generated_preview_url = create_pdf_preview_image(
+        generated_preview_url = create_pdf_preview_images(
             content=content,
             stored_stem=stored_stem,
         )
@@ -179,6 +182,7 @@ async def upload_document(
     category, result = classify_document(file.filename)
 
     document = Document(
+        month=month,
         original_filename=file.filename,
         stored_filename=stored_filename,
         document_type=extension.upper(),
@@ -197,8 +201,16 @@ async def upload_document(
 
 
 @router.get("")
-def list_documents(db: Session = Depends(get_db)) -> list[dict]:
-    documents = db.scalars(select(Document).order_by(Document.created_at.desc())).all()
+def list_documents(
+    month: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    query = select(Document)
+
+    if month:
+        query = query.where(Document.month == month)
+
+    documents = db.scalars(query.order_by(Document.created_at.desc())).all()
     return [document_to_dict(document) for document in documents]
 
 
@@ -210,10 +222,13 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="document not found")
 
     file_path = document.file_url.lstrip("/")
-    preview_path = document.preview_url.lstrip("/")
+    preview_urls = document.preview_url.split(",")
 
     if os.path.exists(file_path):
         os.remove(file_path)
+
+    for preview_url in preview_urls:
+        preview_path = preview_url.lstrip("/")
 
     if preview_path != file_path and os.path.exists(preview_path):
         os.remove(preview_path)
