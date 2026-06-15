@@ -1,4 +1,20 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
+
+const MONTHS = [
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
+];
 
 function formatMonthLabel(month) {
   if (!month) return "-";
@@ -21,16 +37,26 @@ function shiftMonth(month, delta) {
 }
 
 export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+
+  const [selectedYear, selectedMonth] = month.split("-").map(Number);
+
+  const years = Array.from({ length: 9 }, (_, index) => selectedYear - 4 + index);
+
+  function selectMonth(year, monthIndex) {
+    const nextMonth = String(monthIndex + 1).padStart(2, "0");
+    setMonth(`${year}-${nextMonth}`);
+    setMonthPickerOpen(false);
+  }
+
   return (
     <aside className="sidebar">
-      {/* LOGO */}
       <div className="sidebar-logo">
         <div className="logo-icon">☕</div>
         <div className="logo-text">BarManager</div>
         <div className="logo-sub">Gestione margini</div>
       </div>
 
-      {/* NAV */}
       <nav className="sidebar-nav">
         <div className="nav-label">Principale</div>
 
@@ -65,7 +91,6 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
         </NavLink>
       </nav>
 
-      {/* FOOTER MESE */}
       <div className="sidebar-bottom">
         <div className="month-selector">
           <button
@@ -76,9 +101,49 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
             ◀
           </button>
 
-          <span className="month-label">
-            {formatMonthLabel(month)}
-          </span>
+          <div className="month-picker-wrapper">
+           <button
+  type="button"
+  className="month-label month-label-button"
+  onClick={() => setMonthPickerOpen((value) => !value)}
+>
+  {formatMonthLabel(month)}
+</button>
+
+            {monthPickerOpen ? (
+              <div className="month-picker-popover">
+                <div className="month-picker-years">
+                  {years.map((year) => (
+                    <button
+                      key={year}
+                      type="button"
+                      className={`month-picker-year ${
+                        year === selectedYear ? "active" : ""
+                      }`}
+                      onClick={() => setMonth(`${year}-${String(selectedMonth).padStart(2, "0")}`)}
+                    >
+                      {year}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="month-picker-grid">
+                  {MONTHS.map((monthName, index) => (
+                    <button
+                      key={monthName}
+                      type="button"
+                      className={`month-picker-month ${
+                        index + 1 === selectedMonth ? "active" : ""
+                      }`}
+                      onClick={() => selectMonth(selectedYear, index)}
+                    >
+                      {monthName.slice(0, 3)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <button
             type="button"
