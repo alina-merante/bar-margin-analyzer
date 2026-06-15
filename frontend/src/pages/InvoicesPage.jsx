@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -125,6 +127,14 @@ export default function InvoicesPage({
   const [manualOpen, setManualOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
 
+  const [searchParams] = useSearchParams();
+
+useEffect(() => {
+  if (searchParams.get("tab") === "overdue") {
+    setStatusFilter("overdue");
+  }
+}, [searchParams]);
+
   const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
   const [manualError, setManualError] = useState("");
   const [manualSaving, setManualSaving] = useState(false);
@@ -216,21 +226,29 @@ export default function InvoicesPage({
   }
 
   const currentMonthInvoices = useMemo(() => {
-    return invoices.filter((invoice) => getInvoiceMonthKey(invoice.issue_date) === month);
-  }, [invoices, month]);
+  return invoices.filter((invoice) => getInvoiceMonthKey(invoice.issue_date) === month);
+}, [invoices, month]);
 
-  const paidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
-  const dueInvoices = currentMonthInvoices.filter(isDue);
-  const overdueInvoices = currentMonthInvoices.filter(isOverdue);
+const invoicesForView = useMemo(() => {
+  if (statusFilter === "overdue") {
+    return invoices.filter(isOverdue);
+  }
+
+  return currentMonthInvoices;
+}, [invoices, currentMonthInvoices, statusFilter]);
+
+const paidInvoices = invoicesForView.filter((invoice) => invoice.status === "paid");
+const dueInvoices = invoicesForView.filter(isDue);
+const overdueInvoices = invoicesForView.filter(isOverdue);
 
   const categories = useMemo(() => {
-    return [
-      ...new Set(currentMonthInvoices.map((invoice) => invoice.category).filter(Boolean)),
-    ].sort((a, b) => a.localeCompare(b, "it"));
-  }, [currentMonthInvoices]);
+  return [
+    ...new Set(invoicesForView.map((invoice) => invoice.category).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, "it"));
+}, [invoicesForView]);
 
   const filteredInvoices = useMemo(() => {
-    return currentMonthInvoices.filter((invoice) => {
+    return invoicesForView.filter((invoice) => {
       const status = getInvoiceStatus(invoice);
       const matchesStatus = statusFilter === "all" || status === statusFilter;
 
@@ -242,10 +260,10 @@ export default function InvoicesPage({
 
       return matchesStatus && matchesSupplier && matchesCategory;
     });
-  }, [currentMonthInvoices, statusFilter, supplierSearch, categoryFilter]);
+}, [invoicesForView, statusFilter, supplierSearch, categoryFilter]);
 
-  const totalAmount = currentMonthInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+const totalAmount = invoicesForView.reduce(
+      (sum, invoice) => sum + (Number(invoice.total) || 0),
     0
   );
 

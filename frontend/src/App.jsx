@@ -389,9 +389,33 @@ async function handleDeleteDocument(documentId) {
 }
 
   const pendingInvoices = useMemo(
-    () => invoices.filter((invoice) => invoice.status === "pending"),
-    [invoices]
-  );
+  () =>
+    invoices.filter(
+      (invoice) =>
+        invoice.status === "pending" &&
+        invoice.issue_date?.slice(0, 7) === month
+    ),
+  [invoices, month]
+);
+
+const overdueInvoices = useMemo(
+  () =>
+    invoices.filter(
+      (invoice) =>
+        invoice.status === "pending" &&
+        invoice.issue_date?.slice(0, 7) < month
+    ),
+  [invoices, month]
+);
+
+const overdueInvoicesAmount = useMemo(
+  () =>
+    overdueInvoices.reduce(
+      (sum, invoice) => sum + (Number(invoice.total) || 0),
+      0
+    ),
+  [overdueInvoices]
+);
 
   const pendingInvoicesAmount = useMemo(
     () =>
@@ -453,6 +477,8 @@ async function handleDeleteDocument(documentId) {
                 invoices={invoices}
                 latestPosUploadDate={latestPosUploadDate}
                 latestBankUploadDate={latestBankUploadDate}
+                previousOverdueInvoices={overdueInvoices}
+previousOverdueInvoicesAmount={overdueInvoicesAmount}
               />
             }
           />

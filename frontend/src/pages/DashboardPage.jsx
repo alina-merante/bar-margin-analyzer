@@ -108,11 +108,14 @@ export default function DashboardPage({
   topProductsList = [],
   pendingInvoices = [],
   pendingInvoicesAmount = 0,
+  previousOverdueInvoices = [],
+  previousOverdueInvoicesAmount = 0,
   invoices = [],
   latestPosUploadDate = null,
   latestBankUploadDate = null,
 }) {
   const monthLabel = formatMonthLabel(month);
+  const hasPreviousOverdueInvoices = previousOverdueInvoices.length > 0;
 
   const currentMonthInvoices = useMemo(() => {
     return invoices.filter((invoice) => invoice.issue_date?.slice(0, 7) === month);
@@ -244,6 +247,26 @@ export default function DashboardPage({
           </Link>
         </div>
       </div>
+
+      {hasPreviousOverdueInvoices ? (
+  <div className="previous-overdue-alert">
+    <div className="previous-overdue-icon">⚠️</div>
+
+    <div>
+      <strong>
+        Hai {previousOverdueInvoices.length} fatture da pagare dei mesi precedenti
+      </strong>
+      <p>
+        Totale arretrato: {formatEuro(previousOverdueInvoicesAmount)}. Controlla
+        le scadenze nella sezione Fatture.
+      </p>
+    </div>
+
+    <Link to="/invoices?tab=overdue" className="previous-overdue-link">
+  Vai alle fatture →
+</Link>
+  </div>
+) : null}
 
       <section className="dashboard-kpi-grid">
         <article className="dashboard-kpi-card dark">
