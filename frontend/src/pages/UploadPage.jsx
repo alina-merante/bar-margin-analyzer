@@ -206,13 +206,6 @@ setActiveHistoryTab("other");
               </div>
             </div>
 
-            <div className="upload-doc-footer">
-              <div className="upload-doc-meta">
-                <span className="upload-doc-meta-label">Ultimo caricato:</span>
-                <strong>{formatShortDate(latestPosUploadDate)}</strong>
-              </div>
-              <div className="upload-doc-status">✓ Elaborato correttamente</div>
-            </div>
           </article>
 
           <article className="upload-doc-card cool">
@@ -251,14 +244,6 @@ setActiveHistoryTab("other");
                 oppure <span>clicca per selezionare</span>
               </div>
             </label>
-
-            <div className="upload-doc-footer">
-              <div className="upload-doc-meta">
-                <span className="upload-doc-meta-label">Ultimo caricato:</span>
-                <strong>{formatShortDate(latestBankUploadDate)}</strong>
-              </div>
-              <div className="upload-doc-status">✓ Elaborato correttamente</div>
-            </div>
           </article>
         </div>
 
@@ -329,11 +314,6 @@ setActiveHistoryTab("other");
               <div className="upload-mini-box-title">Carica fattura</div>
               <div className="upload-mini-box-sub">PDF o file XML SDI</div>
             </div>
-
-            <div className="upload-mini-footer">
-              Questo mese: <strong>{invoiceCountThisMonth}</strong> fatture
-              caricate
-            </div>
           </article>
 
           <article className="upload-mini-card">
@@ -366,11 +346,6 @@ setActiveHistoryTab("other");
               <div className="upload-mini-box-sub">
                 Registro entrate e uscite
               </div>
-            </div>
-
-            <div className="upload-mini-footer">
-              Ultima:{" "}
-              <strong>{formatShortDate(latestInvoiceDate || `${month}-01`)}</strong>
             </div>
           </article>
 
@@ -406,9 +381,6 @@ setActiveHistoryTab("other");
               </div>
             </div>
 
-            <div className="upload-mini-footer">
-              PDF · Excel · CSV · XML · TXT
-            </div>
             {otherUploadError ? (
               <p className="upload-feedback error">
                 {otherUploadError}
@@ -462,7 +434,9 @@ setActiveHistoryTab("other");
             </button>
           </div>
 
-          {activeHistoryTab === "cash" || activeHistoryTab === "other" ? (
+          {activeHistoryTab === "all" ||
+            activeHistoryTab === "cash" ||
+            activeHistoryTab === "other" ? (
             visibleDocuments.length ? (
               <div className="upload-history-table">
                 <div className="upload-history-table-head other-docs-table">
