@@ -294,7 +294,7 @@ export default function App() {
   setDocuments(safeArray(documentsData));
 }
 
-async function handleGenericDocumentUpload(file) {
+async function handleGenericDocumentUpload(file, section = "other") {
   if (!file) return;
 
   try {
@@ -327,6 +327,7 @@ async function handleGenericDocumentUpload(file) {
     const formData = new FormData();
     formData.append("file", fileToUpload);
     formData.append("month", month);
+    formData.append("section", section);
 
     const response = await fetch("/api/documents/upload", {
       method: "POST",
@@ -353,6 +354,12 @@ async function handleGenericDocumentUpload(file) {
   } finally {
     setDocumentUploading(false);
   }
+}
+
+function clearDocumentMessages() {
+  setDocumentUploadMessage("");
+  setDocumentUploadError("");
+  setDocumentDeleteError("");
 }
 
 async function handleDeleteDocument(documentId) {
@@ -485,6 +492,7 @@ async function handleDeleteDocument(documentId) {
                 documents={documents}
                 handleGenericDocumentUpload={handleGenericDocumentUpload}
                 handleDeleteDocument={handleDeleteDocument}
+                clearDocumentMessages={clearDocumentMessages}
 
                 documentUploading={documentUploading}
                 documentUploadMessage={documentUploadMessage}

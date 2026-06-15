@@ -12,10 +12,10 @@ class Document(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     month: Mapped[str] = mapped_column(String(7), nullable=False)
-
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_filename: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    section: Mapped[str] = mapped_column(String(50), nullable=False, default="other")
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     category: Mapped[str] = mapped_column(String(80), nullable=False)
 

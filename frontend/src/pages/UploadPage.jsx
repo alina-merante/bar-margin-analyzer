@@ -42,6 +42,7 @@ export default function UploadPage({
   invoiceCountThisMonth,
   latestInvoiceDate,
   handleInvoiceDocumentUpload,
+  clearDocumentMessages,
 
   documents = [],
   handleGenericDocumentUpload,
@@ -56,11 +57,19 @@ export default function UploadPage({
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
   const [localDocumentMessage, setLocalDocumentMessage] = useState("");
-    useEffect(() => {
-      setSelectedOtherDocument(null);
-    }, [month, activeHistoryTab]);
+   useEffect(() => {
+  setSelectedOtherDocument(null);
+  setLocalDocumentMessage("");
+}, [month, activeHistoryTab]);
+
+useEffect(() => {
+  clearDocumentMessages?.();
+}, []);
 
   const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
+
+  const [cashUploadError, setCashUploadError] = useState("");
+  const [otherUploadError, setOtherUploadError] = useState("");
 
   const selectedOtherDocumentUrls = selectedOtherDocument?.preview_url
   ? selectedOtherDocument.preview_url
@@ -69,6 +78,18 @@ export default function UploadPage({
   : selectedOtherDocumentUrl
   ? [selectedOtherDocumentUrl]
   : [];
+
+  const visibleDocuments = documents.filter((document) => {
+  if (activeHistoryTab === "cash") {
+    return document.section === "cash";
+  }
+
+  if (activeHistoryTab === "other") {
+    return document.section === "other";
+  }
+
+  return true;
+});
 
 function openOtherDocumentPreview(document) {
   setSelectedOtherDocument(document);
@@ -87,28 +108,47 @@ function openOtherDocumentPreview(document) {
     }
   }
 
+  function clearLocalUploadErrors() {
+  setCashUploadError("");
+  setOtherUploadError("");
+  clearDocumentMessages?.();
+}
+
   async function handleCashDocument(file) {
-    if (!file) return;
+  setCashUploadError("");
 
-    if (handleGenericDocumentUpload) {
-      await handleGenericDocumentUpload(file);
-    }
+  if (!file) return;
 
-    setActiveHistoryTab("cash");
+  if (file.size > 20 * 1024 * 1024) {
+    setCashUploadError(
+      `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Va compresso prima di caricarlo.`
+    );
+    return;
   }
 
-  async function handleOtherDocument(file) {
-    if (!file) return;
+await handleGenericDocumentUpload(file, "cash");
+setActiveHistoryTab("cash");
+}
 
-    if (handleGenericDocumentUpload) {
-      await handleGenericDocumentUpload(file);
-    }
+async function handleOtherDocument(file) {
+  setOtherUploadError("");
 
-    setActiveHistoryTab("other");
+  if (!file) return;
+
+  if (file.size > 20 * 1024 * 1024) {
+    setOtherUploadError(
+      `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Va compresso prima di caricarlo.`
+    );
+    return;
   }
+
+await handleGenericDocumentUpload(file, "other");
+setActiveHistoryTab("other");
+}
 
   return (
-    <main className="main upload-page">
+    <main className="main upload-page"
+      onClick={clearLocalUploadErrors}>
       <section className="upload-hero">
         <h1 className="upload-page-title">Carica Documenti ⬆️</h1>
         <p className="upload-page-subtitle"></p>
@@ -131,28 +171,40 @@ function openOtherDocumentPreview(document) {
             </div>
 
             <div className="upload-doc-tags">
-              <span className="upload-doc-tag">CSV</span>
-              <span className="upload-doc-tag">Excel .xlsx</span>
-              <span className="upload-doc-tag">TXT</span>
+              <span className="upload-doc-tag">PDF</span>
+              <span className="upload-doc-tag">Immagine</span>
+              <span className="upload-doc-tag">CSV/Excel</span>
             </div>
 
-            <label className="upload-dropzone">
-              <input
-                type="file"
-                accept=".csv,.xlsx,.xls,.txt"
-                hidden
-                onChange={(e) => {
-                  handleUpload(e.target.files?.[0], "pos");
-                  setActiveHistoryTab("cash");
-                  e.target.value = "";
-                }}
-              />
+            <input
+              id="daily-cash-upload-input"
+              type="file"
+              accept=".csv,.xlsx,.xls,.txt,.pdf,.jpg,.jpeg,.png,.webp"
+              hidden
+              onClick={(event) => event.stopPropagation()}
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+
+                if (!file) return;
+
+                await handleCashDocument(file);
+              }}
+            />
+
+            <div
+              className="upload-dropzone"
+              onClick={(event) => {
+                event.stopPropagation();
+                document.getElementById("daily-cash-upload-input")?.click();
+              }}
+            >
               <div className="upload-dropzone-icon">📂</div>
               <div className="upload-dropzone-title">Trascina export cassa</div>
               <div className="upload-dropzone-sub">
                 oppure <span>clicca per selezionare</span>
               </div>
-            </label>
+            </div>
 
             <div className="upload-doc-footer">
               <div className="upload-doc-meta">
@@ -268,9 +320,10 @@ function openOtherDocumentPreview(document) {
 
             <div
               className="upload-mini-box"
-              onClick={() =>
-                document.getElementById("invoice-upload-input")?.click()
-              }
+              onClick={(event) => {
+                event.stopPropagation();
+                document.getElementById("invoice-upload-input")?.click();
+              }}
             >
               <div className="upload-mini-box-icon">📄</div>
               <div className="upload-mini-box-title">Carica fattura</div>
@@ -303,9 +356,10 @@ function openOtherDocumentPreview(document) {
 
             <div
               className="upload-mini-box"
-              onClick={() =>
-                document.getElementById("cash-document-upload-input")?.click()
-              }
+              onClick={(event) => {
+                event.stopPropagation();
+                document.getElementById("cash-document-upload-input")?.click();
+              }}
             >
               <div className="upload-mini-box-icon">📊</div>
               <div className="upload-mini-box-title">Carica prima nota</div>
@@ -340,9 +394,10 @@ function openOtherDocumentPreview(document) {
 
             <div
               className="upload-mini-box"
-              onClick={() =>
-                document.getElementById("other-document-upload-input")?.click()
-              }
+              onClick={(event) => {
+                event.stopPropagation();
+                document.getElementById("other-document-upload-input")?.click();
+              }}
             >
               <div className="upload-mini-box-icon">📂</div>
               <div className="upload-mini-box-title">Carica documento</div>
@@ -354,6 +409,11 @@ function openOtherDocumentPreview(document) {
             <div className="upload-mini-footer">
               PDF · Excel · CSV · XML · TXT
             </div>
+            {otherUploadError ? (
+              <p className="upload-feedback error">
+                {otherUploadError}
+              </p>
+            ) : null}
           </article>
         </div>
       </section>
@@ -402,8 +462,8 @@ function openOtherDocumentPreview(document) {
             </button>
           </div>
 
-          {activeHistoryTab === "other" ? (
-            documents.length ? (
+          {activeHistoryTab === "cash" || activeHistoryTab === "other" ? (
+            visibleDocuments.length ? (
               <div className="upload-history-table">
                 <div className="upload-history-table-head other-docs-table">
                   <div>Documento</div>
@@ -415,7 +475,7 @@ function openOtherDocumentPreview(document) {
                   <div>Elimina</div>
                 </div>
 
-                {documents.map((document) => (
+                {visibleDocuments.map((document) => (
                   <div
                     className="upload-history-table-row other-docs-table"
                     key={document.id}

@@ -46,6 +46,7 @@ def document_to_dict(document: Document) -> dict:
         "preview_url": document.preview_url,
         "status": document.status,
         "created_at": document.created_at.isoformat(),
+        "section": document.section,
     }
 
 
@@ -134,6 +135,7 @@ def create_pdf_preview_images(
 async def upload_document(
     file: UploadFile = File(...),
     month: str = Form(...),
+    section: str = Form("other"),
     db: Session = Depends(get_db),
 ) -> dict:
     if not file.filename:
@@ -191,6 +193,7 @@ async def upload_document(
         file_url=file_url,
         preview_url=preview_url,
         status="Elaborato",
+        section=section,
     )
 
     db.add(document)
