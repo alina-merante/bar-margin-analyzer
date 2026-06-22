@@ -231,9 +231,9 @@ export default function DashboardPage({
     <main className="main dashboard-page">
       <div className="dashboard-header">
         <div>
-          <h1 className="dashboard-title">Buongiorno ☕</h1>
+          <h1 className="dashboard-title">Business Overview</h1>
           <p className="dashboard-subtitle">
-            Panoramica {monthLabel} · aggiornata con i dati disponibili
+            Panoramica {monthLabel}
           </p>
         </div>
 

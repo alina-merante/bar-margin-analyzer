@@ -72,7 +72,7 @@ export default function App() {
     ] = await Promise.all([
       fetchJsonOrThrow(`/api/analytics/overview?month=${selectedMonth}`),
       fetchJsonOrThrow("/api/invoices"),
-      fetchJsonOrThrow(`/api/analytics/pnl/trend?months=6`),
+      fetchJsonOrThrow(`/api/analytics/pnl/trend?months=6&month=${selectedMonth}`),
       fetchJsonOrThrow(`/api/analytics/top-products?month=${selectedMonth}`),
       fetchJsonOrThrow(`/api/analytics/expenses-by-category?month=${selectedMonth}`),
       fetchJsonOrThrow(`/api/analytics/expenses-by-supplier?month=${selectedMonth}`),

@@ -228,9 +228,14 @@ def pnl(month: str = Query(..., description="Month in YYYY-MM format"), db: Sess
 @router.get("/pnl/trend")
 def pnl_trend(
     months: int = Query(default=6, ge=1, description="Number of months to include, including current month"),
+    month: str | None = Query(default=None, description="Optional month in YYYY-MM format"),
     db: Session = Depends(get_db),
 ) -> list[dict[str, float | str]]:
-    current_month_start = dt.date.today().replace(day=1)
+    if month:
+        current_month_start, _ = parse_month(month)
+    else:
+        current_month_start = dt.date.today().replace(day=1)
+
     month_starts: list[dt.date] = [current_month_start]
     for _ in range(1, months):
         month_starts.append(previous_month_start(month_starts[-1]))
