@@ -411,7 +411,7 @@ setActiveHistoryTab("other");
               }`}
               onClick={() => {
                 setActiveHistoryTab("invoices");
-                navigate("/invoices");
+                //navigate("/invoices");
               }}
             >
               Fatture

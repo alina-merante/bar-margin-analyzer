@@ -348,6 +348,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
     );
 
     await loadDocuments(month);
+    await loadDashboardData(month);
   } catch (err) {
     console.error(err);
     setDocumentUploadError("Errore durante il caricamento del documento.");

@@ -1,7 +1,7 @@
 import csv
 import os
 import uuid
-from io import StringIO
+from io import BytesIO, StringIO
 
 from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -11,6 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document import Document
+from app.models.daily_cash_closure import DailyCashClosure
+
+import datetime as dt
+import re
+from decimal import Decimal
+
+import pytesseract
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -131,6 +138,127 @@ def create_pdf_preview_images(
         print(f"Errore creazione preview PDF: {exc}")
         return None
 
+def parse_amount(value: str) -> Decimal:
+    cleaned = value.strip().replace(".", "").replace(",", ".")
+    return Decimal(cleaned)
+
+def ocr_image(image: Image.Image) -> str:
+    image = image.convert("L")
+
+    width, height = image.size
+
+    left_margin = int(width * 0.18)
+    right_margin = int(width * 0.92)
+    top_margin = int(height * 0.02)
+    bottom_margin = int(height * 0.98)
+
+    image = image.crop((left_margin, top_margin, right_margin, bottom_margin))
+
+    width, height = image.size
+    image = image.resize((width * 2, height * 2))
+
+    config = "--psm 4"
+
+    return pytesseract.image_to_string(
+        image,
+        lang="ita",
+        config=config,
+    )
+
+
+def extract_text_from_document(content: bytes, extension: str) -> str:
+    if extension == "pdf":
+        pages = convert_from_bytes(content, dpi=250)
+        text_parts = []
+
+        for page in pages:
+            text_parts.append(ocr_image(page))
+
+        return "\n".join(text_parts)
+
+    if extension in {"jpg", "jpeg", "png", "webp"}:
+        image = Image.open(BytesIO(content))
+        return ocr_image(image)
+
+    return content.decode("utf-8-sig", errors="replace")
+
+def find_amount_after_label(text: str, label: str) -> Decimal | None:
+    pattern = rf"{label}\s+(\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}|\d+,\d{{2}})"
+    match = re.search(pattern, text, re.IGNORECASE)
+
+    if not match:
+        return None
+
+    return parse_amount(match.group(1))
+
+
+def find_int_after_label(text: str, label: str) -> int | None:
+    pattern = rf"{label}\s+(\d+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+
+    if not match:
+        return None
+
+    return int(match.group(1))
+
+
+def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
+    text = extract_text_from_document(content, extension)
+
+    print("TESTO OCR CHIUSURA CASSA:")
+    print(text)
+
+    date = dt.date.today()
+
+    date_match = re.search(
+        r"(?:DEL GIORNO:|DATA)?\s*(\d{2})[-/](\d{2})[-/](\d{2,4})",
+        text,
+        re.IGNORECASE,
+    )
+
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        year = int(date_match.group(3))
+
+        if year < 100:
+            year += 2000
+
+        date = dt.date(year, month, day)
+
+    closure_number_match = re.search(
+        r"(?:NUM\.\s*CHIUSURA|CHIUSURA\s*N\.?)\s*[:\-]?\s*(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+
+    total_amount = (
+        find_amount_after_label(text, r"AMMONTARE\s+GIORNO")
+        or find_amount_after_label(text, r"CORRISP\.\s+GIORNALIERO")
+        or Decimal("0.00")
+    )
+
+    card_amount = (
+        find_amount_after_label(text, r"PAGAM\.\s+ELETTRONICI")
+        or Decimal("0.00")
+    )
+
+    cash_amount = (
+        find_amount_after_label(text, r"AMMONTARE")
+        or Decimal("0.00")
+    )
+
+    receipts_count = find_int_after_label(text, r"DOCUM\.\s+DI\s+VENDITA")
+
+    return {
+        "date": date,
+        "closure_number": closure_number_match.group(1) if closure_number_match else None,
+        "total_amount": total_amount,
+        "cash_amount": cash_amount,
+        "card_amount": card_amount,
+        "receipts_count": receipts_count,
+    }
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -145,7 +273,8 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="month is required")
 
     content = await file.read()
-
+    print("UPLOAD SECTION:", section)
+    print("UPLOAD FILENAME:", file.filename)
     if not content:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
@@ -200,6 +329,23 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
+    if section in {"cash", "cash_closure"}:
+        print("ENTRATO IN CASH CLOSURE")
+        extracted_data = extract_daily_cash_closure(content, extension)
+
+        cash_closure = DailyCashClosure(
+            date=extracted_data["date"],
+            closure_number=extracted_data["closure_number"],
+            total_amount=extracted_data["total_amount"],
+            cash_amount=extracted_data["cash_amount"],
+            card_amount=extracted_data["card_amount"],
+            receipts_count=extracted_data["receipts_count"],
+            document_id=document.id,
+        )
+
+        db.add(cash_closure)
+        db.commit()
+
     return document_to_dict(document)
 
 
@@ -224,17 +370,24 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
     if not document:
         raise HTTPException(status_code=404, detail="document not found")
 
-    file_path = document.file_url.lstrip("/")
-    preview_urls = document.preview_url.split(",")
+    file_path = document.file_url.lstrip("/") if document.file_url else None
+    preview_urls = document.preview_url.split(",") if document.preview_url else []
 
-    if os.path.exists(file_path):
+    if file_path and os.path.exists(file_path):
         os.remove(file_path)
 
     for preview_url in preview_urls:
         preview_path = preview_url.lstrip("/")
 
-    if preview_path != file_path and os.path.exists(preview_path):
-        os.remove(preview_path)
+        if preview_path != file_path and os.path.exists(preview_path):
+            os.remove(preview_path)
+
+    cash_closures = db.scalars(
+        select(DailyCashClosure).where(DailyCashClosure.document_id == document.id)
+    ).all()
+
+    for cash_closure in cash_closures:
+        db.delete(cash_closure)
 
     db.delete(document)
     db.commit()
