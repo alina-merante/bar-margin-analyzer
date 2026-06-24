@@ -2521,6 +2521,20 @@ body {
   font-weight: 800;
 }
 
+/* Stato OK verde per promemoria */
+.daily-reminder-item.neutral {
+  background: rgba(45, 122, 79, 0.28);
+  border-color: rgba(45, 122, 79, 0.9);
+}
+
+.daily-reminder-item.neutral .daily-reminder-badge {
+  background: #2d7a4f;
+}
+
+.daily-reminder-item.neutral .daily-reminder-action {
+  color: #7ee0a3;
+}
+
 /* =========================
    INVOICES PAGE MOCKUP
 ========================= */

@@ -35,7 +35,7 @@ function formatShortDate(value) {
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
-    month: "short",
+    month: "long",
   }).format(date);
 }
 
