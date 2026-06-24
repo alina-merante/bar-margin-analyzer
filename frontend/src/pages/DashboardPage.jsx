@@ -324,13 +324,20 @@ export default function DashboardPage({
                 <div className="bar-group" key={item.month}>
                   <div className="bar-pair">
                     <div
-                      className={`bar ricavi ${active ? "active-bar" : ""}`}
-                      style={{ height: `${Math.max(8, (revenue / trendMax) * 100)}%` }}
-                    />
+                      className={`bar ricavi ${active ? "active-bar" : ""} ${
+    revenue === 0 ? "zero-bar" : ""
+  }`}
+  style={{
+    height: revenue > 0 ? `${Math.max(8, (revenue / trendMax) * 100)}%` : "4px",
+  }}
+       />
                     <div
-                      className={`bar costi ${active ? "active-cost-bar" : ""}`}
-                      style={{ height: `${Math.max(8, (expenses / trendMax) * 100)}%` }}
-                    />
+                      className={`bar costi ${active ? "active-cost-bar" : ""} ${
+    expenses === 0 ? "zero-bar" : ""
+  }`}
+  style={{
+    height: expenses > 0 ? `${Math.max(8, (expenses / trendMax) * 100)}%` : "4px",
+  }}                    />
                   </div>
 
                   <div className={`bar-month ${active ? "active-month" : ""}`}>

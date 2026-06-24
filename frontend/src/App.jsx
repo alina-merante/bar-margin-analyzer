@@ -381,6 +381,7 @@ async function handleDeleteDocument(documentId) {
     }
 
     await loadDocuments();
+    await loadDashboardData(month);
   } catch (err) {
     console.error(err);
     setDocumentDeleteError(
