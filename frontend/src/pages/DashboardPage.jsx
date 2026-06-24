@@ -125,6 +125,10 @@ export default function DashboardPage({
   const paidInvoices = currentMonthInvoices.filter((i) => i.status === "paid");
   const overdueInvoices = currentMonthInvoices.filter(isOverdue);
   const dueInvoices = currentMonthInvoices.filter(isDue);
+  const overdueInvoicesAmount = overdueInvoices.reduce(
+  (sum, invoice) => sum + (Number(invoice.total) || 0),
+  0
+);
 
   const criticalInvoices = [...overdueInvoices, ...dueInvoices].slice(0, 3);
 
@@ -179,18 +183,20 @@ export default function DashboardPage({
       tone: getReminderTone(latestBankUploadDate, "warning"),
     },
     {
-      icon: "🧾",
-      badge: firstOverdueInvoice ? "SCADUTA" : "OK",
-      title: firstOverdueInvoice?.supplier || "Fatture scadute",
-      text: firstOverdueInvoice
-        ? `${formatEuro(firstOverdueInvoice.total)} · scaduta il ${formatShortDate(
-            firstOverdueInvoice.due_date
-          )}`
-        : "Nessuna fattura scaduta.",
-      action: firstOverdueInvoice ? "Paga ora" : "Vedi dettagli",
-      to: "/invoices",
-      tone: firstOverdueInvoice ? "danger" : "neutral",
-    },
+  icon: "🧾",
+  badge: overdueInvoices.length ? "SCADUTA" : "OK",
+  title: "Fatture scadute",
+  text: overdueInvoices.length
+    ? `${overdueInvoices.length} ${
+        overdueInvoices.length === 1
+          ? "fattura scaduta"
+          : "fatture scadute"
+      } · totale ${formatEuro(overdueInvoicesAmount)}`
+    : "Nessuna fattura scaduta.",
+  action: overdueInvoices.length ? "Paga ora" : "Vedi dettagli",
+  to: "/invoices",
+  tone: overdueInvoices.length ? "danger" : "neutral",
+},
     {
       icon: "⏰",
       badge: firstDueInvoice ? "TRA POCO" : "OK",
