@@ -8,6 +8,7 @@ from app.models.product import Product
 from app.models.sale_line import SaleLine
 from app.models.transaction import Transaction
 from app.models.document import Document
+from app.models.daily_cash_closure import DailyCashClosure
 
 __all__ = [
     "Base",
@@ -20,5 +21,7 @@ __all__ = [
     "InvoiceStatus",
     "Payment",
     "PaymentMethod",
-    "InvoicePaymentLink",
-]
+        "InvoicePaymentLink",
+        "Document",
+        "DailyCashClosure",
+        ]

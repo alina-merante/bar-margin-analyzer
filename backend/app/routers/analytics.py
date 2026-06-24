@@ -6,8 +6,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ExpenseCategory, Invoice, InvoiceStatus, Payment, Product, SaleLine, Transaction
-
+from app.models import (
+    DailyCashClosure,
+    ExpenseCategory,
+    Invoice,
+    InvoiceStatus,
+    Payment,
+    Product,
+    SaleLine,
+    Transaction,
+)
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
@@ -48,7 +56,13 @@ def previous_month_start(month_start: dt.date) -> dt.date:
 
 
 def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
-    revenue = db.execute(select(func.coalesce(func.sum(SaleLine.total), 0)).where(SaleLine.date >= start, SaleLine.date < end))
+    revenue = db.execute(
+        select(func.coalesce(func.sum(DailyCashClosure.total_amount), 0)).where(
+            DailyCashClosure.date >= start,
+            DailyCashClosure.date < end,
+        )
+    )
+
     return Decimal(revenue.scalar_one())
 
 
