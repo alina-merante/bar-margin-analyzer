@@ -290,7 +290,7 @@ setActiveHistoryTab("other");
             <input
               id="invoice-upload-input"
               type="file"
-              accept=".pdf,.jpg,.jpeg,.png,.xml,.webp"
+              accept=".pdf,.jpg,.jpeg,.png,.xml,.webp,.heic,.heif"
               hidden
               onChange={(event) => {
                 const file = event.target.files?.[0];

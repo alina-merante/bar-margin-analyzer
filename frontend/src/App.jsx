@@ -218,7 +218,7 @@ export default function App() {
       }
 
       const result = await response.json();
-      const extractedMonth = result.issue_date?.slice(0, 7) || month;
+      const extractedMonth = result.due_date?.slice(0, 7) || month;
 
       setInvoiceUploadMessage(
         `Fattura acquisita: ${result.supplier || "fornitore rilevato"} · ${
@@ -226,7 +226,7 @@ export default function App() {
         }`
       );
 
-      if (result.issue_date) {
+      if (result.due_date) {
         setMonth(extractedMonth);
       }
 
@@ -395,7 +395,7 @@ async function handleDeleteDocument(documentId) {
     invoices.filter(
       (invoice) =>
         invoice.status === "pending" &&
-        invoice.issue_date?.slice(0, 7) === month
+        invoice.due_date?.slice(0, 7) === month
     ),
   [invoices, month]
 );
@@ -405,7 +405,7 @@ const overdueInvoices = useMemo(
     invoices.filter(
       (invoice) =>
         invoice.status === "pending" &&
-        invoice.issue_date?.slice(0, 7) < month
+        invoice.due_date?.slice(0, 7) < month
     ),
   [invoices, month]
 );
@@ -437,11 +437,11 @@ const overdueInvoicesAmount = useMemo(
   const topProductsList = safeArray(topProducts.by_quantity).slice(0, 5);
 
   const currentMonthInvoices = invoices.filter(
-    (invoice) => invoice.issue_date?.slice(0, 7) === month
+    (invoice) => invoice.due_date?.slice(0, 7) === month
   );
 
   const latestInvoiceDate = currentMonthInvoices.length
-    ? currentMonthInvoices.map((invoice) => invoice.issue_date).sort().at(-1)
+    ? currentMonthInvoices.map((invoice) => invoice.due_date).sort().at(-1)
     : null;
 
   const latestBankUploadDate = expensesBySupplier.items?.length

@@ -35,15 +35,15 @@ function formatMonthHuman(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
-function getInvoiceMonthKey(issueDate) {
-  if (!issueDate) return "";
+function getInvoiceMonthKey(dateValue) {
+  if (!dateValue) return "";
 
-  if (typeof issueDate === "string") {
-    const isoMatch = issueDate.match(/^(\d{4})-(\d{2})/);
+  if (typeof dateValue === "string") {
+    const isoMatch = dateValue.match(/^(\d{4})-(\d{2})/);
     if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
   }
 
-  const date = new Date(issueDate);
+  const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) return "";
 
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -104,7 +104,6 @@ function getInvoiceDocumentUrl(invoice) {
 const EMPTY_MANUAL_FORM = {
   supplier: "",
   invoice_number: "",
-  issue_date: "",
   due_date: "",
   category: "",
   total: "",
@@ -165,7 +164,6 @@ useEffect(() => {
     const requiredFields = [
       "supplier",
       "invoice_number",
-      "issue_date",
       "due_date",
       "category",
       "total",
@@ -191,10 +189,7 @@ useEffect(() => {
       return;
     }
 
-    if (new Date(manualForm.due_date) < new Date(manualForm.issue_date)) {
-      setManualError("La scadenza non può essere precedente alla data di emissione.");
-      return;
-    }
+    // Non richiediamo più la data di emissione: la scadenza è la data principale
 
     if (!handleCreateManualInvoice) {
       setManualError("Funzione di salvataggio manuale non collegata.");
@@ -208,7 +203,6 @@ useEffect(() => {
       await handleCreateManualInvoice({
         supplier: manualForm.supplier.trim(),
         invoice_number: manualForm.invoice_number.trim(),
-        issue_date: manualForm.issue_date,
         due_date: manualForm.due_date,
         category: manualForm.category.trim(),
         total: Number(manualForm.total),
@@ -227,12 +221,12 @@ useEffect(() => {
   }
 
   const currentMonthInvoices = useMemo(() => {
-  return invoices.filter((invoice) => getInvoiceMonthKey(invoice.issue_date) === month);
-}, [invoices, month]);
+    return invoices.filter((invoice) => getInvoiceMonthKey(invoice.due_date) === month);
+  }, [invoices, month]);
 
 const invoicesForView = useMemo(() => {
   if (statusFilter === "overdue") {
-    return invoices.filter(isOverdue);
+    return currentMonthInvoices.filter(isOverdue);
   }
 
   return currentMonthInvoices;
@@ -415,7 +409,6 @@ const totalAmount = invoicesForView.reduce(
       <div className="invoice-clean-table-head">
         <div>FORNITORE</div>
         <div>N° FATTURA</div>
-        <div>EMESSA</div>
         <div>SCADENZA</div>
         <div>CATEGORIA</div>
         <div>TOTALE</div>
@@ -436,8 +429,6 @@ const totalAmount = invoicesForView.reduce(
                 <div className="invoice-modern-number">
                   {invoice.invoice_number || "-"}
                 </div>
-
-                <div>{formatDate(invoice.issue_date)}</div>
 
                 <div className="invoice-modern-due">{formatDate(invoice.due_date)}</div>
 
@@ -571,12 +562,6 @@ const totalAmount = invoicesForView.reduce(
                   updateManualForm("invoice_number", event.target.value)
                 }
                 placeholder="Numero fattura"
-              />
-
-              <input
-                type="date"
-                value={manualForm.issue_date}
-                onChange={(event) => updateManualForm("issue_date", event.target.value)}
               />
 
               <input

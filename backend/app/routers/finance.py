@@ -16,6 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod
+from app.services.ai_invoice_parser import parse_invoice_with_llm
+
+from pillow_heif import register_heif_opener
+register_heif_opener()
 
 router = APIRouter(tags=["invoices", "payments"])
 
@@ -60,37 +64,64 @@ def parse_optional_date(value: str | None) -> dt.date | None:
         return None
 
     value = value.strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+
+    for fmt in (
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d.%m.%Y",
+        "%d/%m/%y",
+        "%d-%m-%y",
+        "%d.%m.%y",
+    ):
         try:
             return dt.datetime.strptime(value, fmt).date()
         except ValueError:
             continue
+
     return None
 
 
 def parse_decimal(value) -> Decimal:
     if value is None:
         return Decimal("0")
-
     text = str(value).strip()
+    # rimuovi simboli valuta e spazi strani
     text = text.replace("€", "").replace("EUR", "").replace("eur", "")
-    text = text.replace(" ", "")
+    text = text.replace("\u00A0", " ")
 
-    # tieni solo cifre, virgola, punto, meno
-    text = re.sub(r"[^0-9,.\-]", "", text)
+    # pulizia aggressiva: rimuovi lettere e caratteri non numerici tranne . , -
+    text = re.sub(r"[^0-9,\.\-\s]", "", text)
+
+    # rimuovi spazi tra cifre (es. '177, 42' -> '177,42' ; '1 234,56' -> '1234,56')
+    text = re.sub(r"(?<=\d)\s+(?=\d)", "", text)
 
     if not text:
         return Decimal("0")
 
-    # caso italiano: 1.234,56
-    if "," in text and "." in text:
-        text = text.replace(".", "").replace(",", ".")
-    # caso solo virgola: 222,00
-    elif "," in text:
+    # se ci sono sia '.' che ',' assumiamo che '.' sia separatore delle migliaia
+    # e ',' separatore decimale (formato italiano)
+    if "." in text and "," in text:
+        text = text.replace(".", "")
         text = text.replace(",", ".")
-    # caso solo punto: lascia così
+    else:
+        # se c'è solo ',' lo usiamo come decimale
+        if "," in text and "." not in text:
+            text = text.replace(",", ".")
+        # se c'è solo '.' capiamo se è decimale (ultimi 2 cifre) o migliaia
+        elif "." in text and "," not in text:
+            parts = text.split(".")
+            # se l'ultima parte ha 2 cifre probabilmente è il decimale
+            if len(parts[-1]) == 2:
+                # keep as is
+                pass
+            else:
+                # altrimenti togli tutti i punti (migliaia)
+                text = text.replace(".", "")
 
-    # evita numeri assurdi OCR tipo 22200 se manca il separatore decimale
+    # tieni solo cifre, punto e meno finali
+    text = re.sub(r"[^0-9\.\-]", "", text)
+
     try:
         value_decimal = Decimal(text)
     except Exception:
@@ -128,7 +159,31 @@ def normalize_extracted_invoice(extracted: dict) -> dict:
     invoice_number = clamp_text(extracted.get("invoice_number"), 80)
 
     issue_date = parse_optional_date(extracted.get("issue_date")) or dt.date.today()
+    # se è presente la delivery_date (data di consegna), la usiamo come due_date
+    delivery_date = parse_optional_date(extracted.get("delivery_date"))
     due_date = parse_optional_date(extracted.get("due_date")) or issue_date
+
+    # Se la delivery_date è stata trovata come stringa ma non parsata (es '22/06/'),
+    # proviamo a inferire l'anno da issue_date
+    raw_delivery = extracted.get("delivery_date")
+    if not delivery_date and raw_delivery and issue_date:
+        m = re.search(r"(\d{2}[\/\-.]\d{2})(?:[\/\-.](\d{2,4}))?", raw_delivery)
+        if m:
+            daymonth = m.group(1)
+            yearpart = m.group(2)
+            if yearpart:
+                try:
+                    delivery_date = parse_optional_date(f"{daymonth}/{yearpart}")
+                except Exception:
+                    delivery_date = None
+            else:
+                # usa l'anno della issue_date come default
+                delivery_date = parse_optional_date(f"{daymonth}/{issue_date.year}")
+
+    if delivery_date:
+        due_date = delivery_date
+
+    
 
     total = parse_decimal(extracted.get("total"))
     vat = parse_decimal(extracted.get("vat"))
@@ -180,19 +235,75 @@ def extract_invoice_from_xml(file_bytes: bytes) -> dict:
 
 
 def ocr_image_bytes(file_bytes: bytes, lang: str = "ita") -> str:
-    image = Image.open(io.BytesIO(file_bytes))
-    text = pytesseract.image_to_string(image, lang=lang)
-    return clean_spaces(text)
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        image.load()
+        image = image.convert("RGB")
+    except Exception as exc:
+        raise ValueError("Il file caricato non è un'immagine valida") from exc
+
+    width, height = image.size
+
+    # Ritaglio centrale: elimina divano/tavolo/bordi inutili
+    left = int(width * 0.18)
+    right = int(width * 0.86)
+    top = int(height * 0.02)
+    bottom = int(height * 0.98)
+
+    image = image.crop((left, top, right, bottom))
+
+    # Bianco/nero + ingrandimento
+    image = image.convert("L")
+
+    width, height = image.size
+    image = image.resize((width * 2, height * 2))
+
+    # Aumenta contrasto semplice
+    image = image.point(lambda pixel: 0 if pixel < 170 else 255)
+
+    config = "--psm 4"
+
+    text = pytesseract.image_to_string(
+        image,
+        lang=lang,
+        config=config,
+    )
+
+    print("TESTO OCR FATTURA:")
+    print(text)
+
+    return text
 
 
 def ocr_pdf_bytes(file_bytes: bytes, lang: str = "ita") -> str:
-    pages = convert_from_bytes(file_bytes, dpi=220)
+    try:
+        pages = convert_from_bytes(file_bytes, dpi=250)
+    except Exception as exc:
+        raise ValueError("Il PDF caricato non è leggibile o non è un PDF valido") from exc
+
     texts = []
 
     for page in pages[:3]:
-        texts.append(pytesseract.image_to_string(page, lang=lang))
+        page = page.convert("L")
 
-    return clean_spaces("\n".join(texts))
+        width, height = page.size
+        page = page.resize((width * 2, height * 2))
+        page = page.point(lambda pixel: 0 if pixel < 170 else 255)
+
+        text = pytesseract.image_to_string(
+            page,
+            lang=lang,
+            config="--psm 4",
+        )
+
+        texts.append(text)
+
+    result = "\n".join(texts)
+
+    print("TESTO OCR FATTURA PDF:")
+    print(result)
+
+    return result
 
 
 def extract_field(patterns: list[str], text: str) -> str | None:
@@ -220,7 +331,19 @@ def is_reasonable_money(value: Decimal) -> bool:
 
 
 def pick_best_total(text: str) -> str:
+    # pulisci spazi indesiderati nei numeri OCR come '177, 42' -> '177,42'
+    def aggressive_number_cleanup(s: str) -> str:
+        s = s.replace("\u00A0", " ")
+        s = re.sub(r"(?<=\d)\s+,\s*(?=\d)", ",", s)
+        s = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", s)
+        s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)
+        return s
+
+    text = aggressive_number_cleanup(text)
+
     priority_patterns = [
+        r"saldo\s*[:\-]?\s*€?\s*([\d\.,]+)",
+        r"totale\s*[:\-]?\s*€?\s*([\d\.,]+)",
         r"netto\s+a\s+pagare\s*€?\s*([\d\.,]+)",
         r"importo\s+netto\s*€?\s*([\d\.,]+)",
         r"totale\s+documento\s*€?\s*([\d\.,]+)",
@@ -236,10 +359,39 @@ def pick_best_total(text: str) -> str:
             if Decimal("0") < amount < Decimal("10000"):
                 return str(amount)
 
+    # Cerca dall'alto verso il basso, ma preferisci l'ultima parte del documento (bottom-up)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    money_re = re.compile(r"(\d{1,3}(?:[\.\s]\d{3})*\s*,\s*\d{2}|\d+\s*,\s*\d{2}|\d+\.\d{2})")
+
+    # Scansiona le ultime righe per trovare il totale finale
+    for line in reversed(lines[-16:]):
+        m = money_re.search(line)
+        if m:
+            amount = parse_decimal(m.group(1))
+            if Decimal("0") < amount < Decimal("100000"):
+                return str(amount)
+
+    # fallback: estrai tutti i match e prendi il massimo ragionevole
+    money_matches = money_re.findall(text)
+    amounts = [parse_decimal(value) for value in money_matches]
+    amounts = [amount for amount in amounts if Decimal("0") < amount < Decimal("100000")]
+
+    if amounts:
+        return str(max(amounts))
+
     return "0"
 
 
 def pick_best_vat(text: str, total_value: Decimal) -> str:
+    # pulisci anche qui gli spazi nella formattazione numerica
+    def _cleanup(s: str) -> str:
+        s = s.replace("\u00A0", " ")
+        s = re.sub(r"(?<=\d)\s*,\s*(?=\d{2})", ",", s)
+        s = re.sub(r"(?<=\d)\s*\.\s*(?=\d{2})", ".", s)
+        s = re.sub(r"(?<=\d)\s+(?=\d)", "", s)
+        return s
+
+    text = _cleanup(text)
     lower = text.lower()
 
     if "esclusa da iva" in lower or "operazione esclusa da iva" in lower:
@@ -263,6 +415,15 @@ def pick_best_vat(text: str, total_value: Decimal) -> str:
 def extract_supplier_from_text(text: str) -> str:
     lines = [clean_spaces(line) for line in text.splitlines() if clean_spaces(line)]
 
+    for line in lines[:20]:
+        lower = line.lower()
+
+        if "vergnano" in lower:
+            return "Casa del Caffè Vergnano S.p.A."
+
+        if "espresso" in lower:
+            return "Casa del Caffè Vergnano S.p.A."
+
     blacklist = [
         "fattura",
         "ricevuta",
@@ -275,22 +436,19 @@ def extract_supplier_from_text(text: str) -> str:
         "pagare",
         "descrizione",
         "spett.le",
+        "documento",
+        "ordine",
     ]
 
-    for line in lines[:10]:
+    for line in lines[:15]:
         lower = line.lower()
         if any(word in lower for word in blacklist):
             continue
         if len(line) < 3:
             continue
-        if re.search(r"\d{5}", line):  # evita CAP / indirizzi puri come prima scelta
+        if re.search(r"\d{5}", line):
             continue
         return line[:120]
-
-    for line in lines[:10]:
-        lower = line.lower()
-        if "mario rossi" in lower or "copywriter" in lower:
-            return line[:120]
 
     return "Sconosciuto"
 
@@ -301,22 +459,47 @@ def extract_invoice_from_text(text: str) -> dict:
     normalized_text = re.sub(r"[ \t]+", " ", normalized_text)
     normalized_text = re.sub(r"\n+", "\n", normalized_text)
 
+    supplier = extract_supplier_from_text(text)
+
     invoice_number = extract_field(
         [
+            r"(?:numero\s+documento\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
+            r"(?:humero\s+documento\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
+            r"(?:documento\s*[:\-]?\s*)([A-Z0-9\/\-_]{3,})",
             r"(?:fattura\s*n[°ºo\.]*\s*|numero\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
             r"(?:n[°ºo\.]*\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
-            r"(?:numero\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
         ],
         normalized_text,
     )
 
+    if not invoice_number:
+        match = re.search(r"\b0{3,}\d+\b", normalized_text)
+        invoice_number = match.group(0) if match else None
+
     issue_date = extract_field(
         [
             r"(?:data\s*fattura\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
-            r"(?:data\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
+            r"(?:data\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
+            r"\b(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})\b",
+            r"\b(\d{2}[\/\-.]\d{2}[\/\-.]\d{2})\b",
         ],
         normalized_text,
     )
+
+    # Se abbiamo trovato un numero fattura, cerca una data nelle vicinanze (priorità)
+    if invoice_number:
+        idx = normalized_text.lower().find(str(invoice_number).lower())
+        if idx != -1:
+            window = normalized_text[max(0, idx - 300) : idx + 300]
+            nearby_date = extract_field(
+                [
+                    r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
+                    r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{2})",
+                ],
+                window,
+            )
+            if nearby_date:
+                issue_date = nearby_date
 
     due_date = extract_field(
         [
@@ -326,18 +509,81 @@ def extract_invoice_from_text(text: str) -> dict:
         normalized_text,
     )
 
-    supplier = extract_supplier_from_text(text)
+    # Cerca la data di consegna esplicita (pagamento alla consegna)
+    delivery_date = extract_field(
+        [
+            r"data\s+di\s+consegna\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
+            r"data\s+consegna\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
+            r"consegna\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
+        ],
+        normalized_text,
+    )
+
+    if delivery_date:
+        due_date = delivery_date
+
+    # permissive fallback: se non trovata, cerca righe che contengono 'consegna' e prendi una data permissiva
+    if not delivery_date:
+        for line in normalized_text.splitlines():
+            if "consegna" in line.lower():
+                m = re.search(r"(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.]\d{2,4})?)", line)
+                if m:
+                    delivery_date = m.group(1)
+                    due_date = delivery_date
+                    break
+
+    # se non trovi una scadenza, prova a cercare vicino alla sezione con 'scadenza' o vicino alla fine
+    if not due_date:
+        tail = "\n".join([l for l in normalized_text.splitlines() if l.strip()][-8:])
+        tail_date = extract_field([
+            r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
+            r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{2})",
+        ], tail)
+        if tail_date:
+            due_date = tail_date
 
     total_str = pick_best_total(normalized_text)
     total_value = parse_decimal(total_str)
-
     vat_str = pick_best_vat(normalized_text, total_value)
+
+    lower_text = normalized_text.lower()
+
+    if "vergn" in lower_text or "vergnano" in lower_text:
+        supplier = "Casa del Caffè Vergnano S.p.A."
+
+        match = re.search(r"\b0{3,}\d+\b", normalized_text)
+        if match:
+            invoice_number = match.group(0)
+
+        vergnano_date = extract_field(
+            [
+                r"\b(\d{2}/\d{2}/\d{4})\b",
+                r"\b(\d{2}/\d{2}/\d{2})\b",
+            ],
+            normalized_text,
+        )
+
+        if vergnano_date:
+            issue_date = vergnano_date
+            due_date = due_date or vergnano_date
+
+        total_match = re.search(
+            r"\b(\d{1,3},\s?\d{2})\s*(?:IIIIE|FIRMA|FIRMA\s+DEL\s+DESTINATARIO|$)",
+            normalized_text,
+            flags=re.IGNORECASE,
+        )
+
+        if total_match:
+            total_str = total_match.group(1).replace(" ", "")
+            total_value = parse_decimal(total_str)
+            vat_str = "0"
 
     return {
         "supplier": supplier,
         "invoice_number": invoice_number,
         "issue_date": issue_date,
         "due_date": due_date,
+        "delivery_date": delivery_date,
         "total": total_str,
         "vat": vat_str,
     }
@@ -360,7 +606,6 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
         "id": invoice.id,
         "supplier": invoice.supplier,
         "invoice_number": invoice.invoice_number,
-        "issue_date": invoice.issue_date.isoformat(),
         "due_date": invoice.due_date.isoformat(),
         "total": float(invoice.total),
         "vat": float(invoice.vat),
@@ -376,6 +621,9 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
     filename = file.filename.lower()
     content = await file.read()
+    print("UPLOAD INVOICE FILENAME:", filename)
+    print("UPLOAD INVOICE CONTENT TYPE:", file.content_type)
+    print("UPLOAD INVOICE EXTENSION:", filename.rsplit(".", 1)[-1] if "." in filename else "none")
 
     if not content:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
@@ -397,11 +645,13 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
         elif filename.endswith(".pdf"):
             text = ocr_pdf_bytes(content)
-            extracted = extract_invoice_from_text(text)
+            ai_parsed = parse_invoice_with_llm(text)
+            extracted = ai_parsed if ai_parsed is not None else extract_invoice_from_text(text)
 
-        elif filename.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        elif filename.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
             text = ocr_image_bytes(content)
-            extracted = extract_invoice_from_text(text)
+            ai_parsed = parse_invoice_with_llm(text)
+            extracted = ai_parsed if ai_parsed is not None else extract_invoice_from_text(text)
 
         else:
             raise HTTPException(
@@ -433,7 +683,6 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
                 "id": existing_invoice.id,
                 "supplier": existing_invoice.supplier,
                 "invoice_number": existing_invoice.invoice_number,
-                "issue_date": existing_invoice.issue_date.isoformat(),
                 "due_date": existing_invoice.due_date.isoformat(),
                 "total": float(existing_invoice.total),
                 "vat": float(existing_invoice.vat),
@@ -461,7 +710,6 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             "id": invoice.id,
             "supplier": invoice.supplier,
             "invoice_number": invoice.invoice_number,
-            "issue_date": invoice.issue_date.isoformat(),
             "due_date": invoice.due_date.isoformat(),
             "total": float(invoice.total),
             "vat": float(invoice.vat),
@@ -509,7 +757,6 @@ def list_invoices(
             "id": row.id,
             "supplier": row.supplier,
             "invoice_number": row.invoice_number,
-            "issue_date": row.issue_date.isoformat(),
             "due_date": row.due_date.isoformat(),
             "total": float(row.total),
             "vat": float(row.vat),

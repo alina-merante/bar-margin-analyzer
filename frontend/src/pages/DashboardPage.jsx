@@ -119,7 +119,7 @@ export default function DashboardPage({
   const hasPreviousOverdueInvoices = previousOverdueInvoices.length > 0;
 
   const currentMonthInvoices = useMemo(() => {
-    return invoices.filter((invoice) => invoice.issue_date?.slice(0, 7) === month);
+    return invoices.filter((invoice) => invoice.due_date?.slice(0, 7) === month);
   }, [invoices, month]);
 
   const paidInvoices = currentMonthInvoices.filter((i) => i.status === "paid");

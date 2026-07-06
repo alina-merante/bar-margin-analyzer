@@ -3296,9 +3296,8 @@ body {
 .invoice-modern-row {
   display: grid;
   grid-template-columns:
-    1.5fr   /* fornitore */
+    1.6fr   /* fornitore */
     1fr     /* numero */
-    1fr     /* emessa */
     1fr     /* scadenza */
     1fr     /* categoria */
     0.9fr   /* totale */
