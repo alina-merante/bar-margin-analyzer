@@ -400,15 +400,20 @@ async function handleDeleteDocument(documentId) {
   [invoices, month]
 );
 
-const overdueInvoices = useMemo(
-  () =>
-    invoices.filter(
-      (invoice) =>
-        invoice.status === "pending" &&
-        invoice.due_date?.slice(0, 7) < month
-    ),
-  [invoices, month]
-);
+const overdueInvoices = useMemo(() => {
+  const currentYear = new Date().getFullYear();
+
+  return invoices.filter((invoice) => {
+    if (invoice.status !== "pending") return false;
+    if (!invoice.due_date) return false;
+
+    const dueDate = new Date(invoice.due_date);
+    if (Number.isNaN(dueDate.getTime())) return false;
+    if (dueDate.getFullYear() !== currentYear) return false;
+
+    return dueDate < new Date();
+  });
+}, [invoices]);
 
 const overdueInvoicesAmount = useMemo(
   () =>

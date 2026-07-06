@@ -261,11 +261,11 @@ export default function DashboardPage({
 
     <div>
       <strong>
-        Hai {previousOverdueInvoices.length} fatture da pagare dei mesi precedenti
+        Hai {previousOverdueInvoices.length} fatture da pagare.
       </strong>
       <p>
         Totale arretrato: {formatEuro(previousOverdueInvoicesAmount)}. Controlla
-        le scadenze nella sezione Fatture.
+        le scadenze delle fatture scadute di quest'anno nella sezione Fatture.
       </p>
     </div>
 
@@ -409,9 +409,6 @@ export default function DashboardPage({
             <div className="invoice-card-head">
               <div>
                 <div className="card-title">Fatture</div>
-                <div className="card-sub">
-                  {monthLabel} · {currentMonthInvoices.length} totali
-                </div>
               </div>
 
               <Link to="/invoices" className="see-all-btn">
