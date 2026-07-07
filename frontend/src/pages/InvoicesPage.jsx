@@ -454,24 +454,37 @@ useEffect(() => {
     return categoryOptions.find((category) => category.label === categoryFilter) || null;
   }, [categoryOptions, categoryFilter]);
 
+  const allVisibleInvoices = useMemo(() => {
+    return [...currentMonthInvoices, ...yearOverdueInvoices];
+  }, [currentMonthInvoices, yearOverdueInvoices]);
+
+  const invoiceSearchScope = useMemo(() => {
+    const normalizedSupplierSearch = supplierSearch.trim();
+    return normalizedSupplierSearch ? allVisibleInvoices : invoicesForView;
+  }, [supplierSearch, allVisibleInvoices, invoicesForView]);
+
   const filteredInvoices = useMemo(() => {
-    return invoicesForView.filter((invoice) => {
+    const normalizedSupplierSearch = supplierSearch.trim().toLowerCase();
+    const invoicesToFilter = normalizedSupplierSearch ? allVisibleInvoices : invoicesForView;
+
+    return invoicesToFilter.filter((invoice) => {
       const status = getInvoiceStatus(invoice);
       const matchesStatus =
+        normalizedSupplierSearch ||
         statusFilter === "all" ||
         statusFilter === "year-overdue" ||
         status === statusFilter;
 
       const matchesSupplier =
-        !supplierSearch ||
-        invoice.supplier?.toLowerCase().includes(supplierSearch.toLowerCase());
+        !normalizedSupplierSearch ||
+        invoice.supplier?.toLowerCase().includes(normalizedSupplierSearch);
 
       const matchesCategory =
         !categoryFilter || getCategoryLabel(invoice, knownCategoryNames) === categoryFilter;
 
       return matchesStatus && matchesSupplier && matchesCategory;
     });
-}, [invoicesForView, statusFilter, supplierSearch, categoryFilter, knownCategoryNames]);
+}, [invoicesForView, allVisibleInvoices, statusFilter, supplierSearch, categoryFilter, knownCategoryNames]);
 
 const totalAmount = invoicesForView.reduce(
       (sum, invoice) => sum + (Number(invoice.total) || 0),
@@ -839,7 +852,7 @@ const totalAmount = invoicesForView.reduce(
 
         {filteredInvoices.length ? (
           <div className="invoice-table-footer">
-            Mostrate {filteredInvoices.length} di {invoicesForView.length} fatture
+            Mostrate {filteredInvoices.length} di {invoiceSearchScope.length} fatture
           </div>
         ) : null}
       </section>
