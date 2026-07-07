@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 function formatEuro(value) {
@@ -93,21 +93,76 @@ function getCategoryIcon(category = "") {
 
   if (lower.includes("caff")) return "☕";
   if (lower.includes("latte") || lower.includes("lattiero")) return "🥛";
-  if (lower.includes("dolci") || lower.includes("pane")) return "🥐";
+  if (lower.includes("dolci") || lower.includes("pane") || lower.includes("pastic")) {
+    return "🥐";
+  }
   if (lower.includes("bevande")) return "🍹";
+  if (lower.includes("serviz") || lower.includes("manutenz")) return "🛠️";
+  if (lower.includes("utenz") || lower.includes("energia") || lower.includes("luce")) {
+    return "💡";
+  }
 
   return "🧾";
 }
 
-function getCategoryLabel(invoice) {
+function getCategoryTone(category = "") {
+  const lower = category.toLowerCase();
+
+  if (lower.includes("caff")) return "caffe";
+  if (lower.includes("latte") || lower.includes("lattiero")) return "latte";
+  if (lower.includes("dolci") || lower.includes("pane") || lower.includes("pastic")) {
+    return "dolci";
+  }
+  if (lower.includes("bevande") || lower.includes("soft")) return "bevande";
+  if (lower.includes("serviz") || lower.includes("manutenz")) return "servizi";
+  if (
+    lower.includes("utenz") ||
+    lower.includes("serviz") ||
+    lower.includes("energia") ||
+    lower.includes("luce") ||
+    lower.includes("gas")
+  ) {
+    return "utenze";
+  }
+
+  return "altro";
+}
+
+function getCategoryCardIcon(category = "") {
+  return getCategoryTone(category) === "altro" ? "📦" : getCategoryIcon(category);
+}
+
+function getCategoryLabel(invoice, knownCategories = []) {
   const category = invoice.category?.trim();
   if (category) return category;
 
   const supplier = invoice.supplier?.toLowerCase() || "";
+
+  const matchedKnownCategory = knownCategories.find((item) => {
+    const normalizedName = item.toLowerCase();
+    const keyword = normalizedName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return supplier.includes(keyword);
+  });
+
+  if (matchedKnownCategory) return matchedKnownCategory;
+
   if (supplier.includes("caff")) return "Caffè";
   if (supplier.includes("latte") || supplier.includes("lattiero")) return "Latticini";
-  if (supplier.includes("dolci") || supplier.includes("pane")) return "Dolci";
+  if (supplier.includes("dolci") || supplier.includes("pane") || supplier.includes("pastic")) {
+    return "Pasticceria";
+  }
   if (supplier.includes("bevande")) return "Bevande";
+  if (supplier.includes("serviz") || supplier.includes("copywriter") || supplier.includes("consul")) {
+    return "Servizi";
+  }
+  if (
+    supplier.includes("utenz") ||
+    supplier.includes("energia") ||
+    supplier.includes("luce") ||
+    supplier.includes("gas")
+  ) {
+    return "Utenze";
+  }
 
   return "Altro";
 }
@@ -139,6 +194,7 @@ const EMPTY_MANUAL_FORM = {
 export default function InvoicesPage({
   month,
   invoices = [],
+  invoiceCategories = [],
   invoiceUploadMessage,
   invoiceUploadError,
   invoiceUploading,
@@ -154,6 +210,10 @@ export default function InvoicesPage({
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [isYearView, setIsYearView] = useState(false);
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState("");
+  const [draftCategoryFilter, setDraftCategoryFilter] = useState("");
+  const categoryPopoverRef = useRef(null);
+  const invoiceTableRef = useRef(null);
 
   const [searchParams] = useSearchParams();
 
@@ -167,6 +227,28 @@ useEffect(() => {
     setIsYearView(true);
   }
 }, [searchParams]);
+
+  useEffect(() => {
+    if (!categoryDropdownOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (!categoryPopoverRef.current?.contains(event.target)) {
+        setCategoryDropdownOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [categoryDropdownOpen]);
+
+  useEffect(() => {
+    if (categoryDropdownOpen) {
+      setDraftCategoryFilter(categoryFilter);
+    }
+  }, [categoryDropdownOpen, categoryFilter]);
 
   const [manualForm, setManualForm] = useState(EMPTY_MANUAL_FORM);
   const [manualError, setManualError] = useState("");
@@ -191,6 +273,15 @@ useEffect(() => {
 
   function closeInvoicePreview() {
     setSelectedInvoice(null);
+  }
+
+  function scrollToInvoicesTable() {
+    requestAnimationFrame(() => {
+      invoiceTableRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
   }
 
   async function submitManualInvoice() {
@@ -319,13 +410,49 @@ useEffect(() => {
     0
   );
 
-  const categories = useMemo(() => {
-  // Calcola categorie da TUTTE le fatture (mese + anno)
-  const allInvoices = [...currentMonthInvoices, ...yearOverdueInvoices];
-  return [
-    ...new Set(allInvoices.map((invoice) => invoice.category).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b, "it"));
-}, [currentMonthInvoices, yearOverdueInvoices]);
+  const knownCategoryNames = useMemo(() => {
+    return invoiceCategories
+      .map((category) => category?.name?.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "it"));
+  }, [invoiceCategories]);
+
+  const categoryOptions = useMemo(() => {
+    const allInvoices = [...currentMonthInvoices, ...yearOverdueInvoices];
+    const counts = new Map();
+
+    knownCategoryNames.forEach((label) => {
+      counts.set(label, 0);
+    });
+
+    allInvoices.forEach((invoice) => {
+      const label = getCategoryLabel(invoice, knownCategoryNames);
+      if (!label) return;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({
+        label,
+        count,
+        icon: getCategoryCardIcon(label),
+        tone: getCategoryTone(label),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "it"));
+  }, [currentMonthInvoices, yearOverdueInvoices, knownCategoryNames]);
+
+  const filteredCategoryOptions = useMemo(() => {
+    const normalizedSearch = categorySearch.trim().toLowerCase();
+    if (!normalizedSearch) return categoryOptions;
+
+    return categoryOptions.filter((category) =>
+      category.label.toLowerCase().includes(normalizedSearch)
+    );
+  }, [categoryOptions, categorySearch]);
+
+  const selectedCategoryMeta = useMemo(() => {
+    return categoryOptions.find((category) => category.label === categoryFilter) || null;
+  }, [categoryOptions, categoryFilter]);
 
   const filteredInvoices = useMemo(() => {
     return invoicesForView.filter((invoice) => {
@@ -339,11 +466,12 @@ useEffect(() => {
         !supplierSearch ||
         invoice.supplier?.toLowerCase().includes(supplierSearch.toLowerCase());
 
-      const matchesCategory = !categoryFilter || invoice.category === categoryFilter;
+      const matchesCategory =
+        !categoryFilter || getCategoryLabel(invoice, knownCategoryNames) === categoryFilter;
 
       return matchesStatus && matchesSupplier && matchesCategory;
     });
-}, [invoicesForView, statusFilter, supplierSearch, categoryFilter]);
+}, [invoicesForView, statusFilter, supplierSearch, categoryFilter, knownCategoryNames]);
 
 const totalAmount = invoicesForView.reduce(
       (sum, invoice) => sum + (Number(invoice.total) || 0),
@@ -508,6 +636,108 @@ const totalAmount = invoicesForView.reduce(
           ✗ Scadute ({monthOverdueInvoices.length})
         </button>
 
+        <div className="invoice-category-filter-bar">
+          <div className="invoice-category-dropdown-wrapper" ref={categoryPopoverRef}>
+            <button
+              type="button"
+              className={`invoice-status-filter invoice-category-dropdown-btn ${categoryDropdownOpen ? "open" : ""}`}
+              onClick={() => setCategoryDropdownOpen((open) => !open)}
+            >
+              <span className="invoice-category-dropdown-btn-icon">🏷️</span>
+              <span className="invoice-category-dropdown-btn-label">
+                {selectedCategoryMeta?.label || "Categoria"}
+              </span>
+              <span className="invoice-category-dropdown-btn-arrow">▼</span>
+            </button>
+
+            {categoryDropdownOpen ? (
+              <div className="invoice-category-popover-menu">
+                <div className="invoice-category-popover-header">
+                  <div>
+                    <div className="invoice-category-popover-title">Seleziona categoria</div>
+                    <div className="invoice-category-popover-subtitle">
+                      {filteredInvoices.length} fatture trovate
+                    </div>
+                  </div>
+
+                  <div className="invoice-category-search-wrap">
+                    <span>🔍</span>
+                    <input
+                      type="text"
+                      value={categorySearch}
+                      onChange={(event) => setCategorySearch(event.target.value)}
+                      placeholder="Cerca categoria..."
+                    />
+                  </div>
+                </div>
+
+                <div className="invoice-category-grid">
+                  {filteredCategoryOptions.length ? (
+                    filteredCategoryOptions.map((category) => (
+                      <button
+                        key={category.label}
+                        type="button"
+                        className={`invoice-category-card ${category.tone} ${
+                          draftCategoryFilter === category.label ? "active" : ""
+                        }`}
+                        onClick={() => setDraftCategoryFilter(category.label)}
+                      >
+                        <span className="invoice-category-card-icon">{category.icon}</span>
+                        <span className="invoice-category-card-name">{category.label}</span>
+                        <span className="invoice-category-card-count">
+                          {category.count} {category.count === 1 ? "fattura" : "fatture"}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="invoice-category-empty-state">
+                      Nessuna categoria compatibile con la ricerca.
+                    </div>
+                  )}
+                </div>
+
+                <div className="invoice-category-popover-footer">
+                  <button
+                    type="button"
+                    className="invoice-category-reset-btn"
+                    onClick={() => {
+                      setCategoryFilter("");
+                      setDraftCategoryFilter("");
+                      setCategorySearch("");
+                      setCategoryDropdownOpen(false);
+                    }}
+                  >
+                    ✕ Reset filtro
+                  </button>
+
+                  <button
+                    type="button"
+                    className="invoice-category-apply-btn"
+                    onClick={() => {
+                      setStatusFilter("all");
+                      setIsYearView(false);
+                      setCategoryFilter(draftCategoryFilter);
+                      setCategoryDropdownOpen(false);
+                      scrollToInvoicesTable();
+                    }}
+                  >
+                    Applica
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="invoice-search-box">
+            🔍
+            <input
+              value={supplierSearch}
+              onChange={(event) => setSupplierSearch(event.target.value)}
+              placeholder="Cerca fornitore..."
+            />
+          </div>
+        </div>
+
         <button
           type="button"
           className={`invoice-status-filter ${
@@ -522,67 +752,29 @@ const totalAmount = invoicesForView.reduce(
           📅 Arretrati {currentYear} ({yearOverdueInvoices.length})
         </button>
 
-        <div className="invoice-search-box">
-          🔍
-          <input
-            value={supplierSearch}
-            onChange={(event) => setSupplierSearch(event.target.value)}
-            placeholder="Cerca fornitore..."
-          />
-        </div>
+        {invoiceUploadMessage ? (
+          <p className="upload-feedback success">{invoiceUploadMessage}</p>
+        ) : null}
+
+        {invoiceDeleteError ? (
+          <p className="upload-feedback error">{invoiceDeleteError}</p>
+        ) : null}
+
+        {invoiceUploadError ? (
+          <p className="upload-feedback error">{invoiceUploadError}</p>
+        ) : null}
       </section>
 
-      <div className="invoice-category-dropdown-wrapper">
-        <button
-          type="button"
-          className="invoice-category-dropdown-btn"
-          onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
-        >
-          {categoryFilter || "Categoria"}
-        </button>
-        {categoryDropdownOpen && (
-          <div className="invoice-category-dropdown-menu">
-            <div
-              className="invoice-category-option"
-              onClick={() => {
-                setCategoryFilter("");
-                setCategoryDropdownOpen(false);
-              }}
-            >
-              Tutti
-            </div>
-            {categories.length > 0 ? (
-              categories.map((category) => (
-                <div
-                  key={category}
-                  className={`invoice-category-option ${categoryFilter === category ? "active" : ""}`}
-                  onClick={() => {
-                    setCategoryFilter(category);
-                    setCategoryDropdownOpen(false);
-                  }}
-                >
-                  {category}
-                </div>
-              ))
-            ) : (
-              <div className="invoice-category-option disabled">
-                Nessuna categoria disponibile
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <section className="invoice-modern-table-card">
-      <div className="invoice-clean-table-head">
-        <div>FORNITORE</div>
-        <div>N° FATTURA</div>
-        <div>SCADENZA</div>
-        <div>CATEGORIA</div>
-        <div>TOTALE</div>
-        <div>VISUALIZZA</div>
-        <div>ELIMINA</div>
-      </div>
+      <section className="invoice-modern-table-card" ref={invoiceTableRef}>
+        <div className="invoice-clean-table-head">
+          <div>FORNITORE</div>
+          <div>N° FATTURA</div>
+          <div>SCADENZA</div>
+          <div>CATEGORIA</div>
+          <div>TOTALE</div>
+          <div>VISUALIZZA</div>
+          <div>ELIMINA</div>
+        </div>
 
         {filteredInvoices.length ? (
           filteredInvoices.map((invoice) => {
@@ -590,9 +782,7 @@ const totalAmount = invoicesForView.reduce(
 
             return (
               <div className={`invoice-clean-table-row ${status}`} key={invoice.id}>
-                <div className="invoice-modern-supplier">
-                  {invoice.supplier || "Fornitore"}
-                </div>
+                <div className="invoice-modern-supplier">{invoice.supplier || "Fornitore"}</div>
 
                 <div className="invoice-modern-number">
                   {invoice.invoice_number || "-"}
@@ -607,43 +797,44 @@ const totalAmount = invoicesForView.reduce(
                 </div>
 
                 <div className="invoice-modern-category">
-                  {getCategoryIcon(invoice.category || invoice.supplier)} {getCategoryLabel(invoice)}
+                  {getCategoryIcon(getCategoryLabel(invoice, knownCategoryNames))} {getCategoryLabel(
+                    invoice,
+                    knownCategoryNames
+                  )}
                 </div>
 
                 <div className="invoice-modern-total">{formatEuro(invoice.total)}</div>
 
-            <div className="invoice-action-cell">
-              <button
-                type="button"
-                className="invoice-icon-btn"
-                onClick={() => setSelectedInvoice(invoice)}
-                title="Visualizza fattura"
-              >
-                👁️
-              </button>
-            </div>
+                <div className="invoice-action-cell">
+                  <button
+                    type="button"
+                    className="invoice-icon-btn"
+                    onClick={() => setSelectedInvoice(invoice)}
+                    title="Visualizza fattura"
+                  >
+                    👁️
+                  </button>
+                </div>
 
-            <div className="invoice-action-cell">
-              <button
-                type="button"
-                className="invoice-icon-btn delete"
-                onClick={() => {
-                  if (window.confirm("Vuoi eliminare questa fattura?")) {
-                    handleDeleteInvoice(invoice.id);
-                  }
-                }}
-                title="Elimina fattura"
-              >
-                🗑️
-              </button>
-            </div>
+                <div className="invoice-action-cell">
+                  <button
+                    type="button"
+                    className="invoice-icon-btn delete"
+                    onClick={() => {
+                      if (window.confirm("Vuoi eliminare questa fattura?")) {
+                        handleDeleteInvoice(invoice.id);
+                      }
+                    }}
+                    title="Elimina fattura"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             );
           })
         ) : (
-          <p className="small-muted">
-            Nessuna fattura disponibile con i filtri selezionati.
-          </p>
+          <p className="small-muted">Nessuna fattura disponibile con i filtri selezionati.</p>
         )}
 
         {filteredInvoices.length ? (
@@ -652,22 +843,6 @@ const totalAmount = invoicesForView.reduce(
           </div>
         ) : null}
       </section>
-
-      <div className="upload-feedback-area">
-        {invoiceUploading ? <p className="upload-feedback">Caricamento in corso...</p> : null}
-
-        {invoiceUploadMessage ? (
-          <p className="upload-feedback success">{invoiceUploadMessage}</p>
-        ) : null}
-
-        {invoiceDeleteError ? (
-          <p className="upload-feedback error">{invoiceDeleteError}</p>
-        ) : null}
-
-        {invoiceUploadError ? (
-          <p className="upload-feedback error">{invoiceUploadError}</p>
-        ) : null}
-      </div>
 
      {selectedInvoice ? (
   <div className="invoice-preview-backdrop">

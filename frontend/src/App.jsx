@@ -38,6 +38,7 @@ export default function App() {
   });
 
   const [invoices, setInvoices] = useState([]);
+  const [invoiceCategories, setInvoiceCategories] = useState([]);
   const [trend, setTrend] = useState([]);
   const [topProducts, setTopProducts] = useState({ by_quantity: [] });
   const [expensesByCategory, setExpensesByCategory] = useState({ items: [] });
@@ -64,6 +65,7 @@ export default function App() {
     const [
       overviewData,
       invoicesData,
+      categoriesData,
       trendData,
       topProductsData,
       expensesByCategoryData,
@@ -72,6 +74,7 @@ export default function App() {
     ] = await Promise.all([
       fetchJsonOrThrow(`/api/analytics/overview?month=${selectedMonth}`),
       fetchJsonOrThrow("/api/invoices"),
+      fetchJsonOrThrow("/api/categories"),
       fetchJsonOrThrow(`/api/analytics/pnl/trend?months=6&month=${selectedMonth}`),
       fetchJsonOrThrow(`/api/analytics/top-products?month=${selectedMonth}`),
       fetchJsonOrThrow(`/api/analytics/expenses-by-category?month=${selectedMonth}`),
@@ -86,6 +89,7 @@ export default function App() {
     );
 
     setInvoices(safeArray(invoicesData));
+    setInvoiceCategories(safeArray(categoriesData));
     setTrend(safeArray(trendData));
     setTopProducts(topProductsData ?? { by_quantity: [] });
 
@@ -499,6 +503,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 month={month}
                 setMonth={setMonth}
                 invoices={invoices}
+                invoiceCategories={invoiceCategories}
                 invoiceUploadMessage={invoiceUploadMessage}
                 invoiceUploadError={invoiceUploadError}
                 invoiceUploading={invoiceUploading}
