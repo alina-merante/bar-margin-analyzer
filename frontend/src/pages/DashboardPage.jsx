@@ -269,7 +269,7 @@ export default function DashboardPage({
       </p>
     </div>
 
-    <Link to="/invoices?tab=overdue" className="previous-overdue-link">
+    <Link to="/invoices?tab=year-overdue" className="previous-overdue-link">
   Vai alle fatture →
 </Link>
   </div>

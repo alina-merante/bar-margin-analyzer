@@ -67,6 +67,19 @@ function getInvoiceStatus(invoice) {
   return "due";
 }
 
+function isCurrentYearOverdue(invoice) {
+  if (invoice.status === "paid") return false;
+  if (!invoice.due_date) return false;
+
+  const dueDate = new Date(invoice.due_date);
+  if (Number.isNaN(dueDate.getTime())) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return dueDate < today && dueDate.getFullYear() === new Date().getFullYear();
+}
+
 function getStatusLabel(invoice) {
   const status = getInvoiceStatus(invoice);
 
@@ -84,6 +97,19 @@ function getCategoryIcon(category = "") {
   if (lower.includes("bevande")) return "🍹";
 
   return "🧾";
+}
+
+function getCategoryLabel(invoice) {
+  const category = invoice.category?.trim();
+  if (category) return category;
+
+  const supplier = invoice.supplier?.toLowerCase() || "";
+  if (supplier.includes("caff")) return "Caffè";
+  if (supplier.includes("latte") || supplier.includes("lattiero")) return "Latticini";
+  if (supplier.includes("dolci") || supplier.includes("pane")) return "Dolci";
+  if (supplier.includes("bevande")) return "Bevande";
+
+  return "Altro";
 }
 
 function getInvoiceDocumentUrl(invoice) {
@@ -126,12 +152,19 @@ export default function InvoicesPage({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [isYearView, setIsYearView] = useState(false);
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
 
   const [searchParams] = useSearchParams();
 
 useEffect(() => {
-  if (searchParams.get("tab") === "overdue") {
+  const tab = searchParams.get("tab");
+  if (tab === "overdue") {
     setStatusFilter("overdue");
+    setIsYearView(false);
+  } else if (tab === "year-overdue") {
+    setStatusFilter("year-overdue");
+    setIsYearView(true);
   }
 }, [searchParams]);
 
@@ -220,32 +253,87 @@ useEffect(() => {
     }
   }
 
+  const currentYear = new Date().getFullYear();
+
   const currentMonthInvoices = useMemo(() => {
     return invoices.filter((invoice) => getInvoiceMonthKey(invoice.due_date) === month);
   }, [invoices, month]);
 
-const invoicesForView = useMemo(() => {
-  if (statusFilter === "overdue") {
-    return currentMonthInvoices.filter(isOverdue);
-  }
+  const yearOverdueInvoices = useMemo(
+    () => invoices.filter(isCurrentYearOverdue),
+    [invoices]
+  );
 
-  return currentMonthInvoices;
-}, [invoices, currentMonthInvoices, statusFilter]);
+  const invoicesForView = useMemo(() => {
+    if (statusFilter === "year-overdue") {
+      setIsYearView(true);
+      return yearOverdueInvoices;
+    }
 
-const paidInvoices = invoicesForView.filter((invoice) => invoice.status === "paid");
-const dueInvoices = invoicesForView.filter(isDue);
-const overdueInvoices = invoicesForView.filter(isOverdue);
+    if (isYearView && ["paid", "due", "overdue"].includes(statusFilter)) {
+      return yearOverdueInvoices.filter((invoice) => {
+        const status = getInvoiceStatus(invoice);
+        return status === statusFilter;
+      });
+    }
+
+    if (statusFilter === "overdue") {
+      return currentMonthInvoices.filter(isOverdue);
+    }
+
+    return currentMonthInvoices;
+  }, [currentMonthInvoices, yearOverdueInvoices, statusFilter, isYearView]);
+
+  const paidInvoices = invoicesForView.filter((invoice) => invoice.status === "paid");
+  const dueInvoices = invoicesForView.filter(isDue);
+  const overdueInvoices = invoicesForView.filter(isOverdue);
+
+  // Numero di fatture per i pulsanti filtri: sempre del mese corrente
+  const monthPaidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
+  const monthDueInvoices = currentMonthInvoices.filter(isDue);
+  const monthOverdueInvoices = currentMonthInvoices.filter(isOverdue);
+
+  // Importi totali sempre del mese corrente (per le cornici KPI)
+  const monthTotalAmount = currentMonthInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
+
+  const monthPaidAmount = monthPaidInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
+
+  const monthDueAmount = monthDueInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
+
+  const monthOverdueAmount = monthOverdueInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
+
+  const yearOverdueTotal = yearOverdueInvoices.reduce(
+    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    0
+  );
 
   const categories = useMemo(() => {
+  // Calcola categorie da TUTTE le fatture (mese + anno)
+  const allInvoices = [...currentMonthInvoices, ...yearOverdueInvoices];
   return [
-    ...new Set(invoicesForView.map((invoice) => invoice.category).filter(Boolean)),
+    ...new Set(allInvoices.map((invoice) => invoice.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b, "it"));
-}, [invoicesForView]);
+}, [currentMonthInvoices, yearOverdueInvoices]);
 
   const filteredInvoices = useMemo(() => {
     return invoicesForView.filter((invoice) => {
       const status = getInvoiceStatus(invoice);
-      const matchesStatus = statusFilter === "all" || status === statusFilter;
+      const matchesStatus =
+        statusFilter === "all" ||
+        statusFilter === "year-overdue" ||
+        status === statusFilter;
 
       const matchesSupplier =
         !supplierSearch ||
@@ -285,8 +373,14 @@ const totalAmount = invoicesForView.reduce(
         <div>
           <h1 className="invoices-dashboard-title">Fatture 🧾</h1>
           <p className="invoices-dashboard-subtitle">
-            {formatMonthHuman(month)} · {currentMonthInvoices.length} fatture ·{" "}
-            {formatEuro(totalAmount)} totale
+            {statusFilter === "year-overdue" ? (
+              `Arretrati anno ${currentYear} · ${yearOverdueInvoices.length} fatture`
+            ) : (
+              <>
+                {formatMonthHuman(month)} · {currentMonthInvoices.length} fatture · {" "}
+                {formatEuro(totalAmount)} totale
+              </>
+            )}
           </p>
         </div>
 
@@ -322,7 +416,7 @@ const totalAmount = invoicesForView.reduce(
       <section className="invoice-kpi-grid">
         <article className="invoice-kpi-card">
           <div className="invoice-kpi-label">Totale fatture</div>
-          <div className="invoice-kpi-value">{formatEuro(totalAmount)}</div>
+          <div className="invoice-kpi-value">{formatEuro(monthTotalAmount)}</div>
           <span className="invoice-kpi-pill blue">
             {currentMonthInvoices.length} documenti
           </span>
@@ -330,20 +424,36 @@ const totalAmount = invoicesForView.reduce(
 
         <article className="invoice-kpi-card">
           <div className="invoice-kpi-label">Pagate</div>
-          <div className="invoice-kpi-value">{formatEuro(paidAmount)}</div>
-          <span className="invoice-kpi-pill green">✓ {paidInvoices.length} fatture</span>
+          <div className="invoice-kpi-value">{formatEuro(monthPaidAmount)}</div>
+          <span className="invoice-kpi-pill green">✓ {monthPaidInvoices.length} fatture</span>
         </article>
 
         <article className="invoice-kpi-card">
           <div className="invoice-kpi-label">In scadenza</div>
-          <div className="invoice-kpi-value">{formatEuro(dueAmount)}</div>
-          <span className="invoice-kpi-pill yellow">⏰ {dueInvoices.length} fatture</span>
+          <div className="invoice-kpi-value">{formatEuro(monthDueAmount)}</div>
+          <span className="invoice-kpi-pill yellow">⏰ {monthDueInvoices.length} fatture</span>
         </article>
 
         <article className="invoice-kpi-card dark">
           <div className="invoice-kpi-label">Scadute</div>
-          <div className="invoice-kpi-value">{formatEuro(overdueAmount)}</div>
+          <div className="invoice-kpi-value">{formatEuro(monthOverdueAmount)}</div>
           <span className="invoice-kpi-pill red">⚠ Pagamento urgente</span>
+        </article>
+
+        <article
+          className="invoice-kpi-card overdue"
+          style={{ cursor: "pointer" }}
+          onClick={() => {
+            setStatusFilter("year-overdue");
+            setIsYearView(true);
+            setCategoryFilter("");
+          }}
+        >
+          <div className="invoice-kpi-label">Arretrati {currentYear}</div>
+          <div className="invoice-kpi-value">{formatEuro(yearOverdueTotal)}</div>
+          <span className="invoice-kpi-pill notification-dot">
+            {yearOverdueInvoices.length}
+          </span>
         </article>
       </section>
 
@@ -351,7 +461,11 @@ const totalAmount = invoicesForView.reduce(
         <button
           type="button"
           className={`invoice-status-filter ${statusFilter === "all" ? "active" : ""}`}
-          onClick={() => setStatusFilter("all")}
+          onClick={() => {
+            setStatusFilter("all");
+            setIsYearView(false);
+            setCategoryFilter("");
+          }}
         >
           Tutte ({currentMonthInvoices.length})
         </button>
@@ -359,17 +473,25 @@ const totalAmount = invoicesForView.reduce(
         <button
           type="button"
           className={`invoice-status-filter ${statusFilter === "paid" ? "active" : ""}`}
-          onClick={() => setStatusFilter("paid")}
+          onClick={() => {
+            setStatusFilter("paid");
+            setIsYearView(false);
+            setCategoryFilter("");
+          }}
         >
-          ✓ Pagate ({paidInvoices.length})
+          ✓ Pagate ({monthPaidInvoices.length})
         </button>
 
         <button
           type="button"
           className={`invoice-status-filter ${statusFilter === "due" ? "active" : ""}`}
-          onClick={() => setStatusFilter("due")}
+          onClick={() => {
+            setStatusFilter("due");
+            setIsYearView(false);
+            setCategoryFilter("");
+          }}
         >
-          ⏰ In scadenza ({dueInvoices.length})
+          ⏰ In scadenza ({monthDueInvoices.length})
         </button>
 
         <button
@@ -377,9 +499,27 @@ const totalAmount = invoicesForView.reduce(
           className={`invoice-status-filter ${
             statusFilter === "overdue" ? "active danger" : ""
           }`}
-          onClick={() => setStatusFilter("overdue")}
+          onClick={() => {
+            setStatusFilter("overdue");
+            setIsYearView(false);
+            setCategoryFilter("");
+          }}
         >
-          ✗ Scadute ({overdueInvoices.length})
+          ✗ Scadute ({monthOverdueInvoices.length})
+        </button>
+
+        <button
+          type="button"
+          className={`invoice-status-filter ${
+            statusFilter === "year-overdue" ? "active danger" : ""
+          }`}
+          onClick={() => {
+            setStatusFilter("year-overdue");
+            setIsYearView(true);
+            setCategoryFilter("");
+          }}
+        >
+          📅 Arretrati {currentYear} ({yearOverdueInvoices.length})
         </button>
 
         <div className="invoice-search-box">
@@ -390,20 +530,48 @@ const totalAmount = invoicesForView.reduce(
             placeholder="Cerca fornitore..."
           />
         </div>
-
-        <select
-          className="invoice-category-select"
-          value={categoryFilter}
-          onChange={(event) => setCategoryFilter(event.target.value)}
-        >
-          <option value="">Categoria</option>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
-          ))}
-        </select>
       </section>
+
+      <div className="invoice-category-dropdown-wrapper">
+        <button
+          type="button"
+          className="invoice-category-dropdown-btn"
+          onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
+        >
+          {categoryFilter || "Categoria"}
+        </button>
+        {categoryDropdownOpen && (
+          <div className="invoice-category-dropdown-menu">
+            <div
+              className="invoice-category-option"
+              onClick={() => {
+                setCategoryFilter("");
+                setCategoryDropdownOpen(false);
+              }}
+            >
+              Tutti
+            </div>
+            {categories.length > 0 ? (
+              categories.map((category) => (
+                <div
+                  key={category}
+                  className={`invoice-category-option ${categoryFilter === category ? "active" : ""}`}
+                  onClick={() => {
+                    setCategoryFilter(category);
+                    setCategoryDropdownOpen(false);
+                  }}
+                >
+                  {category}
+                </div>
+              ))
+            ) : (
+              <div className="invoice-category-option disabled">
+                Nessuna categoria disponibile
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <section className="invoice-modern-table-card">
       <div className="invoice-clean-table-head">
@@ -430,10 +598,16 @@ const totalAmount = invoicesForView.reduce(
                   {invoice.invoice_number || "-"}
                 </div>
 
-                <div className="invoice-modern-due">{formatDate(invoice.due_date)}</div>
+                <div
+                  className={`invoice-modern-due ${
+                    statusFilter === "year-overdue" ? "invoice-modern-due-year-overdue" : ""
+                  }`}
+                >
+                  {formatDate(invoice.due_date)}
+                </div>
 
                 <div className="invoice-modern-category">
-                  {getCategoryIcon(invoice.category)} {invoice.category || "Altro"}
+                  {getCategoryIcon(invoice.category || invoice.supplier)} {getCategoryLabel(invoice)}
                 </div>
 
                 <div className="invoice-modern-total">{formatEuro(invoice.total)}</div>
@@ -474,7 +648,7 @@ const totalAmount = invoicesForView.reduce(
 
         {filteredInvoices.length ? (
           <div className="invoice-table-footer">
-            Mostrate {filteredInvoices.length} di {currentMonthInvoices.length} fatture
+            Mostrate {filteredInvoices.length} di {invoicesForView.length} fatture
           </div>
         ) : null}
       </section>
