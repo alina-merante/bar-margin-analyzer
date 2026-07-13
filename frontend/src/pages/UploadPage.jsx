@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function formatShortDate(value) {
@@ -42,6 +42,8 @@ export default function UploadPage({
   invoiceCountThisMonth,
   latestInvoiceDate,
   handleInvoiceDocumentUpload,
+  invoices = [],
+  handleDeleteInvoice,
   clearDocumentMessages,
 
   documents = [],
@@ -56,15 +58,11 @@ export default function UploadPage({
 
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
-  const [localDocumentMessage, setLocalDocumentMessage] = useState("");
-   useEffect(() => {
-  setSelectedOtherDocument(null);
-  setLocalDocumentMessage("");
-}, [month, activeHistoryTab]);
+  const [, setLocalDocumentMessage] = useState("");
 
 useEffect(() => {
   clearDocumentMessages?.();
-}, []);
+}, [clearDocumentMessages]);
 
   const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
 
@@ -79,20 +77,64 @@ useEffect(() => {
   ? [selectedOtherDocumentUrl]
   : [];
 
-  const visibleDocuments = documents.filter((document) => {
-  if (activeHistoryTab === "cash") {
-    return document.section === "cash";
+  const currentMonthInvoices = useMemo(() => {
+    return invoices.filter((invoice) => invoice.due_date?.slice(0, 7) === month);
+  }, [invoices, month]);
+
+  const historyEntries = useMemo(() => {
+    const documentEntries = documents.map((document) => ({
+      id: `document-${document.id}`,
+      kind: "document",
+      tab: document.section === "cash" ? "cash" : document.section === "bank" ? "bank" : "other",
+      title: document.original_filename,
+      subtitle: document.category,
+      typeLabel: document.document_type,
+      dateValue: document.created_at,
+      dateLabel: formatShortDate(document.created_at),
+      statusLabel: document.status,
+      raw: document,
+    }));
+
+    const invoiceEntries = currentMonthInvoices.map((invoice) => ({
+      id: `invoice-${invoice.id}`,
+      kind: "invoice",
+      tab: "invoices",
+      title: invoice.supplier || `Fattura ${invoice.invoice_number || invoice.id}`,
+      subtitle: invoice.invoice_number ? `N. ${invoice.invoice_number}` : "Fattura fornitore",
+      typeLabel: "FATTURA",
+      dateValue: invoice.due_date,
+      dateLabel: formatShortDate(invoice.due_date),
+      statusLabel: invoice.status === "paid" ? "Pagata" : invoice.status === "pending" ? "Da pagare" : invoice.status,
+      raw: invoice,
+    }));
+
+    return [...documentEntries, ...invoiceEntries].sort(
+      (a, b) => new Date(b.dateValue || 0) - new Date(a.dateValue || 0)
+    );
+  }, [documents, currentMonthInvoices]);
+
+  const visibleHistoryEntries = useMemo(() => {
+    if (activeHistoryTab === "all") return historyEntries;
+    return historyEntries.filter((entry) => entry.tab === activeHistoryTab);
+  }, [activeHistoryTab, historyEntries]);
+
+function openHistoryEntry(entry) {
+  if (entry.kind === "invoice") {
+    navigate("/invoices");
+    return;
   }
 
-  if (activeHistoryTab === "other") {
-    return document.section === "other";
+  setSelectedOtherDocument(entry.raw);
+}
+
+async function deleteHistoryEntry(entry) {
+  if (entry.kind === "invoice") {
+    if (!handleDeleteInvoice) return;
+    await handleDeleteInvoice(entry.raw.id);
+    return;
   }
 
-  return true;
-});
-
-function openOtherDocumentPreview(document) {
-  setSelectedOtherDocument(document);
+  handleDeleteDocument?.(entry.raw.id);
 }
 
   async function uploadInvoiceAndGoToInvoices(file) {
@@ -272,8 +314,16 @@ setActiveHistoryTab("other");
             <p className="upload-feedback error">{documentDeleteError}</p>
           ) : null}
 
-          {localDocumentMessage ? (
-            <p className="upload-feedback error">{localDocumentMessage}</p>
+          {cashUploadError ? (
+            <p className="upload-feedback error">{cashUploadError}</p>
+          ) : null}
+
+          {latestPosUploadDate || latestBankUploadDate || invoiceCountThisMonth ? (
+            <p className="upload-feedback">
+              {invoiceCountThisMonth} fatture nel mese{latestInvoiceDate ? ` · ultima scadenza ${formatShortDate(latestInvoiceDate)}` : ""}
+              {latestPosUploadDate ? ` · ultima cassa ${formatShortDate(latestPosUploadDate)}` : ""}
+              {latestBankUploadDate ? ` · ultimo banco ${formatShortDate(latestBankUploadDate)}` : ""}
+            </p>
           ) : null}
         </div>
       </section>
@@ -393,7 +443,11 @@ setActiveHistoryTab("other");
       <section className="upload-section">
         <div className="upload-history-card">
           <h2>Storico documenti caricati</h2>
-          <p>{formatMonthLabel(month)} · documenti elaborati</p>
+          <p>
+            {formatMonthLabel(month)} · {historyEntries.length} record
+            {currentMonthInvoices.length ? ` · ${currentMonthInvoices.length} fatture` : ""}
+            {latestInvoiceDate ? ` · ultima scadenza ${formatShortDate(latestInvoiceDate)}` : ""}
+          </p>
 
           <div className="upload-history-tabs">
             <button
@@ -434,40 +488,37 @@ setActiveHistoryTab("other");
             </button>
           </div>
 
-          {activeHistoryTab === "all" ||
-            activeHistoryTab === "cash" ||
-            activeHistoryTab === "other" ? (
-            visibleDocuments.length ? (
-              <div className="upload-history-table">
-                <div className="upload-history-table-head other-docs-table">
-                  <div>Documento</div>
-                  <div>Tipo</div>
-                  <div>Categoria rilevata</div>
-                  <div>Risultato AI</div>
-                  <div>Stato</div>
-                  <div>Visualizza</div>
-                  <div>Elimina</div>
-                </div>
+          {visibleHistoryEntries.length ? (
+            <div className="upload-history-table">
+              <div className="upload-history-table-head other-docs-table">
+                <div>Documento</div>
+                <div>Tipo</div>
+                <div>Categoria / sezione</div>
+                <div>Data</div>
+                <div>Stato</div>
+                <div>Visualizza</div>
+                <div>Elimina</div>
+              </div>
 
-                {visibleDocuments.map((document) => (
+              {visibleHistoryEntries.map((entry) => (
                   <div
                     className="upload-history-table-row other-docs-table"
-                    key={document.id}
+                    key={entry.id}
                   >
                     <div className="upload-history-name">
-                      {document.original_filename}
+                      {entry.title}
                     </div>
-                    <div>{document.document_type}</div>
-                    <div>{document.category}</div>
-                    <div>{document.result}</div>
-                    <div className="upload-history-status">{document.status}</div>
+                    <div>{entry.typeLabel}</div>
+                    <div>{entry.subtitle}</div>
+                    <div>{entry.dateLabel}</div>
+                    <div className="upload-history-status">{entry.statusLabel}</div>
 
                     <div className="upload-history-action-cell">
                       <button
                         type="button"
                         className="invoice-icon-btn"
-                        onClick={() => openOtherDocumentPreview(document)}
-                        title="Visualizza documento"
+                        onClick={() => openHistoryEntry(entry)}
+                        title={entry.kind === "invoice" ? "Apri fatture" : "Visualizza documento"}
                       >
                         👁️
                       </button>
@@ -477,65 +528,29 @@ setActiveHistoryTab("other");
                       <button
                         type="button"
                         className="invoice-icon-btn delete"
-                        onClick={() => handleDeleteDocument(document.id)}
-                        title="Elimina documento"
+                        onClick={() => deleteHistoryEntry(entry)}
+                        title={entry.kind === "invoice" ? "Elimina fattura" : "Elimina documento"}
                       >
                         🗑️
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="upload-history-empty">
-                <div className="upload-history-icon">📎</div>
-
-                <div>
-                  <div className="upload-history-name">
-                    Nessun altro documento caricato
-                  </div>
-                  <div className="upload-history-meta">
-                    Carica un documento dalla sezione “Altro documento” per
-                    vedere qui il risultato AI.
-                  </div>
-                </div>
-
-                <div className="upload-history-status waiting">In attesa</div>
-              </div>
-            )
+              ))}
+            </div>
           ) : (
-            <div className="upload-history-item">
-              <div className="upload-history-left">
-                <div className="upload-history-icon">
-                  {activeHistoryTab === "invoices"
-                    ? "🧾"
-                    : activeHistoryTab === "cash"
-                    ? "📒"
-                    : "📄"}
+            <div className="upload-history-empty">
+              <div className="upload-history-icon">📎</div>
+
+              <div>
+                <div className="upload-history-name">
+                  Nessun documento caricato
                 </div>
-
-                <div>
-                  <div className="upload-history-name">
-                    {activeHistoryTab === "invoices"
-                      ? "Archivio fatture"
-                      : activeHistoryTab === "cash"
-                      ? "Archivio cassa e prima nota"
-                      : "Esempio documento caricato"}
-                  </div>
-
-                  <div className="upload-history-meta">
-                    {activeHistoryTab === "invoices"
-                      ? `${invoiceCountThisMonth} fatture caricate questo mese`
-                      : activeHistoryTab === "cash"
-                      ? `Ultimo caricamento cassa: ${formatShortDate(
-                          latestPosUploadDate
-                        )}`
-                      : "Caricato oggi · in attesa di collegamento backend"}
-                  </div>
+                <div className="upload-history-meta">
+                  Qui trovi fatture, cassa, banca e altri documenti del mese selezionato.
                 </div>
               </div>
 
-              <div className="upload-history-status">Elaborato</div>
+              <div className="upload-history-status waiting">In attesa</div>
             </div>
           )}
         </div>

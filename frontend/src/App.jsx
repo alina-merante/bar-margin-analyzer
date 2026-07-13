@@ -519,6 +519,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
             path="/upload"
             element={
               <UploadPage
+                key={month}
                 month={month}
                 handleUpload={handleUpload}
                 uploading={uploading}
@@ -529,9 +530,11 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 invoiceCountThisMonth={currentMonthInvoices.length}
                 latestInvoiceDate={latestInvoiceDate}
                 handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
+                invoices={invoices}
                 documents={documents}
                 handleGenericDocumentUpload={handleGenericDocumentUpload}
                 handleDeleteDocument={handleDeleteDocument}
+                handleDeleteInvoice={handleDeleteInvoice}
                 clearDocumentMessages={clearDocumentMessages}
 
                 documentUploading={documentUploading}

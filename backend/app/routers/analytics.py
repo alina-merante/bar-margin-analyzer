@@ -10,6 +10,7 @@ from app.models import (
     DailyCashClosure,
     ExpenseCategory,
     Invoice,
+    InvoicePaymentLink,
     InvoiceStatus,
     Payment,
     Product,
@@ -67,6 +68,25 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
 
 
 def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
+    paid_invoices = db.execute(
+        select(
+            Invoice.id.label("invoice_id"),
+            Invoice.total.label("total"),
+            Invoice.vat.label("vat"),
+            func.max(Payment.date).label("paid_at"),
+        )
+        .join(InvoicePaymentLink, InvoicePaymentLink.invoice_id == Invoice.id)
+        .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
+        .where(Invoice.status == InvoiceStatus.paid)
+        .group_by(Invoice.id, Invoice.total, Invoice.vat)
+    ).all()
+
+    paid_invoice_expenses = sum(
+        Decimal(row.total) + Decimal(row.vat)
+        for row in paid_invoices
+        if row.paid_at and start <= row.paid_at < end
+    )
+
     expenses = db.execute(
         select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0)).where(
             Transaction.date >= start,
@@ -74,7 +94,7 @@ def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
             Transaction.amount < 0,
         )
     )
-    return Decimal(expenses.scalar_one())
+    return Decimal(expenses.scalar_one()) + paid_invoice_expenses
 
 
 def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]:
