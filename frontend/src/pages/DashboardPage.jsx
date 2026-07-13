@@ -104,6 +104,7 @@ export default function DashboardPage({
   month,
   loading,
   error,
+  onExportPdf,
   pnl = { revenue: 0, expenses: 0, profit: 0 },
   trend = [],
   topProductsList = [],
@@ -156,7 +157,6 @@ export default function DashboardPage({
     month: "long",
   }).format(new Date());
 
-  const firstOverdueInvoice = overdueInvoices[0];
   const firstDueInvoice = dueInvoices[0];
 
   const reminders = [
@@ -245,7 +245,12 @@ export default function DashboardPage({
         </div>
 
         <div className="dashboard-actions">
-          <button type="button" className="dashboard-export-btn">
+          <button
+            type="button"
+            className="dashboard-export-btn"
+            onClick={onExportPdf}
+            disabled={!onExportPdf}
+          >
             📄 Export PDF
           </button>
 

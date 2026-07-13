@@ -6,7 +6,7 @@ import UploadPage from "./pages/UploadPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 function getCurrentMonth() {
   const now = new Date();
@@ -16,6 +16,39 @@ function getCurrentMonth() {
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function formatEuro(value) {
+  return new Intl.NumberFormat("it-IT", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0);
+}
+
+function formatMonthLabel(month) {
+  if (!month) return "-";
+
+  const [year, monthNum] = month.split("-").map(Number);
+
+  return new Intl.DateTimeFormat("it-IT", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(year, monthNum - 1, 1));
+}
+
+function formatShortDate(value) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date);
 }
 
 async function fetchJsonOrThrow(url) {
@@ -106,6 +139,134 @@ export default function App() {
     );
 
     setInsights(insightsData ?? { insights: [] });
+  }
+
+  async function handleExportDashboardPdf() {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([595, 842]);
+    const fontRegular = await pdf.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+    const left = 40;
+    const right = 555;
+    let cursorY = 800;
+
+    function drawLine(text, options = {}) {
+      const size = options.size ?? 11;
+      const font = options.font ?? fontRegular;
+      const color = options.color ?? rgb(0.15, 0.15, 0.15);
+      const gap = options.gap ?? 18;
+
+      page.drawText(text, {
+        x: left,
+        y: cursorY,
+        size,
+        font,
+        color,
+      });
+
+      cursorY -= gap;
+    }
+
+    function drawSectionTitle(text) {
+      cursorY -= 8;
+      drawLine(text, {
+        font: fontBold,
+        size: 13,
+        color: rgb(0.08, 0.08, 0.08),
+        gap: 20,
+      });
+    }
+
+    function drawKpiLabel(label, value) {
+      drawLine(`${label}: ${value}`, { gap: 16 });
+    }
+
+    page.drawText(`Dashboard ${formatMonthLabel(month)}`, {
+      x: left,
+      y: cursorY,
+      size: 22,
+      font: fontBold,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+
+    cursorY -= 30;
+    drawLine(`Esportato il ${formatShortDate(new Date())}`, {
+      size: 10,
+      color: rgb(0.35, 0.35, 0.35),
+      gap: 22,
+    });
+
+    drawSectionTitle("Sintesi economica");
+    drawKpiLabel("Ricavi totali", formatEuro(pnl.revenue));
+    drawKpiLabel("Costi totali", formatEuro(pnl.expenses));
+    drawKpiLabel("Margine netto", formatEuro(pnl.profit));
+    drawKpiLabel("Da pagare", formatEuro(pendingInvoicesAmount));
+
+    drawSectionTitle("Andamento ultimi mesi");
+    const trendRows = trend.slice(-6);
+    if (trendRows.length) {
+      trendRows.forEach((item) => {
+        drawLine(
+          `${item.month}: ricavi ${formatEuro(item.revenue)} · costi ${formatEuro(item.expenses)} · margine ${formatEuro(item.profit)}`,
+          { gap: 15 }
+        );
+      });
+    } else {
+      drawLine("Nessun dato disponibile.");
+    }
+
+    drawSectionTitle("Prodotti top");
+    if (topProductsList.length) {
+      topProductsList.slice(0, 5).forEach((product, index) => {
+        drawLine(
+          `${index + 1}. ${product.product} · ${Number(product.quantity) || 0} pezzi · ${formatEuro(product.revenue)}`,
+          { gap: 15 }
+        );
+      });
+    } else {
+      drawLine("Nessun prodotto disponibile.");
+    }
+
+    drawSectionTitle("Fatture rilevanti");
+    const invoiceRows = [...pendingInvoices]
+      .slice(0, 5)
+      .map(
+        (invoice) =>
+          `${invoice.supplier || "Fornitore"} · ${formatEuro(invoice.total)} · scade ${formatShortDate(invoice.due_date)}`
+      );
+
+    if (invoiceRows.length) {
+      invoiceRows.forEach((row) => drawLine(row, { gap: 15 }));
+    } else {
+      drawLine("Nessuna fattura in sospeso per il mese selezionato.");
+    }
+
+    page.drawLine({
+      start: { x: left, y: 70 },
+      end: { x: right, y: 70 },
+      thickness: 1,
+      color: rgb(0.85, 0.85, 0.85),
+    });
+
+    page.drawText("Bar Margin Analyzer", {
+      x: left,
+      y: 48,
+      size: 9,
+      font: fontRegular,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+
+    const pdfBytes = await pdf.save();
+    const blob = new Blob([pdfBytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `dashboard-${month}.pdf`;
+    link.click();
+
+    URL.revokeObjectURL(url);
   }
 
   useEffect(() => {
@@ -482,6 +643,7 @@ const latestPosUploadDate = latestCashDocument?.created_at ?? null;
                 month={month}
                 loading={loading}
                 error={error}
+                onExportPdf={handleExportDashboardPdf}
                 pnl={pnl}
                 trend={trend}
                 topProductsList={topProductsList}
