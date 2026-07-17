@@ -1169,15 +1169,39 @@ export default function App() {
 
       const result = await response.json();
 
+      let bankDocumentSaved = true;
+
+      if (type === "bank") {
+        const documentFormData = new FormData();
+        documentFormData.append("file", file);
+        documentFormData.append("month", month);
+        documentFormData.append("section", "bank");
+
+        const documentResponse = await fetch("/api/documents/upload", {
+          method: "POST",
+          body: documentFormData,
+        });
+
+        if (!documentResponse.ok) {
+          bankDocumentSaved = false;
+          const documentError = await documentResponse.text();
+          console.error("Errore salvataggio storico banca:", documentError);
+        }
+      }
+
       setUploadMessage(
         `Import ${type.toUpperCase()} completato: ${
           result.imported_rows ?? 0
-        } righe importate.`
+        } righe importate.${
+          type === "bank" && !bankDocumentSaved
+            ? " Dati importati, ma non sono riuscito a salvarlo nello storico documenti."
+            : ""
+        }`
       );
 
       await Promise.all([
   loadDashboardData(month),
-  loadDocuments(),
+  loadDocuments(month),
 ]);
     } catch (err) {
       console.error(err);

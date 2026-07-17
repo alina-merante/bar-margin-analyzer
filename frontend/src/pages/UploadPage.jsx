@@ -273,8 +273,12 @@ setActiveHistoryTab("other");
                 type="file"
                 accept=".csv,.xlsx,.xls,.pdf"
                 hidden
-                onChange={(e) => {
-                  handleUpload(e.target.files?.[0], "bank");
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    await handleUpload(file, "bank");
+                    setActiveHistoryTab("bank");
+                  }
                   e.target.value = "";
                 }}
               />
@@ -477,6 +481,14 @@ setActiveHistoryTab("other");
               onClick={() => setActiveHistoryTab("cash")}
             >
               Cassa
+            </button>
+
+            <button
+              type="button"
+              className={`history-tab ${activeHistoryTab === "bank" ? "active" : ""}`}
+              onClick={() => setActiveHistoryTab("bank")}
+            >
+              Banca
             </button>
 
             <button
