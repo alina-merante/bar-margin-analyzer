@@ -2,6 +2,46 @@
 
 Initial backend scaffold for the **Bar Margin Analyzer** project.
 
+## Quick Start (Backend + Frontend)
+
+One command from project root:
+
+```bash
+npm run dev:full
+```
+
+This command:
+
+- starts Docker services `db` and `api` in background;
+- starts frontend Vite dev server in foreground.
+
+Manual alternative (same behavior), start API and database first:
+
+```bash
+docker compose up -d db api
+```
+
+Verify backend is reachable:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Start frontend in a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend runs on Vite (usually `http://localhost:5173`, or the next free port).
+
+Important:
+
+- The frontend proxies API calls to `http://127.0.0.1:8000`.
+- If API is not running, frontend shows `http proxy error` with `ECONNREFUSED 127.0.0.1:8000`.
+
 ## Stack
 
 - **Backend:** FastAPI
@@ -14,6 +54,11 @@ Initial backend scaffold for the **Bar Margin Analyzer** project.
 ```bash
 docker compose up --build
 ```
+
+This starts both compose services:
+
+- `api` (FastAPI on port `8000`)
+- `db` (PostgreSQL on port `5432`)
 
 API available at:
 
@@ -258,6 +303,29 @@ Behavior notes:
 - `/analytics/insights` compares current month to previous month and returns:
   - `metrics`: revenue, expenses, profit, and percentage changes (rounded to 2 decimals).
   - `insights`: text insights for significant changes in revenue/expenses/profit (>5%), top expense category change (>10%), and top supplier expense share.
+
+## Troubleshooting
+
+### Frontend error: `ECONNREFUSED 127.0.0.1:8000`
+
+Cause: API container is down or still booting.
+
+Fix:
+
+```bash
+docker compose up -d api
+docker compose ps
+curl http://localhost:8000/health
+```
+
+If health is OK, refresh the frontend page.
+
+Useful npm scripts from project root:
+
+- `npm run dev:api` to start only backend services (`db` + `api`).
+- `npm run dev:full` to start backend services and frontend dev server.
+- `npm run dev:stop` to stop running `api` and `db` containers.
+- `npm run dev:down` to stop and remove compose resources.
 
 Legacy sales analytics remain available:
 

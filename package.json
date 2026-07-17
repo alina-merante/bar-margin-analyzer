@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "dev:api": "docker compose up -d db api",
+    "dev:full": "docker compose up -d db api && npm --prefix frontend run dev",
+    "dev:stop": "docker compose stop api db",
+    "dev:down": "docker compose down"
+  },
   "dependencies": {
     "pdf-lib": "^1.17.1"
   }
