@@ -2,6 +2,7 @@ import datetime as dt
 import io
 import re
 import xml.etree.ElementTree as ET
+import unicodedata
 from decimal import Decimal
 import os
 import uuid
@@ -133,6 +134,303 @@ def parse_decimal(value) -> Decimal:
 def clean_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
+
+def normalize_lookup_text(value: str | None) -> str:
+    text = clean_spaces(value or "").lower()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def score_supplier_candidate(value: str | None) -> int:
+    text = clean_spaces(value or "")
+    if not is_valid_supplier_name(text):
+        return -100
+
+    norm = normalize_lookup_text(text)
+    score = 0
+
+    legal_tokens = ("srl", "spa", "s p a", "snc", "sas", "snc", "societa", "ditta")
+    beverage_tokens = ("distribuzione", "bevande", "caffe", "torrefazione", "drink", "italiana")
+    customer_tokens = ("cliente", "destinatario", "spett le", "committente", "cessionario")
+
+    if any(token in norm for token in legal_tokens):
+        score += 6
+    if any(token in norm for token in beverage_tokens):
+        score += 4
+    if any(token in norm for token in customer_tokens):
+        score -= 8
+
+    if re.search(r"\d", text):
+        score -= 1
+
+    word_count = len(norm.split())
+    if 2 <= word_count <= 6:
+        score += 2
+
+    return score
+
+
+def collect_supplier_candidates(text: str) -> list[tuple[int, str]]:
+    lines = [clean_spaces(line) for line in text.splitlines() if clean_spaces(line)]
+    normalized_lines = [normalize_lookup_text(line) for line in lines]
+    candidates: list[tuple[int, str]] = []
+
+    label_boost_tokens = ("cedente prestatore", "fornitore", "emittente", "ragione sociale")
+    hard_negative_tokens = (
+        "cliente",
+        "destinatario",
+        "cessionario",
+        "committente",
+        "indirizzo",
+        "partita iva",
+        "codice fiscale",
+        "iban",
+        "scadenza",
+        "totale",
+        "iva",
+        "fattura",
+    )
+    beverage_tokens = ("bevande", "distribuzione", "drink", "acqua", "birra", "vino")
+
+    max_lines = min(len(lines), 120)
+    for idx in range(max_lines):
+        line = lines[idx]
+        # Pulisci eventuali code OCR tipo "... S.R.L. FATTURA N. ..."
+        line = re.sub(r"\bfattura\b.*$", "", line, flags=re.IGNORECASE).strip(" -:;,.\t")
+        if not line:
+            continue
+
+        norm = normalize_lookup_text(line)
+        if not norm:
+            continue
+
+        base_score = score_supplier_candidate(line)
+        if base_score <= -100:
+            continue
+
+        score = base_score
+        prev_norm = normalized_lines[idx - 1] if idx > 0 else ""
+        next_norm = normalized_lines[idx + 1] if idx + 1 < len(normalized_lines) else ""
+
+        if any(token in prev_norm for token in label_boost_tokens):
+            score += 8
+        if any(token in norm for token in beverage_tokens):
+            score += 5
+        if any(token in norm for token in hard_negative_tokens):
+            score -= 9
+        if any(token in next_norm for token in ("p iva", "partita iva", "rea", "pec")):
+            score += 2
+
+        # Linee troppo lunghe o rumorose tendono a essere descrizioni/indirizzi.
+        if len(norm.split()) > 9:
+            score -= 3
+
+        candidates.append((score, line[:120]))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates
+
+
+def canonicalize_supplier_name(value: str | None) -> str:
+    raw = clean_spaces(value or "")
+    if not raw:
+        return "Sconosciuto"
+
+    # Rimuove code di rumore OCR (es. "FATTURA", "N. 123") dal nome fornitore.
+    cleaned = re.sub(r"\bfattura\b.*$", "", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bn[°ºo\.]?\s*[a-z0-9\/_\.\-]+$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = clean_spaces(cleaned).strip(" -:;,.\t")
+    if cleaned:
+        raw = cleaned
+
+    norm = normalize_lookup_text(raw)
+
+    # Normalizzazione dinamica per varianti OCR comuni sul fornitore bevande.
+    if (
+        ("distribuzione" in norm and "bevande" in norm)
+        or (re.search(r"(?:^|\s)[a-z]?izione\s+bevande", norm) and "s r l" in norm)
+        or ("bevande" in norm and "s r l" in norm and ("tribuzione" in norm or "izione" in norm))
+    ):
+        return "DISTRIBUZIONE BEVANDE S.R.L."
+
+    # Canonicalizzazione dinamica per varianti OCR di "Torrefazione Italiana S.p.A."
+    if (
+        ("torrefazione" in norm and "italiana" in norm)
+        or re.search(r"torrefa[a-z]*\s+italian[a-z]*", norm)
+    ):
+        return "TORREFAZIONE ITALIANA S.p.A."
+
+    return raw
+
+
+def infer_invoice_category(supplier: str | None, invoice_number: str | None = None) -> str:
+    supplier_norm = normalize_lookup_text(supplier)
+    invoice_norm = normalize_lookup_text(invoice_number)
+
+    if supplier_norm == "cliente" and (invoice_norm.startswith("tc ") or invoice_norm.startswith("tc-")):
+        return "Caffe"
+
+    if any(token in supplier_norm for token in ("caff", "torrefazione", "vergnano", "espresso")):
+        return "Caffe"
+
+    if any(token in supplier_norm for token in ("bevande", "drink", "birra", "wine", "acqua", "coca", "pepsi", "sprite", "aperol", "campari", "distribuzione")):
+        return "Bevande"
+
+    if any(token in supplier_norm for token in ("latte", "lattiero")):
+        return "Latticini"
+
+    if any(token in supplier_norm for token in ("dolci", "pane", "pastic")):
+        return "Pasticceria"
+
+    if any(token in supplier_norm for token in ("serviz", "copywriter", "consul", "manutenz")):
+        return "Servizi"
+
+    if any(token in supplier_norm for token in ("utenz", "energia", "luce", "gas", "enel", "acquedotto")):
+        return "Utenze"
+
+    return "Altro"
+
+
+def is_valid_supplier_name(value: str | None) -> bool:
+    text = clean_spaces(value or "")
+    if not text or len(text) < 3:
+        return False
+
+    norm = normalize_lookup_text(text)
+    if norm in {"sconosciuto", "cliente", "fornitore", "n a", "na"}:
+        return False
+
+    # Evita di usare intestazioni tipiche del destinatario/cliente come fornitore.
+    if any(token in norm for token in ("spett le", "destinatario", "cessionario", "committente")):
+        return False
+
+    if re.fullmatch(r"[0-9\s\-\/\.]+", text):
+        return False
+
+    return True
+
+
+def normalize_invoice_number_value(value: str | None) -> str:
+    raw = clean_spaces(value or "")
+    if not raw:
+        return ""
+
+    compact = re.sub(r"\s+", "", raw.upper())
+    compact = compact.replace("N.", "").replace("N°", "").replace("Nº", "")
+    compact = compact.strip("-_/.:;")
+
+    if re.search(r"\d+[\.,]\d{2}$", compact):
+        return ""
+
+    if re.fullmatch(r"\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}", compact):
+        return ""
+
+    if not re.fullmatch(r"[A-Z0-9\/_\.\-]{2,40}", compact):
+        return ""
+
+    if not re.search(r"\d", compact):
+        return ""
+
+    return compact
+
+
+def extract_invoice_number_from_text(text: str) -> str | None:
+    lines = [clean_spaces(line) for line in text.splitlines() if clean_spaces(line)]
+
+    line_patterns = [
+        r"(?:numero\s+fattura|fattura\s*n[°ºo\.]?|n[°ºo\.]?\s*fattura|nr\.?\s*fattura|numero\s+documento|doc(?:umento)?\s*n(?:umero)?)\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\s\/_\.\-]{1,30})",
+        r"\bfattura\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\s\/_\.\-]{1,30})",
+    ]
+
+    for raw_line in lines:
+        upper_line = raw_line.upper()
+        for pattern in line_patterns:
+            match = re.search(pattern, upper_line, flags=re.IGNORECASE)
+            if not match:
+                continue
+
+            normalized = normalize_invoice_number_value(match.group(1))
+            if normalized:
+                return normalized
+
+    generic_patterns = [
+        r"\b[A-Z]{1,4}[\/_\-]\d{2,10}\b",
+        r"\b\d{2,10}[\/_\-][A-Z0-9]{1,8}\b",
+        r"\b\d{5,12}\b",
+    ]
+
+    for pattern in generic_patterns:
+        for token in re.findall(pattern, text.upper()):
+            normalized = normalize_invoice_number_value(token)
+            if normalized:
+                return normalized
+
+    return None
+
+
+def merge_extracted_invoice(
+    ai_extracted: dict | None,
+    heuristic_extracted: dict,
+    source_text: str | None = None,
+) -> dict:
+    ai = ai_extracted or {}
+    heuristic = heuristic_extracted or {}
+
+    ai_supplier = clean_spaces(ai.get("supplier", ""))
+    heuristic_supplier = clean_spaces(heuristic.get("supplier", ""))
+
+    ai_score = score_supplier_candidate(ai_supplier)
+    heuristic_score = score_supplier_candidate(heuristic_supplier)
+
+    supplier = ai_supplier if ai_score >= heuristic_score else heuristic_supplier
+    supplier_score = max(ai_score, heuristic_score)
+
+    if source_text:
+        text_candidates = collect_supplier_candidates(source_text)
+        if text_candidates:
+            text_score, text_supplier = text_candidates[0]
+            # Preferisci il candidato OCR se e' significativamente migliore.
+            if text_score >= supplier_score + 2:
+                supplier = text_supplier
+                supplier_score = text_score
+
+    if not is_valid_supplier_name(supplier):
+        supplier = "Sconosciuto"
+
+    supplier = canonicalize_supplier_name(supplier)
+
+    ai_number = normalize_invoice_number_value(ai.get("invoice_number", ""))
+    heuristic_number = normalize_invoice_number_value(heuristic.get("invoice_number", ""))
+    invoice_number = ai_number or heuristic_number
+
+    if not invoice_number and source_text:
+        invoice_number = extract_invoice_number_from_text(source_text) or ""
+
+    issue_date = ai.get("issue_date") or heuristic.get("issue_date")
+    due_date = ai.get("due_date") or heuristic.get("due_date")
+    delivery_date = heuristic.get("delivery_date")
+
+    ai_total = parse_decimal(ai.get("total"))
+    heuristic_total = parse_decimal(heuristic.get("total"))
+    total = str(ai_total if is_reasonable_money(ai_total) else heuristic_total)
+
+    ai_vat = parse_decimal(ai.get("vat"))
+    heuristic_vat = parse_decimal(heuristic.get("vat"))
+    vat = str(ai_vat if Decimal("0") <= ai_vat <= parse_decimal(total) else heuristic_vat)
+
+    return {
+        "supplier": supplier,
+        "invoice_number": invoice_number,
+        "issue_date": issue_date,
+        "due_date": due_date,
+        "delivery_date": delivery_date,
+        "total": total,
+        "vat": vat,
+    }
+
 def clamp_text(value: str | None, max_len: int) -> str:
     if not value:
         return ""
@@ -151,12 +449,18 @@ def pick_reasonable_supplier(raw_value: str | None) -> str:
     # fallback: massimo 120 caratteri
     candidate = candidate[:120].strip()
 
+    if not is_valid_supplier_name(candidate):
+        return "Sconosciuto"
+
     return candidate or "Sconosciuto"
 
 
 def normalize_extracted_invoice(extracted: dict) -> dict:
-    supplier = pick_reasonable_supplier(extracted.get("supplier"))
-    invoice_number = clamp_text(extracted.get("invoice_number"), 80)
+    supplier = canonicalize_supplier_name(pick_reasonable_supplier(extracted.get("supplier")))
+
+    invoice_number = normalize_invoice_number_value(extracted.get("invoice_number"))
+    if not invoice_number:
+        invoice_number = clamp_text(extracted.get("invoice_number"), 80)
 
     issue_date = parse_optional_date(extracted.get("issue_date")) or dt.date.today()
     # se è presente la delivery_date (data di consegna), la usiamo come due_date
@@ -211,26 +515,55 @@ def normalize_extracted_invoice(extracted: dict) -> dict:
 def extract_invoice_from_xml(file_bytes: bytes) -> dict:
     root = ET.fromstring(file_bytes)
 
-    supplier = None
-    for tag in ["Denominazione", "Nome"]:
-        el = root.find(f".//{tag}")
-        if el is not None and el.text:
-            supplier = el.text.strip()
-            break
+    def xml_text(paths: list[str]) -> str | None:
+        for path in paths:
+            el = root.find(path)
+            if el is not None and el.text and clean_spaces(el.text):
+                return clean_spaces(el.text)
+        return None
 
-    invoice_number_el = root.find(".//Numero")
-    issue_date_el = root.find(".//Data")
-    total_el = root.find(".//ImportoTotaleDocumento")
-    vat_el = root.find(".//Imposta")
-    due_date_el = root.find(".//DataScadenzaPagamento")
+    supplier = xml_text([
+        ".//{*}CedentePrestatore/{*}DatiAnagrafici/{*}Anagrafica/{*}Denominazione",
+        ".//{*}CedentePrestatore/{*}DatiAnagrafici/{*}Anagrafica/{*}Nome",
+        ".//{*}CedentePrestatore/{*}DatiAnagrafici/{*}Anagrafica/{*}Cognome",
+    ])
+
+    # Fallback estremo: qualsiasi Denominazione, ma solo se valida.
+    if not is_valid_supplier_name(supplier):
+        generic_name = xml_text([
+            ".//{*}Denominazione",
+            ".//{*}Nome",
+        ])
+        supplier = generic_name if is_valid_supplier_name(generic_name) else "Sconosciuto"
+
+    invoice_number = xml_text([
+        ".//{*}DatiGeneraliDocumento/{*}Numero",
+        ".//{*}Numero",
+    ])
+    issue_date = xml_text([
+        ".//{*}DatiGeneraliDocumento/{*}Data",
+        ".//{*}Data",
+    ])
+    total = xml_text([
+        ".//{*}DatiGeneraliDocumento/{*}ImportoTotaleDocumento",
+        ".//{*}ImportoTotaleDocumento",
+    ])
+    vat = xml_text([
+        ".//{*}DatiRiepilogo/{*}Imposta",
+        ".//{*}Imposta",
+    ])
+    due_date = xml_text([
+        ".//{*}DettaglioPagamento/{*}DataScadenzaPagamento",
+        ".//{*}DataScadenzaPagamento",
+    ])
 
     return {
         "supplier": supplier or "Sconosciuto",
-        "invoice_number": invoice_number_el.text.strip() if invoice_number_el is not None and invoice_number_el.text else "",
-        "issue_date": issue_date_el.text.strip() if issue_date_el is not None and issue_date_el.text else None,
-        "due_date": due_date_el.text.strip() if due_date_el is not None and due_date_el.text else None,
-        "total": total_el.text.strip() if total_el is not None and total_el.text else "0",
-        "vat": vat_el.text.strip() if vat_el is not None and vat_el.text else "0",
+        "invoice_number": invoice_number or "",
+        "issue_date": issue_date,
+        "due_date": due_date,
+        "total": total or "0",
+        "vat": vat or "0",
     }
 
 
@@ -415,7 +748,7 @@ def pick_best_vat(text: str, total_value: Decimal) -> str:
 def extract_supplier_from_text(text: str) -> str:
     lines = [clean_spaces(line) for line in text.splitlines() if clean_spaces(line)]
 
-    for line in lines[:20]:
+    for line in lines[:25]:
         lower = line.lower()
 
         if "vergnano" in lower:
@@ -438,17 +771,23 @@ def extract_supplier_from_text(text: str) -> str:
         "spett.le",
         "documento",
         "ordine",
+        "cliente",
+        "destinatario",
+        "indirizzo",
+        "partita iva",
+        "codice fiscale",
+        "iban",
     ]
 
-    for line in lines[:15]:
-        lower = line.lower()
-        if any(word in lower for word in blacklist):
-            continue
-        if len(line) < 3:
-            continue
-        if re.search(r"\d{5}", line):
-            continue
-        return line[:120]
+    filtered_text = "\n".join(
+        line for line in lines if not any(word in line.lower() for word in blacklist)
+    )
+    scored_lines = collect_supplier_candidates(filtered_text)
+
+    if scored_lines:
+        best = scored_lines[0][1]
+        if is_valid_supplier_name(best):
+            return best
 
     return "Sconosciuto"
 
@@ -461,16 +800,7 @@ def extract_invoice_from_text(text: str) -> dict:
 
     supplier = extract_supplier_from_text(text)
 
-    invoice_number = extract_field(
-        [
-            r"(?:numero\s+documento\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
-            r"(?:humero\s+documento\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
-            r"(?:documento\s*[:\-]?\s*)([A-Z0-9\/\-_]{3,})",
-            r"(?:fattura\s*n[°ºo\.]*\s*|numero\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
-            r"(?:n[°ºo\.]*\s*fattura\s*[:\-]?\s*)([A-Z0-9\/\-_]+)",
-        ],
-        normalized_text,
-    )
+    invoice_number = extract_invoice_number_from_text(normalized_text)
 
     if not invoice_number:
         match = re.search(r"\b0{3,}\d+\b", normalized_text)
@@ -609,8 +939,9 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
         "due_date": invoice.due_date.isoformat(),
         "total": float(invoice.total),
         "vat": float(invoice.vat),
+        "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
         "status": invoice.status.value,
-        "file_url": row.file_url,
+        "file_url": invoice.file_url,
 
     }
 
@@ -645,13 +976,15 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
         elif filename.endswith(".pdf"):
             text = ocr_pdf_bytes(content)
+            heuristic_extracted = extract_invoice_from_text(text)
             ai_parsed = parse_invoice_with_llm(text)
-            extracted = ai_parsed if ai_parsed is not None else extract_invoice_from_text(text)
+            extracted = merge_extracted_invoice(ai_parsed, heuristic_extracted, text)
 
         elif filename.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
             text = ocr_image_bytes(content)
+            heuristic_extracted = extract_invoice_from_text(text)
             ai_parsed = parse_invoice_with_llm(text)
-            extracted = ai_parsed if ai_parsed is not None else extract_invoice_from_text(text)
+            extracted = merge_extracted_invoice(ai_parsed, heuristic_extracted, text)
 
         else:
             raise HTTPException(
@@ -686,6 +1019,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
                 "due_date": existing_invoice.due_date.isoformat(),
                 "total": float(existing_invoice.total),
                 "vat": float(existing_invoice.vat),
+                "category": infer_invoice_category(existing_invoice.supplier, existing_invoice.invoice_number),
                 "status": existing_invoice.status.value,
                 "file_url": existing_invoice.file_url,
                 "already_exists": True,
@@ -713,6 +1047,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             "due_date": invoice.due_date.isoformat(),
             "total": float(invoice.total),
             "vat": float(invoice.vat),
+            "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
             "status": invoice.status.value,
             "file_url": invoice.file_url,
             "already_exists": False,
@@ -760,6 +1095,7 @@ def list_invoices(
             "due_date": row.due_date.isoformat(),
             "total": float(row.total),
             "vat": float(row.vat),
+            "category": infer_invoice_category(row.supplier, row.invoice_number),
             "status": row.status.value,
             "file_url": row.file_url,
         }

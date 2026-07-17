@@ -3533,6 +3533,30 @@ body {
   box-shadow: 0 18px 45px rgba(60, 35, 15, 0.14);
 }
 
+.invoice-preview-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 0;
+}
+
+.invoice-preview-open-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid #e4d4c0;
+  background: #fff7ed;
+  color: var(--espresso);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.invoice-preview-open-link:hover {
+  background: #f8ebdd;
+}
+
 .invoice-preview-modal.only-document .invoice-preview-document.full iframe {
   display: block;
   width: min(760px, calc(100vw - 360px));
@@ -3671,7 +3695,7 @@ body {
 .invoice-modern-table-card .invoice-modern-table-head,
 .invoice-modern-table-card .invoice-modern-row {
   display: grid !important;
-  grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr 0.9fr 90px 80px !important;
+  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 100px 90px !important;
   align-items: center !important;
   gap: 14px !important;
 }
@@ -3723,7 +3747,7 @@ body {
 .invoice-clean-table-head,
 .invoice-clean-table-row {
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr 0.9fr 90px 80px;
+  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 100px 90px;
   align-items: center;
   gap: 14px;
 }
@@ -3795,7 +3819,7 @@ body {
 .invoice-clean-table-head,
 .invoice-clean-table-row {
   display: grid !important;
-  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 0.8fr 100px 90px !important;
+  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 100px 90px !important;
   align-items: center !important;
   column-gap: 18px !important;
 }
@@ -3841,14 +3865,31 @@ body {
 .invoice-modern-supplier {
   font-weight: 800 !important;
   line-height: 1.25 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .invoice-modern-total {
   font-weight: 800 !important;
+  text-align: right !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .invoice-modern-category {
   justify-content: flex-start !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.invoice-modern-number,
+.invoice-modern-due {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .invoice-action-cell {
@@ -3881,7 +3922,7 @@ body {
 
 .upload-history-table-head.other-docs-table,
 .upload-history-table-row.other-docs-table {
-  grid-template-columns: 1.9fr 1fr 0.9fr 90px 80px;
+  grid-template-columns: 1.8fr 1.1fr 1fr 0.9fr 90px 80px;
 }
 
 .upload-history-action-cell {
@@ -3890,16 +3931,22 @@ body {
   justify-content: center;
 }
 
-.upload-history-table-head.other-docs-table > div:nth-child(2),
 .upload-history-table-head.other-docs-table > div:nth-child(3),
 .upload-history-table-head.other-docs-table > div:nth-child(4),
 .upload-history-table-head.other-docs-table > div:nth-child(5),
-.upload-history-table-row.other-docs-table > div:nth-child(2),
+.upload-history-table-head.other-docs-table > div:nth-child(6),
 .upload-history-table-row.other-docs-table > div:nth-child(3),
 .upload-history-table-row.other-docs-table > div:nth-child(4),
-.upload-history-table-row.other-docs-table > div:nth-child(5) {
+.upload-history-table-row.other-docs-table > div:nth-child(5),
+.upload-history-table-row.other-docs-table > div:nth-child(6) {
   justify-content: center;
   text-align: center;
+}
+
+.upload-history-category {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .csv-preview-box {

@@ -22,6 +22,122 @@ function formatMonthLabel(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
+function normalizeInvoiceText(value = "") {
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getInvoiceNumberDisplay(invoiceNumber) {
+  const value = String(invoiceNumber || "").trim();
+  if (!value) return "";
+  if (/^AUTO-\d+/i.test(value)) return "";
+  return value;
+}
+
+function getInvoiceCustomerName(invoice = {}) {
+  const genericNames = new Set([
+    "",
+    "sconosciuto",
+    "cliente",
+    "fornitore",
+    "n a",
+    "na",
+    "-",
+  ]);
+
+  const candidates = [
+    invoice.supplier,
+    invoice.customer_name,
+    invoice.customer,
+    invoice.counterparty,
+    invoice.vendor,
+    invoice.ragione_sociale,
+    invoice.intestatario,
+  ];
+
+  for (const candidate of candidates) {
+    const raw = String(candidate || "").trim();
+    if (!raw) continue;
+
+    const normalized = normalizeInvoiceText(raw);
+    if (!genericNames.has(normalized)) {
+      return raw;
+    }
+  }
+
+  return "Cliente non indicato";
+}
+
+function formatInvoiceCategory(invoice = {}, knownCategories = []) {
+  const category = String(invoice.category || "").trim();
+  if (category) return category;
+
+  const supplier = normalizeInvoiceText(invoice.supplier || "");
+  const invoiceNumber = normalizeInvoiceText(invoice.invoice_number || "");
+
+  const matchedKnownCategory = knownCategories.find((item) => {
+    const normalizedCategory = normalizeInvoiceText(item);
+    if (!normalizedCategory) return false;
+
+    if (supplier.includes(normalizedCategory)) return true;
+
+    const categoryTokens = normalizedCategory
+      .split(" ")
+      .filter((token) => token.length >= 4);
+
+    return categoryTokens.some((token) => supplier.includes(token));
+  });
+
+  if (matchedKnownCategory) return matchedKnownCategory;
+
+  if (
+    supplier === "cliente" &&
+    (invoiceNumber.startsWith("tc ") || invoiceNumber.startsWith("tc-"))
+  ) {
+    return "Caffe";
+  }
+
+  if (
+    supplier.includes("caff") ||
+    supplier.includes("vergnano") ||
+    supplier.includes("torrefazione")
+  ) {
+    return "Caffe";
+  }
+  if (supplier.includes("latte") || supplier.includes("lattiero")) return "Latticini";
+  if (supplier.includes("dolci") || supplier.includes("pane") || supplier.includes("pastic")) {
+    return "Pasticceria";
+  }
+  if (
+    supplier.includes("bevande") ||
+    supplier.includes("drink") ||
+    supplier.includes("birra") ||
+    supplier.includes("wine")
+  ) {
+    return "Bevande";
+  }
+  if (supplier.includes("serviz") || supplier.includes("copywriter") || supplier.includes("consul")) {
+    return "Servizi";
+  }
+  if (
+    supplier.includes("utenz") ||
+    supplier.includes("energia") ||
+    supplier.includes("luce") ||
+    supplier.includes("gas")
+  ) {
+    return "Utenze";
+  }
+
+  if (supplier) return "Altro";
+
+  return "Categoria non assegnata";
+}
+
 function getDocumentPreviewUrl(document) {
   const rawUrl = document?.preview_url || document?.file_url || "";
 
@@ -42,6 +158,7 @@ export default function UploadPage({
   invoiceCountThisMonth,
   latestInvoiceDate,
   handleInvoiceDocumentUpload,
+  invoiceCategories = [],
   invoices = [],
   handleDeleteInvoice,
   clearDocumentMessages,
@@ -81,6 +198,13 @@ useEffect(() => {
     return invoices.filter((invoice) => invoice.due_date?.slice(0, 7) === month);
   }, [invoices, month]);
 
+  const knownInvoiceCategoryNames = useMemo(() => {
+    return invoiceCategories
+      .map((category) => category?.name || category?.category || category)
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+  }, [invoiceCategories]);
+
   const historyEntries = useMemo(() => {
     const documentEntries = documents.map((document) => ({
       id: `document-${document.id}`,
@@ -99,8 +223,11 @@ useEffect(() => {
       id: `invoice-${invoice.id}`,
       kind: "invoice",
       tab: "invoices",
-      title: invoice.supplier || `Fattura ${invoice.invoice_number || invoice.id}`,
-      subtitle: invoice.invoice_number ? `N. ${invoice.invoice_number}` : "Fattura fornitore",
+      title: getInvoiceCustomerName(invoice),
+      detailLabel: getInvoiceNumberDisplay(invoice.invoice_number)
+        ? `N. ${getInvoiceNumberDisplay(invoice.invoice_number)}`
+        : "Fattura fornitore",
+      subtitle: formatInvoiceCategory(invoice, knownInvoiceCategoryNames),
       typeLabel: "FATTURA",
       dateValue: invoice.due_date,
       dateLabel: formatShortDate(invoice.due_date),
@@ -111,7 +238,7 @@ useEffect(() => {
     return [...documentEntries, ...invoiceEntries].sort(
       (a, b) => new Date(b.dateValue || 0) - new Date(a.dateValue || 0)
     );
-  }, [documents, currentMonthInvoices]);
+  }, [documents, currentMonthInvoices, knownInvoiceCategoryNames]);
 
   const visibleHistoryEntries = useMemo(() => {
     if (activeHistoryTab === "all") return historyEntries;
@@ -504,6 +631,7 @@ setActiveHistoryTab("other");
             <div className="upload-history-table">
               <div className="upload-history-table-head other-docs-table">
                 <div>Documento</div>
+                <div>Categoria</div>
                 <div>Data</div>
                 <div>Stato</div>
                 <div>Visualizza</div>
@@ -517,6 +645,12 @@ setActiveHistoryTab("other");
                   >
                     <div className="upload-history-name">
                       {entry.title}
+                      {entry.detailLabel ? (
+                        <div className="upload-history-meta">{entry.detailLabel}</div>
+                      ) : null}
+                    </div>
+                    <div className="upload-history-category">
+                      {entry.subtitle || "-"}
                     </div>
                     <div>{entry.dateLabel}</div>
                     <div className="upload-history-status">{entry.statusLabel}</div>

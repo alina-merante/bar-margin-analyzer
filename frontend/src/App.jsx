@@ -77,7 +77,17 @@ function resolveInvoiceCategoryLabel(invoice, knownCategories = []) {
   const category = String(invoice?.category || "").trim();
   if (category) return category;
 
-  const supplier = String(invoice?.supplier || "").toLowerCase();
+  const normalize = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const supplier = normalize(invoice?.supplier || "");
+  const invoiceNumber = normalize(invoice?.invoice_number || "");
 
   const matchedKnownCategory = knownCategories.find((item) => {
     const normalizedName = String(item)
@@ -88,6 +98,13 @@ function resolveInvoiceCategoryLabel(invoice, knownCategories = []) {
   });
 
   if (matchedKnownCategory) return matchedKnownCategory;
+
+  if (
+    supplier === "cliente" &&
+    (invoiceNumber.startsWith("tc ") || invoiceNumber.startsWith("tc-"))
+  ) {
+    return "Caffe";
+  }
 
   if (supplier.includes("caff")) return "Caffe";
   if (supplier.includes("latte") || supplier.includes("lattiero")) return "Latticini";
@@ -1097,15 +1114,20 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let refreshTimerId = null;
 
-    async function load() {
+    async function loadAllData(showLoader = false) {
       try {
-        setLoading(true);
+        if (showLoader) {
+          setLoading(true);
+        }
+
         setError("");
+
         await Promise.all([
-  loadDashboardData(month),
-  loadDocuments(month),
-]);
+          loadDashboardData(month),
+          loadDocuments(month),
+        ]);
       } catch (err) {
         console.error(err);
 
@@ -1113,16 +1135,31 @@ export default function App() {
           setError("Impossibile caricare i dati.");
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && showLoader) {
           setLoading(false);
         }
       }
     }
 
-    load();
+    function refreshSilently() {
+      if (!document.hidden) {
+        loadAllData(false);
+      }
+    }
+
+    loadAllData(true);
+
+    window.addEventListener("focus", refreshSilently);
+    document.addEventListener("visibilitychange", refreshSilently);
+    refreshTimerId = window.setInterval(refreshSilently, 45000);
 
     return () => {
       cancelled = true;
+      if (refreshTimerId) {
+        window.clearInterval(refreshTimerId);
+      }
+      window.removeEventListener("focus", refreshSilently);
+      document.removeEventListener("visibilitychange", refreshSilently);
     };
   }, [month]);
 
@@ -1235,11 +1272,7 @@ export default function App() {
       const result = await response.json();
       const extractedMonth = result.due_date?.slice(0, 7) || month;
 
-      setInvoiceUploadMessage(
-        `Fattura acquisita: ${result.supplier || "fornitore rilevato"} · ${
-          result.invoice_number || "numero non disponibile"
-        }`
-      );
+      setInvoiceUploadMessage("Fattura acquisita correttamente.");
 
       if (result.due_date) {
         setMonth(extractedMonth);
@@ -1545,6 +1578,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 invoiceCountThisMonth={currentMonthInvoices.length}
                 latestInvoiceDate={latestInvoiceDate}
                 handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
+                invoiceCategories={invoiceCategories}
                 invoices={invoices}
                 documents={documents}
                 handleGenericDocumentUpload={handleGenericDocumentUpload}

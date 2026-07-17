@@ -35,6 +35,16 @@ function formatMonthHuman(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
+function normalizeSearchText(value = "") {
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getInvoiceMonthKey(dateValue) {
   if (!dateValue) return "";
 
@@ -136,22 +146,41 @@ function getCategoryLabel(invoice, knownCategories = []) {
   const category = invoice.category?.trim();
   if (category) return category;
 
-  const supplier = invoice.supplier?.toLowerCase() || "";
+  const supplier = normalizeSearchText(invoice.supplier || "");
+  const invoiceNumber = normalizeSearchText(invoice.invoice_number || "");
 
   const matchedKnownCategory = knownCategories.find((item) => {
-    const normalizedName = item.toLowerCase();
-    const keyword = normalizedName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    return supplier.includes(keyword);
+    const normalizedCategory = normalizeSearchText(item);
+    if (!normalizedCategory) return false;
+
+    if (supplier.includes(normalizedCategory)) return true;
+
+    const categoryTokens = normalizedCategory
+      .split(" ")
+      .filter((token) => token.length >= 4);
+
+    return categoryTokens.some((token) => supplier.includes(token));
   });
 
   if (matchedKnownCategory) return matchedKnownCategory;
 
-  if (supplier.includes("caff")) return "Caffè";
+  if (
+    supplier === "cliente" &&
+    (invoiceNumber.startsWith("tc ") || invoiceNumber.startsWith("tc-"))
+  ) {
+    return "Caffè";
+  }
+
+  if (supplier.includes("caff") || supplier.includes("vergnano") || supplier.includes("torrefazione")) {
+    return "Caffè";
+  }
   if (supplier.includes("latte") || supplier.includes("lattiero")) return "Latticini";
   if (supplier.includes("dolci") || supplier.includes("pane") || supplier.includes("pastic")) {
     return "Pasticceria";
   }
-  if (supplier.includes("bevande")) return "Bevande";
+  if (supplier.includes("bevande") || supplier.includes("drink") || supplier.includes("birra") || supplier.includes("wine")) {
+    return "Bevande";
+  }
   if (supplier.includes("serviz") || supplier.includes("copywriter") || supplier.includes("consul")) {
     return "Servizi";
   }
@@ -165,6 +194,20 @@ function getCategoryLabel(invoice, knownCategories = []) {
   }
 
   return "Altro";
+}
+
+function buildPdfPreviewUrl(url) {
+  if (!url) return "";
+  if (!/\.pdf($|[?#])/i.test(url)) return url;
+  if (url.includes("#")) return url;
+  return `${url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`;
+}
+
+function getInvoiceNumberDisplay(invoiceNumber) {
+  const value = String(invoiceNumber || "").trim();
+  if (!value) return "-";
+  if (/^AUTO-\d+/i.test(value)) return "-";
+  return value;
 }
 
 function getInvoiceDocumentUrl(invoice) {
@@ -507,6 +550,8 @@ const totalAmount = invoicesForView.reduce(
   );
 
   const selectedInvoiceDocumentUrl = getInvoiceDocumentUrl(selectedInvoice);
+  const selectedInvoiceIsImage = /\.(jpg|jpeg|png|webp)($|[?#])/i.test(selectedInvoiceDocumentUrl);
+  const selectedInvoicePreviewUrl = buildPdfPreviewUrl(selectedInvoiceDocumentUrl);
 
   return (
     <main className="main invoices-dashboard-page">
@@ -765,18 +810,19 @@ const totalAmount = invoicesForView.reduce(
           📅 Arretrati {currentYear} ({yearOverdueInvoices.length})
         </button>
 
-        {invoiceUploadMessage ? (
-          <p className="upload-feedback success">{invoiceUploadMessage}</p>
-        ) : null}
-
-        {invoiceDeleteError ? (
-          <p className="upload-feedback error">{invoiceDeleteError}</p>
-        ) : null}
-
-        {invoiceUploadError ? (
-          <p className="upload-feedback error">{invoiceUploadError}</p>
-        ) : null}
       </section>
+
+      {invoiceUploadMessage ? (
+        <p className="upload-feedback success">{invoiceUploadMessage}</p>
+      ) : null}
+
+      {invoiceUploadError ? (
+        <p className="upload-feedback error">{invoiceUploadError}</p>
+      ) : null}
+
+      {invoiceDeleteError ? (
+        <p className="upload-feedback error">{invoiceDeleteError}</p>
+      ) : null}
 
       <section className="invoice-modern-table-card" ref={invoiceTableRef}>
         <div className="invoice-clean-table-head">
@@ -798,7 +844,7 @@ const totalAmount = invoicesForView.reduce(
                 <div className="invoice-modern-supplier">{invoice.supplier || "Fornitore"}</div>
 
                 <div className="invoice-modern-number">
-                  {invoice.invoice_number || "-"}
+                  {getInvoiceNumberDisplay(invoice.invoice_number)}
                 </div>
 
                 <div
@@ -871,16 +917,29 @@ const totalAmount = invoicesForView.reduce(
       <div className="invoice-preview-body invoice-preview-body-only-document">
         {selectedInvoiceDocumentUrl ? (
           <div className="invoice-preview-document full">
-            {selectedInvoiceDocumentUrl.match(/\.(jpg|jpeg|png|webp)$/i) ? (
+            {selectedInvoiceIsImage ? (
               <img
                 src={selectedInvoiceDocumentUrl}
                 alt="Fattura"
               />
             ) : (
-              <iframe
-                title="Documento fattura"
-                src={selectedInvoiceDocumentUrl}
-              />
+              <>
+                <div className="invoice-preview-toolbar">
+                  <a
+                    href={selectedInvoiceDocumentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="invoice-preview-open-link"
+                  >
+                    Apri originale
+                  </a>
+                </div>
+
+                <iframe
+                  title="Documento fattura"
+                  src={selectedInvoicePreviewUrl}
+                />
+              </>
             )}
           </div>
         ) : (
