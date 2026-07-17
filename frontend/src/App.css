@@ -3881,7 +3881,7 @@ body {
 
 .upload-history-table-head.other-docs-table,
 .upload-history-table-row.other-docs-table {
-  grid-template-columns: 1.4fr 0.55fr 1fr 1.4fr 0.7fr 90px 80px;
+  grid-template-columns: 1.9fr 1fr 0.9fr 90px 80px;
 }
 
 .upload-history-action-cell {
@@ -3890,15 +3890,16 @@ body {
   justify-content: center;
 }
 
-.upload-history-table-head.other-docs-table,
-.upload-history-table-row.other-docs-table {
-  grid-template-columns: 1.4fr 0.55fr 1fr 1.4fr 0.7fr 90px 80px;
-}
-
-.upload-history-action-cell {
-  display: flex;
-  align-items: center;
+.upload-history-table-head.other-docs-table > div:nth-child(2),
+.upload-history-table-head.other-docs-table > div:nth-child(3),
+.upload-history-table-head.other-docs-table > div:nth-child(4),
+.upload-history-table-head.other-docs-table > div:nth-child(5),
+.upload-history-table-row.other-docs-table > div:nth-child(2),
+.upload-history-table-row.other-docs-table > div:nth-child(3),
+.upload-history-table-row.other-docs-table > div:nth-child(4),
+.upload-history-table-row.other-docs-table > div:nth-child(5) {
   justify-content: center;
+  text-align: center;
 }
 
 .csv-preview-box {

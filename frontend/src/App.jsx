@@ -1444,11 +1444,12 @@ const overdueInvoicesAmount = useMemo(
     ? `${month}-01`
     : null;
 
-  const latestCashDocument = documents
-  .filter((document) => document.section === "cash")
-  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-
-const latestPosUploadDate = latestCashDocument?.created_at ?? null;
+  const latestPosUploadDate =
+    overview?.latest_cash_closure_date ??
+    documents
+      .filter((document) => document.section === "cash")
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at ??
+    null;
 
   return (
     <BrowserRouter>

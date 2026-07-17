@@ -165,8 +165,8 @@ export default function DashboardPage({
       badge: daysAgoLabel(latestPosUploadDate),
       title: "Cassa",
       text: latestPosUploadDate
-        ? `Ultimo export caricato il ${formatShortDate(latestPosUploadDate)}`
-        : "Export POS non ancora caricato",
+        ? `Ultima chiusura cassa del ${formatShortDate(latestPosUploadDate)}`
+        : "Chiusura cassa non ancora caricata",
       action: latestPosUploadDate ? "Aggiorna" : "Carica ora",
       to: "/upload",
       tone: getReminderTone(latestPosUploadDate, "danger"),

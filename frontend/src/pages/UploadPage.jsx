@@ -492,8 +492,6 @@ setActiveHistoryTab("other");
             <div className="upload-history-table">
               <div className="upload-history-table-head other-docs-table">
                 <div>Documento</div>
-                <div>Tipo</div>
-                <div>Categoria / sezione</div>
                 <div>Data</div>
                 <div>Stato</div>
                 <div>Visualizza</div>
@@ -508,8 +506,6 @@ setActiveHistoryTab("other");
                     <div className="upload-history-name">
                       {entry.title}
                     </div>
-                    <div>{entry.typeLabel}</div>
-                    <div>{entry.subtitle}</div>
                     <div>{entry.dateLabel}</div>
                     <div className="upload-history-status">{entry.statusLabel}</div>
 

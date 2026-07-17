@@ -442,6 +442,9 @@ def overview(
         .limit(10)
     ).all()
 
+    latest_cash_closure_date = db.scalar(select(func.max(DailyCashClosure.date)))
+    latest_cash_closure_uploaded_at = db.scalar(select(func.max(DailyCashClosure.created_at)))
+
     return {
         "top_products_by_quantity": [
             {"product": row.product, "quantity": float(row.quantity), "revenue": float(row.revenue)}
@@ -461,6 +464,10 @@ def overview(
             "expenses": float(pnl_summary["expenses"]),
             "profit": float(pnl_summary["profit"]),
         },
+        "latest_cash_closure_date": latest_cash_closure_date.isoformat() if latest_cash_closure_date else None,
+        "latest_cash_closure_uploaded_at": latest_cash_closure_uploaded_at.isoformat()
+        if latest_cash_closure_uploaded_at
+        else None,
     }
 
 
