@@ -1464,9 +1464,11 @@ const overdueInvoicesAmount = useMemo(
     ? currentMonthInvoices.map((invoice) => invoice.due_date).sort().at(-1)
     : null;
 
-  const latestBankUploadDate = expensesBySupplier.items?.length
-    ? `${month}-01`
-    : null;
+  const latestBankUploadDate =
+    documents
+      .filter((document) => document.section === "bank")
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at ??
+    null;
 
   const latestPosUploadDate =
     overview?.latest_cash_closure_date ??

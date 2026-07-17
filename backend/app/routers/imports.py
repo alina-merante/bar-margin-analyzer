@@ -94,6 +94,7 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
 
     rules = db.scalars(select(CategoryRule)).all()
     imported_rows = 0
+    skipped_rows = 0
 
     for idx, row in enumerate(reader, start=2):
         try:
@@ -113,15 +114,30 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
                 category_id = rule.category_id
                 break
 
+        counterparty = extract_counterparty(description)
+
+        existing_transaction = db.scalar(
+            select(Transaction.id).where(
+                Transaction.date == date,
+                Transaction.description == description,
+                Transaction.amount == amount,
+                Transaction.counterparty == counterparty,
+            )
+        )
+
+        if existing_transaction is not None:
+            skipped_rows += 1
+            continue
+
         transaction = Transaction(
             date=date,
             description=description,
             amount=amount,
-            counterparty=extract_counterparty(description),
+            counterparty=counterparty,
             category_id=category_id,
         )
         db.add(transaction)
         imported_rows += 1
 
     db.commit()
-    return {"imported_rows": imported_rows}
+    return {"imported_rows": imported_rows, "skipped_rows": skipped_rows}
