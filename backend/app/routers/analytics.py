@@ -70,31 +70,41 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
 def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
     paid_invoices = db.execute(
         select(
-            Invoice.id.label("invoice_id"),
+            Invoice.supplier.label("supplier"),
+            Invoice.invoice_number.label("invoice_number"),
+            Invoice.issue_date.label("issue_date"),
             Invoice.total.label("total"),
             Invoice.vat.label("vat"),
             func.max(Payment.date).label("paid_at"),
         )
         .join(InvoicePaymentLink, InvoicePaymentLink.invoice_id == Invoice.id)
         .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
-        .where(Invoice.status == InvoiceStatus.paid)
-        .group_by(Invoice.id, Invoice.total, Invoice.vat)
+        .where(
+            Invoice.status == InvoiceStatus.paid,
+            Payment.date >= start,
+            Payment.date < end,
+        )
+        .group_by(
+            Invoice.supplier,
+            Invoice.invoice_number,
+            Invoice.issue_date,
+            Invoice.total,
+            Invoice.vat,
+        )
     ).all()
 
-    paid_invoice_expenses = sum(
-        Decimal(row.total) + Decimal(row.vat)
-        for row in paid_invoices
-        if row.paid_at and start <= row.paid_at < end
-    )
+    seen_keys: set[tuple[str, str, dt.date]] = set()
+    paid_invoice_expenses = Decimal("0")
 
-    expenses = db.execute(
-        select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0)).where(
-            Transaction.date >= start,
-            Transaction.date < end,
-            Transaction.amount < 0,
-        )
-    )
-    return Decimal(expenses.scalar_one()) + paid_invoice_expenses
+    for row in paid_invoices:
+        if row.paid_at and start <= row.paid_at < end:
+            key = (str(row.supplier), str(row.invoice_number), row.issue_date)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            paid_invoice_expenses += Decimal(row.total) + Decimal(row.vat)
+
+    return paid_invoice_expenses
 
 
 def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]:
@@ -130,46 +140,15 @@ def ratio_pct(part: Decimal, whole: Decimal) -> Decimal:
 
 
 def top_expense_category(db: Session, start: dt.date, end: dt.date):
-    return db.execute(
-        select(
-            ExpenseCategory.name.label("category"),
-            func.coalesce(func.sum(func.abs(Transaction.amount)), 0).label("expenses"),
-        )
-        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(ExpenseCategory.name)
-        .order_by(func.sum(func.abs(Transaction.amount)).desc())
-        .limit(1)
-    ).first()
+    return None
 
 
 def category_expense_sum(db: Session, start: dt.date, end: dt.date, category_name: str | None) -> Decimal:
-    filters = [Transaction.date >= start, Transaction.date < end, Transaction.amount < 0]
-    if category_name is None:
-        filters.append(ExpenseCategory.name.is_(None))
-    else:
-        filters.append(ExpenseCategory.name == category_name)
-
-    value = db.execute(
-        select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0))
-        .select_from(Transaction)
-        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
-        .where(*filters)
-    )
-    return Decimal(value.scalar_one())
+    return Decimal("0")
 
 
 def top_supplier(db: Session, start: dt.date, end: dt.date):
-    return db.execute(
-        select(
-            Transaction.counterparty.label("supplier"),
-            func.coalesce(func.sum(func.abs(Transaction.amount)), 0).label("expenses"),
-        )
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(Transaction.counterparty)
-        .order_by(func.sum(func.abs(Transaction.amount)).desc())
-        .limit(1)
-    ).first()
+    return None
 
 
 def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
@@ -419,28 +398,9 @@ def overview(
         .limit(10)
     ).all()
 
-    top_expense_categories = db.execute(
-        select(
-            ExpenseCategory.name.label("category"),
-            func.sum(func.abs(Transaction.amount)).label("expenses"),
-        )
-        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(ExpenseCategory.name)
-        .order_by(func.sum(func.abs(Transaction.amount)).desc())
-        .limit(10)
-    ).all()
+    top_expense_categories = []
 
-    top_suppliers = db.execute(
-        select(
-            Transaction.counterparty.label("supplier"),
-            func.sum(func.abs(Transaction.amount)).label("expenses"),
-        )
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(Transaction.counterparty)
-        .order_by(func.sum(func.abs(Transaction.amount)).desc())
-        .limit(10)
-    ).all()
+    top_suppliers = []
 
     latest_cash_closure_date = db.scalar(select(func.max(DailyCashClosure.date)))
     latest_cash_closure_uploaded_at = db.scalar(select(func.max(DailyCashClosure.created_at)))
@@ -477,16 +437,7 @@ def expenses_by_category(
 ) -> dict:
     start, end = parse_month(month)
 
-    rows = db.execute(
-        select(
-            ExpenseCategory.name.label("category"),
-            func.sum(Transaction.amount).label("total_amount"),
-        )
-        .outerjoin(ExpenseCategory, Transaction.category_id == ExpenseCategory.id)
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(ExpenseCategory.name)
-        .order_by(func.abs(func.sum(Transaction.amount)).desc())
-    ).all()
+    rows = []
 
     return {
         "month": month,
@@ -506,15 +457,7 @@ def expenses_by_supplier(
 ) -> dict:
     start, end = parse_month(month)
 
-    rows = db.execute(
-        select(
-            Transaction.counterparty.label("counterparty"),
-            func.sum(Transaction.amount).label("total_amount"),
-        )
-        .where(Transaction.date >= start, Transaction.date < end, Transaction.amount < 0)
-        .group_by(Transaction.counterparty)
-        .order_by(func.abs(func.sum(Transaction.amount)).desc())
-    ).all()
+    rows = []
 
     return {
         "month": month,

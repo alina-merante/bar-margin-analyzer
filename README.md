@@ -296,9 +296,11 @@ Behavior notes:
 
 - `month` format is `YYYY-MM`.
 - `year` format is `YYYY`.
-- Revenue uses `SaleLine.total` only.
-- Expenses use absolute values of negative `Transaction.amount` only.
-- Positive bank transactions are ignored in expense calculations.
+- Revenue is the sum of daily cash closure totals.
+- Costs are counted only for invoices that are reconciled with a payment and marked as `paid`.
+- A standalone bank transaction does not create a cost by itself.
+- A standalone invoice does not create a cost until it is paid.
+- If both an invoice and its reconciled bank movement exist, the cost is counted once.
 - Delta fields in `/analytics/pnl` are calculated as current month minus previous month.
 - `/analytics/insights` compares current month to previous month and returns:
   - `metrics`: revenue, expenses, profit, and percentage changes (rounded to 2 decimals).
