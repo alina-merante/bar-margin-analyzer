@@ -104,7 +104,16 @@ def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
             seen_keys.add(key)
             paid_invoice_expenses += Decimal(row.total) + Decimal(row.vat)
 
-    return paid_invoice_expenses
+    negative_bank_transactions = db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0))
+        .where(
+            Transaction.date >= start,
+            Transaction.date < end,
+            Transaction.amount < 0,
+        )
+    ).scalar_one()
+
+    return paid_invoice_expenses + abs(Decimal(negative_bank_transactions or 0))
 
 
 def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]:

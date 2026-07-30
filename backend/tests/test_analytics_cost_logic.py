@@ -91,8 +91,8 @@ def test_monthly_pnl_counts_only_paid_reconciled_invoices_once():
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
         assert result["revenue"] == Decimal("1000.00")
-        assert result["expenses"] == Decimal("140.00")
-        assert result["profit"] == Decimal("860.00")
+        assert result["expenses"] == Decimal("260.00")
+        assert result["profit"] == Decimal("740.00")
 
 
 def test_unpaid_invoice_does_not_create_cost():
@@ -114,7 +114,20 @@ def test_payment_without_invoice_does_not_create_cost():
 
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
-        assert result["expenses"] == Decimal("0.00")
+        assert result["expenses"] == Decimal("120.00")
+
+
+def test_negative_bank_transactions_are_counted_as_expenses():
+    with build_session() as session:
+        add_cash_closure(session, Decimal("1000.00"))
+        add_bank_transaction(session, Decimal("-120.00"), "Supplier A")
+        add_bank_transaction(session, Decimal("50.00"), "Customer")
+        session.commit()
+
+        result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
+
+        assert result["expenses"] == Decimal("120.00")
+        assert result["profit"] == Decimal("880.00")
 
 
 def test_paid_invoice_without_link_has_no_cost():

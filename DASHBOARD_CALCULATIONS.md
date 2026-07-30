@@ -1,83 +1,89 @@
-# Dashboard calculations
+# Calcoli del dashboard
 
-This document describes how each dashboard section is computed.
+Questo documento descrive come vengono calcolate le varie sezioni del dashboard.
 
-## 1. Revenue
+## 1. Ricavi
 
-Revenue is the sum of all daily cash closure totals in the selected period.
+I ricavi corrispondono alla somma di tutte le chiusure di cassa del periodo selezionato.
 
-- Source: DailyCashClosure.total_amount
-- Period filter: closure date is included when it is within the selected month
+- Fonte: DailyCashClosure.total_amount
+- Filtro temporale: la chiusura è inclusa se la sua data rientra nel mese selezionato
 - Formula:
-  - Revenue = sum(DailyCashClosure.total_amount)
+  - Ricavi = somma(DailyCashClosure.total_amount)
 
-## 2. Costs
+## 2. Costi
 
-Costs are counted only when an invoice is actually reconciled with a payment and the invoice status is paid.
+I costi vengono conteggiati combinando due fonti:
 
-Rules:
-- A standalone bank transaction does not create a cost by itself.
-- A standalone invoice does not create a cost until it is paid.
-- If both an invoice and a reconciled bank movement exist, the cost is counted once.
+1. Fatture pagate e riconciliate
+2. Movimenti bancari con importo negativo, che rappresentano spese
 
-Calculation:
-- For each invoice with status = paid and at least one linked payment in the period:
-  - cost contribution = invoice.total + invoice.vat
-- Total costs = sum of those contributions for the selected period
+Regole:
+- Una singola fattura non genera costo fino a quando non è pagata.
+- Un movimento bancario da solo non genera costo se è positivo o se non rappresenta una spesa.
+- Le spese negative dei movimenti bancari vengono incluse nel totale dei costi.
+- Per le fatture, il costo contribuisce come invoice.total + invoice.vat quando la fattura è pagata e ha almeno un pagamento collegato nel periodo.
 
-## 3. Operating margin
+Calcolo:
+- Per ogni fattura pagata con almeno un pagamento collegato nel periodo:
+  - contributo costo = invoice.total + invoice.vat
+- Per ogni movimento bancario nel periodo con amount < 0:
+  - contributo costo = abs(amount)
+- Totale costi = somma dei contributi sopra indicati
 
-Operating margin is the difference between revenue and costs.
+## 3. Margine operativo
+
+Il margine operativo è la differenza tra ricavi e costi.
 
 - Formula:
-  - Operating margin = Revenue - Costs
+  - Margine operativo = Ricavi - Costi
 
-## 4. P&L trend
+## 4. Trend P&L
 
-The trend endpoint returns monthly values for the last N months, including the selected month.
+L’endpoint del trend restituisce i valori mensili degli ultimi N mesi, incluso il mese selezionato.
 
-Each month uses the same logic:
-- Revenue = sum of cash closure totals for that month
-- Costs = sum of paid and reconciled invoices for that month
-- Profit = Revenue - Costs
+Ogni mese usa la stessa logica:
+- Ricavi = somma delle chiusure di cassa del mese
+- Costi = somma delle fatture pagate e dei movimenti bancari negativi del mese
+- Profitto = Ricavi - Costi
 
-## 5. Insights
+## 5. Insight
 
-Insights compare the selected month with the previous month.
+Gli insight confrontano il mese selezionato con il mese precedente.
 
-They include:
-- Revenue change percentage
-- Expenses change percentage
-- Profit change percentage
-- Top expense category change percentage
-- Share of the top supplier expense
+Includono:
+- Variazione percentuale dei ricavi
+- Variazione percentuale dei costi
+- Variazione percentuale del profitto
+- Variazione percentuale della categoria di spesa principale
+- Contributo percentuale del fornitore principale sulle spese totali
 
-## 6. Expenses by category
+## 6. Spese per categoria
 
-This section shows the distribution of costs by expense category.
+Questa sezione mostra la distribuzione dei costi per categoria di spesa.
 
-Current implementation uses the invoice-based cost model, so categories are derived from the reconciled paid invoice flow.
+L’implementazione attuale usa il modello dei costi basato su fatture e movimenti bancari negativi.
 
-## 7. Expenses by supplier
+## 7. Spese per fornitore
 
-This section shows the distribution of costs by supplier.
+Questa sezione mostra la distribuzione dei costi per fornitore.
 
-Current implementation uses the invoice-based cost model, so suppliers come from reconciled paid invoices.
+L’implementazione attuale usa il modello dei costi basato su fatture e movimenti bancari negativi.
 
-## 8. Invoice summary
+## 8. Riepilogo fatture
 
-This section is not part of the P&L formula; it is a summary of invoice records.
+Questa sezione non è parte della formula P&L, ma è un riepilogo dei record delle fatture.
 
-Displayed values:
-- Total invoices
-- Pending invoices
-- Paid invoices
-- Total pending amount
-- Total paid amount
+Valori mostrati:
+- Totale fatture
+- Fatture in sospeso
+- Fatture pagate
+- Totale importo in sospeso
+- Totale importo pagato
 
-## 9. Payments by method
+## 9. Pagamenti per metodo
 
-This section groups payments by payment method for the selected month.
+Questa sezione raggruppa i pagamenti per metodo di pagamento nel mese selezionato.
 
-- Source: Payment records
-- Aggregation: sum of Payment.amount grouped by Payment.method
+- Fonte: record di Payment
+- Aggregazione: somma di Payment.amount raggruppata per Payment.method
