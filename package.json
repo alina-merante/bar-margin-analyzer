@@ -1,7 +1,7 @@
 {
   "scripts": {
-    "dev:api": "docker compose up -d db api",
-    "dev:full": "docker compose up -d db api && npm --prefix frontend run dev",
+    "dev:api": "docker compose up --build -d db api",
+    "dev:full": "sh scripts/dev-full.sh",
     "dev:stop": "docker compose stop api db",
     "dev:down": "docker compose down"
   },

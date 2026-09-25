@@ -12,14 +12,18 @@ npm run dev:full
 
 This command:
 
+- installs the frontend dependencies with `npm ci`;
 - starts Docker services `db` and `api` in background;
+- waits for PostgreSQL and applies `alembic upgrade head` automatically before starting the API;
 - starts frontend Vite dev server in foreground.
 
-Manual alternative (same behavior), start API and database first:
+Manual alternative, start API and database first:
 
 ```bash
 docker compose up -d db api
 ```
+
+The API container applies all pending Alembic migrations before Uvicorn starts.
 
 Verify backend is reachable:
 
@@ -73,6 +77,15 @@ Run alembic commands inside the API container:
 ```bash
 docker compose run --rm api alembic upgrade head
 ```
+
+To verify a clean database, using only a temporary Compose project, run from the repository root:
+
+```bash
+sh scripts/verify-clean-bootstrap.sh
+```
+
+The verification creates a temporary PostgreSQL volume, checks all application tables and API endpoints,
+builds the frontend, and removes only its temporary resources when finished.
 
 ## POS CSV Import (existing)
 
