@@ -10,7 +10,7 @@
     },
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ita poppler-utils python3.12-venv && python3.12 -m venv backend/.venv && backend/.venv/bin/pip install --quiet --upgrade pip && backend/.venv/bin/pip install --quiet -r backend/requirements.txt && npm --prefix frontend ci",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ita poppler-utils python3.12-venv && python3.12 -m venv --clear backend/.venv && backend/.venv/bin/pip install --quiet --upgrade pip && backend/.venv/bin/pip install --quiet -r backend/requirements.txt && npm --prefix frontend ci",
   "forwardPorts": [8000, 5173, 5432],
   "portsAttributes": {
     "8000": {
