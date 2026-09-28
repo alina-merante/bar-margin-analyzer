@@ -14,3 +14,8 @@ node_modules/
 
 # Vite
 dist/
+
+# Codespaces local runtime artifacts
+.venv/
+.uvicorn.log
+.uvicorn.pid

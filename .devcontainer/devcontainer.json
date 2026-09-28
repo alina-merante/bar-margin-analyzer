@@ -1,0 +1,30 @@
+{
+  "name": "bar-margin-analyzer (Codespaces)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ita poppler-utils python3.12-venv && python3.12 -m venv backend/.venv && backend/.venv/bin/pip install --quiet --upgrade pip && backend/.venv/bin/pip install --quiet -r backend/requirements.txt && npm --prefix frontend ci",
+  "forwardPorts": [8000, 5173, 5432],
+  "portsAttributes": {
+    "8000": {
+      "label": "BarManager API",
+      "onAutoForward": "notify"
+    },
+    "5173": {
+      "label": "BarManager Frontend",
+      "onAutoForward": "openBrowser"
+    },
+    "5432": {
+      "label": "PostgreSQL",
+      "onAutoForward": "silent"
+    }
+  },
+  "remoteUser": "vscode"
+}

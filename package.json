@@ -2,6 +2,7 @@
   "scripts": {
     "dev:api": "docker compose up --build -d db api",
     "dev:full": "sh scripts/dev-full.sh",
+    "dev:codespaces": "sh scripts/dev-codespaces.sh",
     "dev:stop": "docker compose stop api db",
     "dev:down": "docker compose down"
   },
