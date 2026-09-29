@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function formatShortDate(value) {
@@ -177,10 +177,6 @@ export default function UploadPage({
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
   const [, setLocalDocumentMessage] = useState("");
 
-useEffect(() => {
-  clearDocumentMessages?.();
-}, [clearDocumentMessages]);
-
   const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
 
   const [cashUploadError, setCashUploadError] = useState("");
@@ -295,8 +291,8 @@ async function deleteHistoryEntry(entry) {
     return;
   }
 
-await handleGenericDocumentUpload(file, "cash");
-setActiveHistoryTab("cash");
+const uploaded = await handleGenericDocumentUpload(file, "cash");
+if (uploaded) setActiveHistoryTab("cash");
 }
 
 async function handleOtherDocument(file) {
@@ -311,8 +307,8 @@ async function handleOtherDocument(file) {
     return;
   }
 
-await handleGenericDocumentUpload(file, "other");
-setActiveHistoryTab("other");
+const uploaded = await handleGenericDocumentUpload(file, "other");
+if (uploaded) setActiveHistoryTab("other");
 }
 
   return (

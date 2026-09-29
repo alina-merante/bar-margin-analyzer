@@ -1368,7 +1368,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
             1
           )} MB). Va compresso prima di caricarlo.`
         );
-        return;
+        return false;
       }
     }
 
@@ -1384,9 +1384,16 @@ async function handleGenericDocumentUpload(file, section = "other") {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(
-        errorBody || `Upload documento fallito (${response.status})`
-      );
+      let errorMessage = `Upload documento fallito (${response.status})`;
+
+      try {
+        const parsedError = JSON.parse(errorBody);
+        errorMessage = parsedError.detail || errorMessage;
+      } catch {
+        if (errorBody) errorMessage = errorBody;
+      }
+
+      throw new Error(errorMessage);
     }
 
     const result = await response.json();
@@ -1397,9 +1404,15 @@ async function handleGenericDocumentUpload(file, section = "other") {
 
     await loadDocuments(month);
     await loadDashboardData(month);
+    return true;
   } catch (err) {
     console.error(err);
-    setDocumentUploadError("Errore durante il caricamento del documento.");
+    setDocumentUploadError(
+      err instanceof Error && err.message
+        ? err.message
+        : "Errore durante il caricamento del documento."
+    );
+    return false;
   } finally {
     setDocumentUploading(false);
   }

@@ -278,9 +278,36 @@ async def upload_document(
     if not content:
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
+    extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    extracted_data = None
+
+    if section in {"cash", "cash_closure"}:
+        extracted_data = extract_daily_cash_closure(content, extension)
+        existing_closure = db.scalar(
+            select(DailyCashClosure).where(
+                DailyCashClosure.date == extracted_data["date"],
+                DailyCashClosure.closure_number == extracted_data["closure_number"],
+            )
+        )
+        if existing_closure:
+            formatted_date = extracted_data["date"].strftime("%d/%m/%Y")
+            formatted_amount = (
+                f"{existing_closure.total_amount:,.2f}"
+                .replace(",", "X")
+                .replace(".", ",")
+                .replace("X", ".")
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Questa chiusura cassa è già stata caricata "
+                    f"({formatted_date} – chiusura n. {extracted_data['closure_number']} "
+                    f"– {formatted_amount} €)."
+                ),
+            )
+
     os.makedirs("uploads/documents", exist_ok=True)
 
-    extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     stored_filename = f"{uuid.uuid4()}.{extension}"
     stored_stem = stored_filename.rsplit(".", 1)[0]
 
@@ -331,7 +358,6 @@ async def upload_document(
 
     if section in {"cash", "cash_closure"}:
         print("ENTRATO IN CASH CLOSURE")
-        extracted_data = extract_daily_cash_closure(content, extension)
         document.month = extracted_data["date"].strftime("%Y-%m")
 
         cash_closure = DailyCashClosure(
