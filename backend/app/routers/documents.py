@@ -332,6 +332,7 @@ async def upload_document(
     if section in {"cash", "cash_closure"}:
         print("ENTRATO IN CASH CLOSURE")
         extracted_data = extract_daily_cash_closure(content, extension)
+        document.month = extracted_data["date"].strftime("%Y-%m")
 
         cash_closure = DailyCashClosure(
             date=extracted_data["date"],
