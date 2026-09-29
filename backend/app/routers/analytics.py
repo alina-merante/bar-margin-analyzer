@@ -15,7 +15,6 @@ from app.models import (
     Payment,
     Product,
     SaleLine,
-    Transaction,
 )
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -70,12 +69,8 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
 def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
     paid_invoices = db.execute(
         select(
-            Invoice.supplier.label("supplier"),
-            Invoice.invoice_number.label("invoice_number"),
-            Invoice.issue_date.label("issue_date"),
+            Invoice.id.label("invoice_id"),
             Invoice.total.label("total"),
-            Invoice.vat.label("vat"),
-            func.max(Payment.date).label("paid_at"),
         )
         .join(InvoicePaymentLink, InvoicePaymentLink.invoice_id == Invoice.id)
         .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
@@ -84,36 +79,10 @@ def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
             Payment.date >= start,
             Payment.date < end,
         )
-        .group_by(
-            Invoice.supplier,
-            Invoice.invoice_number,
-            Invoice.issue_date,
-            Invoice.total,
-            Invoice.vat,
-        )
+        .distinct()
     ).all()
 
-    seen_keys: set[tuple[str, str, dt.date]] = set()
-    paid_invoice_expenses = Decimal("0")
-
-    for row in paid_invoices:
-        if row.paid_at and start <= row.paid_at < end:
-            key = (str(row.supplier), str(row.invoice_number), row.issue_date)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            paid_invoice_expenses += Decimal(row.total) + Decimal(row.vat)
-
-    negative_bank_transactions = db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0))
-        .where(
-            Transaction.date >= start,
-            Transaction.date < end,
-            Transaction.amount < 0,
-        )
-    ).scalar_one()
-
-    return paid_invoice_expenses + abs(Decimal(negative_bank_transactions or 0))
+    return sum((Decimal(row.total) for row in paid_invoices), Decimal("0"))
 
 
 def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]:

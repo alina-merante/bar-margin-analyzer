@@ -1,125 +1,141 @@
-# Bar Margin Analyzer — Architecture
+# BarManager — Architettura
 
-Backend and data processing service for the Bar Margin Analyzer project.
+BarManager importa dati POS e movimenti bancari, gestisce fatture e pagamenti,
+e mette a disposizione analytics via API REST e interfaccia React.
 
-## Overview
+## Stack
 
-The system ingests sales (POS) and bank transaction data, classifies expenses using rule-based categorization, and exposes financial analytics via REST APIs.
+- Backend: FastAPI, SQLAlchemy, Alembic
+- Database: PostgreSQL 16 in Docker
+- Backend standard: container Docker
+- Backend Codespaces: processo nativo in `backend/.venv`, Python 3.12
+- Frontend: React, React Router e Vite, processo nativo con Node 20
+- OCR: Tesseract con lingua italiana, Poppler, Pillow e `pdf2image`
 
-## Tech Stack
+## Runtime
 
-- Backend: FastAPI
-- Database: PostgreSQL
-- ORM: SQLAlchemy
-- Migrations: Alembic
-- Containerization: Docker Compose
+In modalità standard, `npm run dev:full` avvia PostgreSQL e API in Docker e il
+frontend nativamente con Vite.
 
-## Project Structure
+In GitHub Codespaces, `npm run dev:codespaces` avvia PostgreSQL in Docker e
+backend/frontend nativamente. Questa separazione è definita da
+[`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json), che
+configura Python 3.12, Node 20, Docker, OCR e il forwarding delle porte.
 
+Le porte principali sono `5432` per PostgreSQL, `8000` per l'API e `5173` per
+il frontend.
+
+## Struttura reale
+
+```text
 backend/
   app/
-    main.py              # FastAPI entrypoint
-    database.py          # DB session + engine
-    models.py            # SQLAlchemy models
+    main.py
+    database.py
+    models/
+      category_rule.py
+      daily_cash_closure.py
+      document.py
+      expense_category.py
+      invoice.py
+      invoice_payment_link.py
+      payment.py
+      product.py
+      sale_line.py
+      transaction.py
     routers/
-      imports.py         # CSV import endpoints
-      analytics.py       # Financial analytics
-      invoices.py        # Invoice & payment tracking
-      categories.py      # Categories and rules
+      analytics.py
+      categories.py
+      documents.py
+      finance.py
+      health.py
+      imports.py
+    services/
+      ai_invoice_parser.py
+  alembic/
+  Dockerfile
+  docker-entrypoint.sh
 
 frontend/
   src/
-    App.jsx              # Dashboard UI
-    components/          # UI components
-    styles/              # CSS
+    App.jsx
+    App.css
+    index.css
+    components/Sidebar.jsx
+    pages/
+      DashboardPage.jsx
+      InvoicesPage.jsx
+      UploadPage.jsx
 
 data/
-  pos_*.csv              # Demo POS data
-  bank_*.csv             # Demo bank data
+  pos_*.csv
+  bank_*.csv
 
+.devcontainer/devcontainer.json
 docker-compose.yml
+docker-compose.clean-bootstrap.yml
+scripts/dev-full.sh
+scripts/dev-codespaces.sh
+scripts/verify-clean-bootstrap.sh
+```
 
-## Core Concepts
+## Core concepts
 
-### Sales (POS)
+### Sales POS
 
-- Stored in SaleLine
-- Fields: date, product_id, qty, total
-- Represent revenue
+- Sono memorizzate in `SaleLine`.
+- I campi principali sono data, prodotto, quantità e totale.
+- Sono importate tramite `/imports/pos-csv`.
 
----
+### Movimenti bancari
 
-### Bank Transactions
+- Sono memorizzati in `Transaction`.
+- I campi principali sono data, descrizione, importo, controparte e categoria.
+- Le regole sono applicate durante `/imports/bank-csv`.
 
-- Stored in Transaction
-- Fields: date, description, amount, counterparty, category_id
-- Negative values = expenses
-- Positive values are ignored
+### Categorie e regole
 
----
+Le categorie definiscono i tipi di spesa e le regole associano parole chiave
+alle categorie durante l'importazione dei movimenti bancari.
 
-### Categories and Rules
+### Fatture e pagamenti
 
-- Categories define expense types (e.g. "Bevande", "Utenze")
-- Rules map keywords to categories
-
-Example:
-
-{
-  "keyword": "METRO",
-  "category_id": 1
-}
-
-Rules are applied during /imports/bank-csv.
-
----
-
-### Invoices & Payments
-
-- Invoices track supplier costs and due dates
-- Payments can be linked manually
-- Status automatically updates to paid
-
----
+Le fatture tracciano fornitore, scadenza, importi e stato. I pagamenti possono
+essere collegati manualmente alle fatture.
 
 ### Analytics
 
-Main endpoints:
+Endpoint principali:
 
-- /analytics/pnl
-- /analytics/pnl/trend
-- /analytics/overview
-- /analytics/expenses-by-category
-- /analytics/expenses-by-supplier
-- /analytics/insights
+- `/analytics/pnl`
+- `/analytics/pnl/trend`
+- `/analytics/pnl/ytd`
+- `/analytics/overview`
+- `/analytics/expenses-by-category`
+- `/analytics/expenses-by-supplier`
+- `/analytics/insights`
 
-### Business Logic
+Le breakdown per categoria e fornitore, le sezioni corrispondenti dell'overview
+e i relativi insight sono attualmente placeholder o incompleti nell'API. Gli
+endpoint esistono, ma i risultati possono essere vuoti.
 
-- Revenue = sum of SaleLine.total
-- Expenses = absolute value of negative Transaction.amount
-- Profit = revenue - expenses
+## Specifica dei costi
 
----
+La specifica desiderata dei costi e della riconciliazione è mantenuta in
+[DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md). La sua coerenza con
+l'implementazione è un punto aperto da verificare con i test funzionali e non
+viene modificata in questo aggiornamento documentale.
 
-## Data Flow
+## Avvio e clean bootstrap
 
-CSV (POS / Bank)
-      ↓
-Import API
-      ↓
-Database (PostgreSQL)
-      ↓
-Analytics layer
-      ↓
-Frontend Dashboard
+Usare `npm run dev:full` in modalità Docker standard oppure
+`npm run dev:codespaces` in GitHub Codespaces. Le migrazioni Alembic vengono
+applicate automaticamente prima dell'avvio dell'API.
 
----
+Per verificare schema, endpoint e build frontend su risorse temporanee:
 
-## Run the System
+```bash
+sh scripts/verify-clean-bootstrap.sh
+```
 
-docker compose up --build
-
-API:
-
-- http://localhost:8000
-- http://localhost:8000/docs
+API: `http://localhost:8000` e `http://localhost:8000/docs`.

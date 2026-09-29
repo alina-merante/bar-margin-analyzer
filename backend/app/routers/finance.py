@@ -1177,13 +1177,14 @@ def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Dep
 
     link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
     db.add(link)
+    db.flush()
 
     linked_total_result = db.execute(
         select(func.coalesce(func.sum(Payment.amount), 0))
         .join(InvoicePaymentLink, InvoicePaymentLink.payment_id == Payment.id)
         .where(InvoicePaymentLink.invoice_id == invoice.id)
     )
-    linked_total = Decimal(linked_total_result.scalar_one()) + Decimal(payment.amount)
+    linked_total = Decimal(linked_total_result.scalar_one())
 
     invoice.status = InvoiceStatus.paid if linked_total >= Decimal(invoice.total) else InvoiceStatus.pending
 

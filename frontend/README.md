@@ -1,16 +1,46 @@
-# React + Vite
+# BarManager frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend React del progetto BarManager, sviluppato con Vite.
 
-Currently, two official plugins are available:
+## Sviluppo
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Dalla root del repository, il modo consigliato per avviare l'intero progetto è:
 
-## React Compiler
+```bash
+npm run dev:full
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+In GitHub Codespaces usare:
 
-## Expanding the ESLint configuration
+```bash
+npm run dev:codespaces
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Per avviare solo il frontend:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run dev
+```
+
+Il server Vite ascolta sulla porta `5173` e inoltra le richieste `/api/*`
+all'API su `http://127.0.0.1:8000`.
+
+## Struttura
+
+- `src/App.jsx`: routing, caricamento dati, upload ed export del dashboard;
+- `src/pages/DashboardPage.jsx`: dashboard analytics;
+- `src/pages/InvoicesPage.jsx`: gestione fatture e pagamenti;
+- `src/pages/UploadPage.jsx`: import POS, movimenti bancari e documenti;
+- `src/components/Sidebar.jsx`: navigazione principale;
+- `src/App.css` e `src/index.css`: stile dell'applicazione.
+
+## Build e lint
+
+```bash
+npm --prefix frontend run build
+npm --prefix frontend run lint
+```
+
+Le sezioni analytics relative a categorie, fornitori e alcuni insight sono
+ancora placeholder nel backend e possono quindi apparire vuote nell'interfaccia.

@@ -19,6 +19,7 @@ from app.models import (
     Transaction,
 )
 from app.routers.analytics import monthly_pnl
+from app.routers.finance import LinkPaymentPayload, link_payment as link_payment_endpoint
 
 
 def build_session():
@@ -76,7 +77,7 @@ def link_payment(session, invoice, payment):
     session.add(InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id))
 
 
-def test_monthly_pnl_counts_only_paid_reconciled_invoices_once():
+def test_revenue_comes_from_cash_closures_and_reconciled_invoice_is_counted_once():
     with build_session() as session:
         add_cash_closure(session, Decimal("1000.00"))
         add_bank_transaction(session, Decimal("-120.00"), "Supplier A")
@@ -91,8 +92,8 @@ def test_monthly_pnl_counts_only_paid_reconciled_invoices_once():
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
         assert result["revenue"] == Decimal("1000.00")
-        assert result["expenses"] == Decimal("260.00")
-        assert result["profit"] == Decimal("740.00")
+        assert result["expenses"] == Decimal("120.00")
+        assert result["profit"] == Decimal("880.00")
 
 
 def test_unpaid_invoice_does_not_create_cost():
@@ -106,7 +107,7 @@ def test_unpaid_invoice_does_not_create_cost():
         assert result["expenses"] == Decimal("0.00")
 
 
-def test_payment_without_invoice_does_not_create_cost():
+def test_negative_bank_transaction_without_reconciliation_does_not_create_cost():
     with build_session() as session:
         add_cash_closure(session, Decimal("1000.00"))
         add_bank_transaction(session, Decimal("-120.00"), "Supplier A")
@@ -114,10 +115,10 @@ def test_payment_without_invoice_does_not_create_cost():
 
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
-        assert result["expenses"] == Decimal("120.00")
+        assert result["expenses"] == Decimal("0.00")
 
 
-def test_negative_bank_transactions_are_counted_as_expenses():
+def test_negative_bank_transaction_isolated_from_invoice_does_not_create_cost():
     with build_session() as session:
         add_cash_closure(session, Decimal("1000.00"))
         add_bank_transaction(session, Decimal("-120.00"), "Supplier A")
@@ -126,8 +127,8 @@ def test_negative_bank_transactions_are_counted_as_expenses():
 
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
-        assert result["expenses"] == Decimal("120.00")
-        assert result["profit"] == Decimal("880.00")
+        assert result["expenses"] == Decimal("0.00")
+        assert result["profit"] == Decimal("1000.00")
 
 
 def test_paid_invoice_without_link_has_no_cost():
@@ -152,6 +153,44 @@ def test_linked_payment_on_pending_invoice_has_no_cost():
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
         assert result["expenses"] == Decimal("0.00")
+
+
+def test_payment_without_invoice_does_not_create_cost():
+    with build_session() as session:
+        add_cash_closure(session, Decimal("1000.00"))
+        add_payment(session, Decimal("120.00"))
+        session.commit()
+
+        result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
+
+        assert result["expenses"] == Decimal("0.00")
+
+
+def test_invoice_total_includes_vat_and_vat_is_not_added_again():
+    with build_session() as session:
+        add_cash_closure(session, Decimal("1000.00"))
+        invoice = add_invoice(session, Decimal("122.00"), Decimal("22.00"), InvoiceStatus.paid)
+        payment = add_payment(session, Decimal("122.00"))
+        link_payment(session, invoice, payment)
+        session.commit()
+
+        result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
+
+        assert result["expenses"] == Decimal("122.00")
+
+
+def test_reconciled_invoice_and_negative_bank_transaction_count_invoice_once():
+    with build_session() as session:
+        add_cash_closure(session, Decimal("1000.00"))
+        add_bank_transaction(session, Decimal("-122.00"), "Supplier A")
+        invoice = add_invoice(session, Decimal("122.00"), Decimal("22.00"), InvoiceStatus.paid)
+        payment = add_payment(session, Decimal("122.00"))
+        link_payment(session, invoice, payment)
+        session.commit()
+
+        result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
+
+        assert result["expenses"] == Decimal("122.00")
 
 
 def test_multiple_payments_on_same_invoice_count_once():
@@ -250,7 +289,7 @@ def test_invoice_paid_in_following_month_is_counted_in_payment_month():
         assert result["expenses"] == Decimal("100.00")
 
 
-def test_duplicate_invoice_is_not_double_counted():
+def test_distinct_invoice_ids_are_counted_separately():
     with build_session() as session:
         add_cash_closure(session, Decimal("1000.00"))
         invoice_one = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending, invoice_number="INV-1")
@@ -264,4 +303,33 @@ def test_duplicate_invoice_is_not_double_counted():
 
         result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
 
-        assert result["expenses"] == Decimal("100.00")
+        assert result["expenses"] == Decimal("200.00")
+
+
+def test_link_payment_uses_real_linked_total_without_autoflush_double_count():
+    with build_session() as session:
+        invoice = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending)
+        payment = add_payment(session, Decimal("60.00"))
+        session.commit()
+
+        result = link_payment_endpoint(invoice.id, LinkPaymentPayload(payment_id=payment.id), session)
+
+        assert result["linked_total"] == 60.0
+        assert result["invoice_total"] == 100.0
+        assert result["invoice_status"] == InvoiceStatus.pending.value
+
+
+def test_link_payment_marks_invoice_paid_when_real_linked_total_reaches_total():
+    with build_session() as session:
+        invoice = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending)
+        payment_one = add_payment(session, Decimal("40.00"), reference="PAY-1")
+        payment_two = add_payment(session, Decimal("60.00"), reference="PAY-2")
+        session.commit()
+
+        first_result = link_payment_endpoint(invoice.id, LinkPaymentPayload(payment_id=payment_one.id), session)
+        second_result = link_payment_endpoint(invoice.id, LinkPaymentPayload(payment_id=payment_two.id), session)
+
+        assert first_result["linked_total"] == 40.0
+        assert first_result["invoice_status"] == InvoiceStatus.pending.value
+        assert second_result["linked_total"] == 100.0
+        assert second_result["invoice_status"] == InvoiceStatus.paid.value

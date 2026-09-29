@@ -1,348 +1,145 @@
 # Bar Margin Analyzer
 
-Initial backend scaffold for the **Bar Margin Analyzer** project.
+BarManager è un'applicazione FastAPI + React per importare dati POS e bancari,
+gestire fatture e pagamenti e visualizzare analytics finanziari.
 
-## Quick Start (Backend + Frontend)
+## Avvio rapido
 
-One command from project root:
+### Modalità Docker standard
+
+Dalla root del repository:
 
 ```bash
 npm run dev:full
 ```
 
-This command:
+Il comando installa le dipendenze frontend, avvia PostgreSQL e l'API in Docker,
+attende il controllo di salute dell'API e avvia il frontend Vite.
 
-- installs the frontend dependencies with `npm ci`;
-- starts Docker services `db` and `api` in background;
-- waits for PostgreSQL and applies `alembic upgrade head` automatically before starting the API;
-- starts frontend Vite dev server in foreground.
+### Modalità GitHub Codespaces
 
-Manual alternative, start API and database first:
-
-```bash
-docker compose up -d db api
-```
-
-The API container applies all pending Alembic migrations before Uvicorn starts.
-
-Verify backend is reachable:
+Il repository include [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json).
+Dopo la creazione del Codespace:
 
 ```bash
-curl http://localhost:8000/health
+npm run dev:codespaces
 ```
 
-Start frontend in a second terminal:
+In questa modalità PostgreSQL gira nel container Docker `db`, mentre backend e
+frontend girano come processi nativi. Il backend usa Python 3.12 e
+`backend/.venv`; il frontend usa Node 20 e Vite.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Il devcontainer configura Python 3.12, Node 20, accesso Docker, dipendenze OCR
+e dipendenze frontend. Installa Tesseract, il pacchetto lingua italiana
+`tesseract-ocr-ita`, Poppler e `python3.12-venv`.
 
-Frontend runs on Vite (usually `http://localhost:5173`, or the next free port).
+## Porte e URL
 
-Important:
+- Frontend: `http://localhost:5173`
+- API: `http://localhost:8000`
+- Health check: `http://localhost:8000/health`
+- Swagger: `http://localhost:8000/docs`
+- PostgreSQL: `localhost:5432`
 
-- The frontend proxies API calls to `http://127.0.0.1:8000`.
-- If API is not running, frontend shows `http proxy error` with `ECONNREFUSED 127.0.0.1:8000`.
+Vite inoltra le richieste `/api/*` a `http://127.0.0.1:8000`.
 
-## Stack
+## Migrazioni Alembic
 
-- **Backend:** FastAPI
-- **Database:** PostgreSQL
-- **ORM:** SQLAlchemy
-- **Migrations:** Alembic
+Le migrazioni vengono applicate automaticamente prima dell'avvio dell'API:
 
-## Run with Docker Compose
+- in Docker tramite `backend/docker-entrypoint.sh`;
+- in Codespaces tramite `scripts/dev-codespaces.sh`.
 
-```bash
-docker compose up --build
-```
+Non è necessario eseguire una migrazione manuale durante l'avvio normale.
 
-This starts both compose services:
+## Clean bootstrap
 
-- `api` (FastAPI on port `8000`)
-- `db` (PostgreSQL on port `5432`)
-
-API available at:
-
-- `http://localhost:8000`
-- `http://localhost:8000/health`
-- Swagger docs: `http://localhost:8000/docs`
-
-## Database Migrations (Alembic)
-
-Run alembic commands inside the API container:
-
-```bash
-docker compose run --rm api alembic upgrade head
-```
-
-To verify a clean database, using only a temporary Compose project, run from the repository root:
+Per verificare database vuoto, schema, endpoint API e build frontend usando
+risorse Compose temporanee:
 
 ```bash
 sh scripts/verify-clean-bootstrap.sh
 ```
 
-The verification creates a temporary PostgreSQL volume, checks all application tables and API endpoints,
-builds the frontend, and removes only its temporary resources when finished.
+Lo script crea un volume PostgreSQL temporaneo, esegue le migrazioni, verifica
+le tabelle e gli endpoint, compila il frontend e rimuove le risorse temporanee.
 
-## POS CSV Import (existing)
+## Ripresa del progetto dopo mesi
 
-Expected CSV headers:
+1. Aprire il repository in GitHub Codespaces oppure in un ambiente con Docker,
+   Node 20 e Python 3.12.
+2. Eseguire `npm run dev:codespaces` in Codespaces oppure `npm run dev:full` in
+   modalità Docker standard.
+3. Aprire `http://localhost:5173` e verificare l'API con:
+   `curl http://localhost:8000/health`.
+4. Per popolare il dashboard, seguire [README_DEMO.md](README_DEMO.md).
+5. Se un servizio non è pronto, controllare `docker compose ps`; in Codespaces
+   controllare anche `backend/.uvicorn.log`.
 
-```csv
-date,product,qty,total
-2026-09-01,Beer Pint,12,72.00
-2026-09-01,House Wine,5,30.00
-```
+Comandi utili dalla root:
 
-Endpoint example:
+- `npm run dev:api`: avvia solo PostgreSQL e API in Docker;
+- `npm run dev:stop`: arresta i container Docker API e database;
+- `npm run dev:down`: arresta e rimuove le risorse Compose.
 
-```bash
-curl -X POST "http://localhost:8000/imports/pos-csv" -F "file=@sales.csv"
-```
+## Import e API principali
 
-## Bank Transactions Import
-
-Expected CSV headers:
-
-```csv
-date,description,amount
-2026-09-01,CARD PURCHASE - Metro Cash & Carry,-124.80
-2026-09-02,BANK TRANSFER FROM EVENT ORGANIZER,850.00
-```
-
-Endpoint example:
+Import POS:
 
 ```bash
-curl -X POST "http://localhost:8000/imports/bank-csv" -F "file=@bank.csv"
+curl -X POST http://localhost:8000/imports/pos-csv \
+  -F "file=@data/pos_marzo_2026.csv"
 ```
 
-Response example:
-
-```json
-{
-  "imported_rows": 2
-}
-```
-
-## Categories and Rules
-
-Create category:
+Import movimenti bancari:
 
 ```bash
-curl -X POST "http://localhost:8000/categories" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Supplies"}'
+curl -X POST http://localhost:8000/imports/bank-csv \
+  -F "file=@data/bank_marzo_2026.csv"
 ```
 
-List categories:
+Endpoint analytics principali:
 
-```bash
-curl "http://localhost:8000/categories"
-```
+- `/analytics/pnl?month=YYYY-MM`
+- `/analytics/pnl/trend?months=6&month=YYYY-MM`
+- `/analytics/pnl/ytd?year=YYYY`
+- `/analytics/overview?month=YYYY-MM`
+- `/analytics/expenses-by-category?month=YYYY-MM`
+- `/analytics/expenses-by-supplier?month=YYYY-MM`
+- `/analytics/invoices-summary`
+- `/analytics/payments-by-method?month=YYYY-MM`
+- `/analytics/insights?month=YYYY-MM`
 
-Create rule:
+## Stato degli analytics
 
-```bash
-curl -X POST "http://localhost:8000/rules" \
-  -H "Content-Type: application/json" \
-  -d '{"keyword":"metro","category_id":1}'
-```
+Le seguenti aree sono attualmente placeholder o incomplete nell'API:
 
-List rules:
+- spese per categoria;
+- spese per fornitore;
+- sezioni categoria/fornitore dell'overview;
+- calcoli degli insight per categoria e fornitore.
 
-```bash
-curl "http://localhost:8000/rules"
-```
+Gli endpoint esistono e restituiscono la forma prevista, ma le liste dei
+risultati possono essere vuote.
 
-Rules are applied during `/imports/bank-csv` import using case-insensitive keyword matching against `description`.
+## Specifica dei costi e punto aperto
 
-## Invoice and Payment Tracking
+La specifica desiderata per costi e riconciliazione è descritta in
+[DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md). In particolare, resta
+da verificare separatamente che:
 
-### Sample payloads
+- un movimento bancario negativo isolato non generi automaticamente un costo;
+- una fattura isolata o non riconciliata non generi automaticamente un costo;
+- una fattura pagata e riconciliata venga conteggiata una sola volta;
+- fattura, movimento bancario e pagamento non producano doppio conteggio.
 
-Invoice payload:
+Questa documentazione conserva la specifica desiderata senza correggerla in
+base all'implementazione attuale. La verifica appartiene ai test funzionali
+successivi.
 
-```json
-{
-  "supplier": "Metro Cash & Carry",
-  "invoice_number": "INV-2026-091",
-  "issue_date": "2026-09-05",
-  "due_date": "2026-09-30",
-  "total": 450.00,
-  "vat": 75.00,
-  "status": "pending"
-}
-```
+## Documentazione correlata
 
-Payment payload:
-
-```json
-{
-  "date": "2026-09-20",
-  "amount": 300.00,
-  "method": "bank_transfer",
-  "counterparty": "Metro Cash & Carry",
-  "reference": "PAY-2026-09-20-01"
-}
-```
-
-### Invoice endpoints
-
-Create invoice:
-
-```bash
-curl -X POST "http://localhost:8000/invoices" \
-  -H "Content-Type: application/json" \
-  -d '{"supplier":"Metro Cash & Carry","invoice_number":"INV-2026-091","issue_date":"2026-09-05","due_date":"2026-09-30","total":450.00,"vat":75.00,"status":"pending"}'
-```
-
-List invoices:
-
-```bash
-curl "http://localhost:8000/invoices"
-```
-
-Filter invoices by status, supplier, and month:
-
-```bash
-curl "http://localhost:8000/invoices?status=pending&supplier=metro&month=2026-09"
-```
-
-### Payment endpoints
-
-Create payment:
-
-```bash
-curl -X POST "http://localhost:8000/payments" \
-  -H "Content-Type: application/json" \
-  -d '{"date":"2026-09-20","amount":300.00,"method":"bank_transfer","counterparty":"Metro Cash & Carry","reference":"PAY-2026-09-20-01"}'
-```
-
-List payments:
-
-```bash
-curl "http://localhost:8000/payments"
-```
-
-Filter payments by method, counterparty, and month:
-
-```bash
-curl "http://localhost:8000/payments?method=card&counterparty=metro&month=2026-09"
-```
-
-### Link payment to invoice
-
-Manual link endpoint:
-
-```bash
-curl -X POST "http://localhost:8000/invoices/1/link-payment" \
-  -H "Content-Type: application/json" \
-  -d '{"payment_id":1}'
-```
-
-Behavior notes:
-
-- A payment can be linked to one or more invoices.
-- Link creation is manual in this POC.
-- Invoice status is set to `paid` when linked payment totals are greater than or equal to invoice total.
-
-## Analytics Endpoints
-
-Monthly P&L summary:
-
-```bash
-curl "http://localhost:8000/analytics/pnl?month=2026-09"
-```
-
-Monthly P&L trend for the last N months (including current month):
-
-```bash
-curl "http://localhost:8000/analytics/pnl/trend?months=6"
-```
-
-Year-to-date P&L with monthly breakdown:
-
-```bash
-curl "http://localhost:8000/analytics/pnl/ytd?year=2026"
-```
-
-Combined monthly overview (defaults to current month when `month` is omitted):
-
-```bash
-curl "http://localhost:8000/analytics/overview?month=2026-09"
-```
-
-Expenses by category for month:
-
-```bash
-curl "http://localhost:8000/analytics/expenses-by-category?month=2026-09"
-```
-
-Expenses by supplier for month:
-
-```bash
-curl "http://localhost:8000/analytics/expenses-by-supplier?month=2026-09"
-```
-
-Invoice summary analytics:
-
-```bash
-curl "http://localhost:8000/analytics/invoices-summary"
-```
-
-Payments grouped by method for a month:
-
-```bash
-curl "http://localhost:8000/analytics/payments-by-method?month=2026-09"
-```
-
-Automated financial insights for a month:
-
-```bash
-curl "http://localhost:8000/analytics/insights?month=2026-09"
-```
-
-Behavior notes:
-
-- `month` format is `YYYY-MM`.
-- `year` format is `YYYY`.
-- Revenue is the sum of daily cash closure totals.
-- Costs are counted only for invoices that are reconciled with a payment and marked as `paid`.
-- A standalone bank transaction does not create a cost by itself.
-- A standalone invoice does not create a cost until it is paid.
-- If both an invoice and its reconciled bank movement exist, the cost is counted once.
-- Delta fields in `/analytics/pnl` are calculated as current month minus previous month.
-- `/analytics/insights` compares current month to previous month and returns:
-  - `metrics`: revenue, expenses, profit, and percentage changes (rounded to 2 decimals).
-  - `insights`: text insights for significant changes in revenue/expenses/profit (>5%), top expense category change (>10%), and top supplier expense share.
-
-## Troubleshooting
-
-### Frontend error: `ECONNREFUSED 127.0.0.1:8000`
-
-Cause: API container is down or still booting.
-
-Fix:
-
-```bash
-docker compose up -d api
-docker compose ps
-curl http://localhost:8000/health
-```
-
-If health is OK, refresh the frontend page.
-
-Useful npm scripts from project root:
-
-- `npm run dev:api` to start only backend services (`db` + `api`).
-- `npm run dev:full` to start backend services and frontend dev server.
-- `npm run dev:stop` to stop running `api` and `db` containers.
-- `npm run dev:down` to stop and remove compose resources.
-
-Legacy sales analytics remain available:
-
-- `GET /analytics/top-products?month=YYYY-MM`
-- `GET /analytics/bottom-products?month=YYYY-MM`
+- [README_DEMO.md](README_DEMO.md): caricamento dati demo e controlli del dashboard;
+- [README_ARCHITECTURE.md](README_ARCHITECTURE.md): stack e struttura reale;
+- [DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md): formule e specifica dei costi;
+- [frontend/README.md](frontend/README.md): sviluppo e struttura del frontend.
