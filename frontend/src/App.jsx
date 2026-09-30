@@ -18,6 +18,13 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function getInvoiceRemainingAmount(invoice = {}) {
+  const total = Number(invoice.total) || 0;
+  const linkedAmount = Number(invoice.linked_amount) || 0;
+  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
+  return Math.max(0, Number(remainingAmount) || 0);
+}
+
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
     style: "currency",
@@ -311,7 +318,10 @@ export default function App() {
     const paidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
     const unpaidInvoices = currentMonthInvoices.filter((invoice) => invoice.status !== "paid");
     const paidTotal = paidInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0);
-    const unpaidTotal = unpaidInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0);
+    const unpaidTotal = unpaidInvoices.reduce(
+      (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
+      0
+    );
     const monthInvoiceTotal = currentMonthInvoices.reduce(
       (sum, invoice) => sum + (Number(invoice.total) || 0),
       0
@@ -442,7 +452,9 @@ export default function App() {
             currency: "EUR",
             minimumFractionDigits: 0,
             maximumFractionDigits: 0,
-          }).format(Number(invoice.total) || 0)
+          }).format(
+            isPaid ? Number(invoice.total) || 0 : getInvoiceRemainingAmount(invoice)
+          )
         )}</td><td style="text-align:center"><span class="fbadge ${tone}">${
           tone === "paid" ? "Pagata" : tone === "over" ? "Scaduta" : "In scadenza"
         }</span></td></tr>`;
@@ -1519,7 +1531,7 @@ const overdueInvoices = useMemo(() => {
 const overdueInvoicesAmount = useMemo(
   () =>
     overdueInvoices.reduce(
-      (sum, invoice) => sum + (Number(invoice.total) || 0),
+      (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
       0
     ),
   [overdueInvoices]
@@ -1528,7 +1540,7 @@ const overdueInvoicesAmount = useMemo(
   const pendingInvoicesAmount = useMemo(
     () =>
       pendingInvoices.reduce(
-        (sum, invoice) => sum + (Number(invoice.total) || 0),
+        (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
         0
       ),
     [pendingInvoices]
@@ -1590,9 +1602,9 @@ const overdueInvoicesAmount = useMemo(
                 pendingInvoicesAmount={pendingInvoicesAmount}
                 invoices={invoices}
                 latestPosUploadDate={latestPosUploadDate}
-                latestBankUploadDate={latestBankUploadDate}
                 previousOverdueInvoices={overdueInvoices}
 previousOverdueInvoicesAmount={overdueInvoicesAmount}
+                latestBankTransactionDate={overview?.latest_bank_transaction_date ?? null}
               />
             }
           />

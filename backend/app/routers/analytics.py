@@ -15,6 +15,7 @@ from app.models import (
     Payment,
     Product,
     SaleLine,
+    Transaction,
 )
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -389,6 +390,7 @@ def overview(
 
     latest_cash_closure_date = db.scalar(select(func.max(DailyCashClosure.date)))
     latest_cash_closure_uploaded_at = db.scalar(select(func.max(DailyCashClosure.created_at)))
+    latest_bank_transaction_date = db.scalar(select(func.max(Transaction.date)))
 
     return {
         "top_products_by_quantity": [
@@ -412,6 +414,9 @@ def overview(
         "latest_cash_closure_date": latest_cash_closure_date.isoformat() if latest_cash_closure_date else None,
         "latest_cash_closure_uploaded_at": latest_cash_closure_uploaded_at.isoformat()
         if latest_cash_closure_uploaded_at
+        else None,
+        "latest_bank_transaction_date": latest_bank_transaction_date.isoformat()
+        if latest_bank_transaction_date
         else None,
     }
 

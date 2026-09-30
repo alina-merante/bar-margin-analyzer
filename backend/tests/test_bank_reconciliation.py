@@ -400,6 +400,30 @@ def test_invoice_summary_counts_only_remaining_amount_after_partial_payment(db):
     assert summary["pending_invoices"] == 1
 
 
+@pytest.mark.parametrize(
+    ("payment_amount", "expected_pending_amount", "expected_pending_invoices", "expected_expenses"),
+    [
+        (None, 500.0, 1, Decimal("0.00")),
+        ("-200.00", 300.0, 1, Decimal("0.00")),
+        ("-500.00", 0.0, 0, Decimal("500.00")),
+    ],
+)
+def test_invoice_summary_and_pnl_follow_partial_payment_residual(
+    db, payment_amount, expected_pending_amount, expected_pending_invoices, expected_expenses
+):
+    invoice = add_invoice(db, total="500.00")
+    if payment_amount is not None:
+        transaction = add_transaction(db, amount=payment_amount)
+        reconcile(db, invoice, transaction)
+
+    summary = invoices_summary(db)
+    pnl = monthly_pnl(db, dt.date(2026, 7, 1), dt.date(2026, 8, 1))
+
+    assert summary["pending_amount"] == expected_pending_amount
+    assert summary["pending_invoices"] == expected_pending_invoices
+    assert pnl["expenses"] == expected_expenses
+
+
 def test_pnl_counts_invoice_once_in_month_partial_and_final_payment_happen(db):
     invoice = add_invoice(db)
     first = add_transaction(db, amount="-200.00", date=dt.date(2026, 7, 3))

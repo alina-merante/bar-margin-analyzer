@@ -10,6 +10,13 @@ function formatEuro(value) {
   }).format(Number(value) || 0);
 }
 
+function getInvoiceRemainingAmount(invoice = {}) {
+  const total = Number(invoice.total) || 0;
+  const linkedAmount = Number(invoice.linked_amount) || 0;
+  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
+  return Math.max(0, Number(remainingAmount) || 0);
+}
+
 function formatMonthLabel(month) {
   if (!month) return "-";
   const [year, monthNum] = month.split("-").map(Number);
@@ -36,6 +43,19 @@ function formatShortDate(value) {
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
     month: "long",
+  }).format(date);
+}
+
+function formatDateDMY(value) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   }).format(date);
 }
 
@@ -114,7 +134,7 @@ export default function DashboardPage({
   previousOverdueInvoicesAmount = 0,
   invoices = [],
   latestPosUploadDate = null,
-  latestBankUploadDate = null,
+  latestBankTransactionDate = null,
 }) {
   const monthLabel = formatMonthLabel(month);
   const hasPreviousOverdueInvoices = previousOverdueInvoices.length > 0;
@@ -127,7 +147,7 @@ export default function DashboardPage({
   const overdueInvoices = currentMonthInvoices.filter(isOverdue);
   const dueInvoices = currentMonthInvoices.filter(isDue);
   const overdueInvoicesAmount = overdueInvoices.reduce(
-  (sum, invoice) => sum + (Number(invoice.total) || 0),
+  (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
   0
 );
 
@@ -173,14 +193,14 @@ export default function DashboardPage({
     },
     {
       icon: "🏦",
-      badge: daysAgoLabel(latestBankUploadDate),
+      badge: daysAgoLabel(latestBankTransactionDate),
       title: "Movimenti bancari",
-      text: latestBankUploadDate
-        ? `Ultimo aggiornamento il ${formatShortDate(latestBankUploadDate)}`
-        : "Movimenti bancari non ancora caricati",
-      action: latestBankUploadDate ? "Aggiorna" : "Carica ora",
+      text: latestBankTransactionDate
+        ? `Ultimo movimento registrato il ${formatDateDMY(latestBankTransactionDate)}`
+        : "Nessun movimento bancario registrato",
+      action: latestBankTransactionDate ? "Aggiorna" : "Carica ora",
       to: "/upload",
-      tone: getReminderTone(latestBankUploadDate, "warning"),
+      tone: getReminderTone(latestBankTransactionDate, "warning"),
     },
     {
   icon: "🧾",
@@ -202,7 +222,7 @@ export default function DashboardPage({
       badge: firstDueInvoice ? "TRA POCO" : "OK",
       title: firstDueInvoice?.supplier || "Prossime scadenze",
       text: firstDueInvoice
-        ? `${formatEuro(firstDueInvoice.total)} · scade il ${formatShortDate(
+        ? `${formatEuro(getInvoiceRemainingAmount(firstDueInvoice))} · scade il ${formatShortDate(
             firstDueInvoice.due_date
           )}`
         : "Nessuna scadenza aperta.",
@@ -463,7 +483,7 @@ export default function DashboardPage({
                       </div>
 
                       <div className="invoice-critical-amount">
-                        {formatEuro(invoice.total)}
+                        {formatEuro(getInvoiceRemainingAmount(invoice))}
                       </div>
                     </div>
                   );

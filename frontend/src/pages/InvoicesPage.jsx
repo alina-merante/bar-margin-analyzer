@@ -11,6 +11,13 @@ function formatEuro(value) {
   }).format(Number(value) || 0);
 }
 
+function getInvoiceRemainingAmount(invoice = {}) {
+  const total = Number(invoice.total) || 0;
+  const linkedAmount = Number(invoice.linked_amount) || 0;
+  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
+  return Math.max(0, Number(remainingAmount) || 0);
+}
+
 function formatDate(value) {
   if (!value) return "-";
 
@@ -518,17 +525,17 @@ useEffect(() => {
   );
 
   const monthDueAmount = monthDueInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
     0
   );
 
   const monthOverdueAmount = monthOverdueInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
     0
   );
 
   const yearOverdueTotal = yearOverdueInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
     0
   );
 
@@ -619,12 +626,12 @@ const totalAmount = invoicesForView.reduce(
   );
 
   const dueAmount = dueInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
     0
   );
 
   const overdueAmount = overdueInvoices.reduce(
-    (sum, invoice) => sum + (Number(invoice.total) || 0),
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
     0
   );
 

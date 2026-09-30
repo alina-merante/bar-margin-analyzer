@@ -14,7 +14,82 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 from app.database import Base
 from app.models import DailyCashClosure, Document, InvoicePaymentLink, Payment, Transaction
 from app.routers import documents as documents_router, imports as imports_router
-from app.routers.analytics import monthly_pnl
+from app.routers.analytics import monthly_pnl, overview
+
+
+
+def test_dashboard_bank_reminder_uses_latest_transaction_date(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test_bank_reminder.db'}")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        session.add_all(
+            [
+                Transaction(
+                    date=dt.date(2026, 7, 10),
+                    description="Older bank movement",
+                    amount=Decimal("-25.00"),
+                    counterparty="Supplier A",
+                ),
+                Transaction(
+                    date=dt.date(2026, 7, 15),
+                    description="Latest bank movement",
+                    amount=Decimal("-200.00"),
+                    counterparty="Supplier B",
+                ),
+            ]
+        )
+        session.commit()
+
+        result = overview(month="2026-07", db=session)
+
+    engine.dispose()
+    assert result["latest_bank_transaction_date"] == "2026-07-15"
+
+
+def test_uploading_old_bank_csv_does_not_advance_latest_transaction_date(tmp_path):
+    bank_csv = (
+        b"date,description,amount\n"
+        b"2026-07-10,Bank transfer - Supplier A,-25.00\n"
+        b"2026-07-15,SEPA transfer - Supplier B,-200.00\n"
+    )
+
+    with tempfile.TemporaryDirectory(dir=tmp_path) as temp_dir:
+        engine = create_engine(f"sqlite:///{temp_dir}/test_bank_upload_reminder.db")
+        Base.metadata.create_all(engine)
+        old_cwd = os.getcwd()
+        os.chdir(temp_dir)
+
+        try:
+            with Session(engine) as session:
+                imports_router.import_bank_csv(
+                    UploadFile(
+                        file=BytesIO(bank_csv),
+                        filename="07_movimento_parziale_bevande_2026-07.csv",
+                    ),
+                    session,
+                )
+                before_upload = overview(month="2026-07", db=session)
+                document = __import__("asyncio").run(
+                    documents_router.upload_document(
+                        file=UploadFile(
+                            file=BytesIO(bank_csv),
+                            filename="07_movimento_parziale_bevande_2026-07.csv",
+                        ),
+                        month="2026-09",
+                        section="bank",
+                        db=session,
+                    )
+                )
+                after_upload = overview(month="2026-07", db=session)
+                uploaded_at = dt.datetime.fromisoformat(document["created_at"])
+
+                assert uploaded_at.date() == dt.datetime.now(dt.UTC).date()
+                assert before_upload["latest_bank_transaction_date"] == "2026-07-15"
+                assert after_upload["latest_bank_transaction_date"] == "2026-07-15"
+        finally:
+            os.chdir(old_cwd)
+            engine.dispose()
 
 
 def test_bank_csv_document_month_uses_single_transaction_month_not_selected_month():
