@@ -1,15 +1,18 @@
 import csv
 import datetime as dt
+import os
 import re
 from decimal import Decimal
 from io import StringIO
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import CategoryRule, Product, SaleLine, Transaction
+from app.models import CategoryRule, Document, Product, SaleLine, Transaction
+from app.routers.documents import create_bank_document
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -78,12 +81,60 @@ def extract_counterparty(description: str) -> str:
 
 
 @router.post("/bank-csv")
-def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict[str, int]:
+def import_bank_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    document_id: Annotated[int | None, Form()] = None,
+    month: Annotated[str | None, Form()] = None,
+) -> dict[str, int]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file")
 
-    content = file.file.read().decode("utf-8-sig")
-    reader = csv.DictReader(StringIO(content))
+    created_paths: list[str] = []
+
+    try:
+        if document_id is not None:
+            if month:
+                raise HTTPException(
+                    status_code=400,
+                    detail="month cannot be combined with document_id",
+                )
+            document = db.get(Document, document_id)
+            if document is None:
+                raise HTTPException(status_code=404, detail="bank document not found")
+            if document.section != "bank":
+                raise HTTPException(status_code=400, detail="document must be a bank document")
+
+        content = file.file.read()
+        rows = parse_bank_csv(file.filename, content)
+
+        if month:
+            document, created_paths = create_bank_document(
+                file.filename,
+                content,
+                month,
+                db,
+            )
+            document_id = document.id
+
+        result = import_bank_transactions(rows, db, document_id)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        for path in created_paths:
+            if os.path.exists(path):
+                os.remove(path)
+        raise
+
+
+def parse_bank_csv(filename: str, content: bytes) -> list[tuple[dt.date, str, Decimal]]:
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
+
+    reader = csv.DictReader(StringIO(text))
     required_headers = {"date", "description", "amount"}
 
     if not reader.fieldnames or not required_headers.issubset({name.strip() for name in reader.fieldnames}):
@@ -92,10 +143,7 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
             detail="CSV must contain required headers: date, description, amount",
         )
 
-    rules = db.scalars(select(CategoryRule)).all()
-    imported_rows = 0
-    skipped_rows = 0
-
+    rows = []
     for idx, row in enumerate(reader, start=2):
         try:
             date = dt.date.fromisoformat(row["date"].strip())
@@ -106,7 +154,21 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
 
         if not description:
             raise HTTPException(status_code=400, detail=f"description is required at line {idx}")
+        rows.append((date, description, amount))
 
+    return rows
+
+
+def import_bank_transactions(
+    rows: list[tuple[dt.date, str, Decimal]],
+    db: Session,
+    document_id: int | None,
+) -> dict[str, int]:
+    rules = db.scalars(select(CategoryRule)).all()
+    imported_rows = 0
+    skipped_rows = 0
+
+    for date, description, amount in rows:
         category_id = None
         lower_description = description.lower()
         for rule in rules:
@@ -115,7 +177,6 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
                 break
 
         counterparty = extract_counterparty(description)
-
         existing_transaction = db.scalar(
             select(Transaction.id).where(
                 Transaction.date == date,
@@ -129,15 +190,16 @@ def import_bank_csv(file: UploadFile = File(...), db: Session = Depends(get_db))
             skipped_rows += 1
             continue
 
-        transaction = Transaction(
-            date=date,
-            description=description,
-            amount=amount,
-            counterparty=counterparty,
-            category_id=category_id,
+        db.add(
+            Transaction(
+                date=date,
+                description=description,
+                amount=amount,
+                counterparty=counterparty,
+                document_id=document_id,
+                category_id=category_id,
+            )
         )
-        db.add(transaction)
         imported_rows += 1
 
-    db.commit()
     return {"imported_rows": imported_rows, "skipped_rows": skipped_rows}

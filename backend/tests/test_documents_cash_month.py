@@ -6,6 +6,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from fastapi import HTTPException, UploadFile
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -110,31 +111,6 @@ def test_bank_csv_document_month_uses_single_transaction_month_not_selected_mont
 
         try:
             with Session(engine) as session:
-                first_import = imports_router.import_bank_csv(
-                    UploadFile(
-                        file=BytesIO(bank_csv),
-                        filename="05_movimenti_bancari_2026-07.csv",
-                    ),
-                    session,
-                )
-                duplicate_import = imports_router.import_bank_csv(
-                    UploadFile(
-                        file=BytesIO(bank_csv),
-                        filename="05_movimenti_bancari_2026-07.csv",
-                    ),
-                    session,
-                )
-
-                assert first_import == {"imported_rows": 5, "skipped_rows": 0}
-                assert duplicate_import == {"imported_rows": 0, "skipped_rows": 5}
-
-                transactions = session.scalars(
-                    select(Transaction).order_by(Transaction.id)
-                ).all()
-                assert len(transactions) == 5
-                assert transactions[0].counterparty == "Torrefazione Italiana S.p.A."
-                assert transactions[0].amount == Decimal("-420.00")
-
                 document = __import__("asyncio").run(
                     documents_router.upload_document(
                         file=UploadFile(
@@ -146,6 +122,36 @@ def test_bank_csv_document_month_uses_single_transaction_month_not_selected_mont
                         db=session,
                     )
                 )
+
+                first_import = imports_router.import_bank_csv(
+                    UploadFile(
+                        file=BytesIO(bank_csv),
+                        filename="05_movimenti_bancari_2026-07.csv",
+                    ),
+                    document_id=document["id"],
+                    db=session,
+                )
+                duplicate_import = imports_router.import_bank_csv(
+                    UploadFile(
+                        file=BytesIO(bank_csv),
+                        filename="05_movimenti_bancari_2026-07.csv",
+                    ),
+                    document_id=document["id"],
+                    db=session,
+                )
+
+                assert first_import == {"imported_rows": 5, "skipped_rows": 0}
+                assert duplicate_import == {"imported_rows": 0, "skipped_rows": 5}
+
+                transactions = session.scalars(
+                    select(Transaction).order_by(Transaction.id)
+                ).all()
+                assert len(transactions) == 5
+                assert {transaction.document_id for transaction in transactions} == {
+                    document["id"]
+                }
+                assert transactions[0].counterparty == "Torrefazione Italiana S.p.A."
+                assert transactions[0].amount == Decimal("-420.00")
 
                 assert document["month"] == "2026-07"
                 assert len(session.scalars(select(Transaction)).all()) == 5
@@ -160,6 +166,122 @@ def test_bank_csv_document_month_uses_single_transaction_month_not_selected_mont
                 assert pnl["expenses"] == Decimal("0.00")
         finally:
             os.chdir(old_cwd)
+
+
+def test_atomic_bank_import_creates_linked_document_and_transaction(bank_document_db, tmp_path):
+    content = b"date,description,amount\n2026-07-18,Commissioni bancarie luglio,-5.00\n"
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+
+    try:
+        result = imports_router.import_bank_csv(
+            UploadFile(file=BytesIO(content), filename="atomic_bank.csv"),
+            db=bank_document_db,
+            month="2026-07",
+        )
+
+        document = bank_document_db.scalar(select(Document))
+        transaction = bank_document_db.scalar(select(Transaction))
+
+        assert result == {"imported_rows": 1, "skipped_rows": 0}
+        assert document is not None
+        assert document.original_filename == "atomic_bank.csv"
+        assert document.section == "bank"
+        assert transaction is not None
+        assert transaction.date == dt.date(2026, 7, 18)
+        assert transaction.description == "Commissioni bancarie luglio"
+        assert transaction.amount == Decimal("-5.00")
+        assert transaction.document_id == document.id
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_invalid_atomic_bank_import_leaves_no_document_or_transactions(
+    bank_document_db, tmp_path
+):
+    content = (
+        b"date,description,amount\n"
+        b"2026-07-18,Valid movement,-5.00\n"
+        b"not-a-date,Invalid movement,-2.00\n"
+    )
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+
+    try:
+        with pytest.raises(HTTPException):
+            imports_router.import_bank_csv(
+                UploadFile(file=BytesIO(content), filename="invalid_bank.csv"),
+                db=bank_document_db,
+                month="2026-07",
+            )
+
+        assert bank_document_db.scalars(select(Document)).all() == []
+        assert bank_document_db.scalars(select(Transaction)).all() == []
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_atomic_bank_import_rolls_back_partial_transactions_and_document(
+    bank_document_db, tmp_path, monkeypatch
+):
+    content = (
+        b"date,description,amount\n"
+        b"2026-07-18,First movement,-5.00\n"
+        b"2026-07-19,Second movement,-2.00\n"
+    )
+    original_import = imports_router.import_bank_transactions
+
+    def fail_after_first_row(rows, db, document_id):
+        original_import(rows[:1], db, document_id)
+        raise RuntimeError("simulated bank import failure")
+
+    monkeypatch.setattr(imports_router, "import_bank_transactions", fail_after_first_row)
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+
+    try:
+        with pytest.raises(RuntimeError, match="simulated bank import failure"):
+            imports_router.import_bank_csv(
+                UploadFile(file=BytesIO(content), filename="failed_bank.csv"),
+                db=bank_document_db,
+                month="2026-07",
+            )
+
+        assert bank_document_db.scalars(select(Document)).all() == []
+        assert bank_document_db.scalars(select(Transaction)).all() == []
+        assert not list((tmp_path / "uploads" / "documents").glob("*"))
+        assert not list((tmp_path / "uploads" / "previews").glob("*"))
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_atomic_bank_import_keeps_transaction_deduplication(bank_document_db, tmp_path):
+    content = b"date,description,amount\n2026-07-18,Commissioni bancarie luglio,-5.00\n"
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+
+    try:
+        first_result = imports_router.import_bank_csv(
+            UploadFile(file=BytesIO(content), filename="first_bank.csv"),
+            db=bank_document_db,
+            month="2026-07",
+        )
+        original_transaction = bank_document_db.scalar(select(Transaction))
+        original_document_id = original_transaction.document_id
+
+        second_result = imports_router.import_bank_csv(
+            UploadFile(file=BytesIO(content), filename="reimport_bank.csv"),
+            db=bank_document_db,
+            month="2026-07",
+        )
+
+        transactions = bank_document_db.scalars(select(Transaction)).all()
+        assert first_result == {"imported_rows": 1, "skipped_rows": 0}
+        assert second_result == {"imported_rows": 0, "skipped_rows": 1}
+        assert len(transactions) == 1
+        assert transactions[0].document_id == original_document_id
+    finally:
+        os.chdir(old_cwd)
 
 
 def test_mixed_month_bank_csv_keeps_selected_document_month():

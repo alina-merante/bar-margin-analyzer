@@ -158,6 +158,54 @@ def single_month_from_bank_csv(content: bytes) -> str | None:
 
     return next(iter(months)) if len(months) == 1 else None
 
+
+def create_bank_document(
+    original_filename: str,
+    content: bytes,
+    month: str,
+    db: Session,
+) -> tuple[Document, list[str]]:
+    document_month = single_month_from_bank_csv(content) or month
+    stored_filename = f"{uuid.uuid4()}.csv"
+    stored_stem = stored_filename.rsplit(".", 1)[0]
+    file_path = os.path.join("uploads", "documents", stored_filename)
+    preview_path = os.path.join("uploads", "previews", f"{stored_stem}.png")
+    created_paths = [file_path, preview_path]
+
+    try:
+        os.makedirs("uploads/documents", exist_ok=True)
+        os.makedirs("uploads/previews", exist_ok=True)
+        with open(file_path, "wb") as output:
+            output.write(content)
+
+        preview_url = create_text_preview_image(
+            original_filename=original_filename,
+            content=content,
+            extension="csv",
+            stored_stem=stored_stem,
+        )
+        category, result = classify_document(original_filename)
+        document = Document(
+            month=document_month,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            document_type="CSV",
+            category=category,
+            result=result,
+            file_url=f"/uploads/documents/{stored_filename}",
+            preview_url=preview_url or f"/uploads/documents/{stored_filename}",
+            status="Elaborato",
+            section="bank",
+        )
+        db.add(document)
+        db.flush()
+        return document, created_paths
+    except Exception:
+        for path in created_paths:
+            if os.path.exists(path):
+                os.remove(path)
+        raise
+
 def ocr_image(image: Image.Image) -> str:
     image = image.convert("L")
 

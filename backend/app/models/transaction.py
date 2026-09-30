@@ -15,6 +15,9 @@ class Transaction(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     counterparty: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("expense_categories.id", ondelete="SET NULL"), nullable=True, index=True
     )
