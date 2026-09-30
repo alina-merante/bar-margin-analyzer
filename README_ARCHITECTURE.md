@@ -92,6 +92,8 @@ scripts/verify-clean-bootstrap.sh
 - Sono memorizzati in `Transaction`.
 - I campi principali sono data, descrizione, importo, controparte e categoria.
 - Le regole sono applicate durante `/imports/bank-csv`.
+- L'import crea movimenti `Transaction`; non crea automaticamente `Payment` e
+  non produce costi nel P&L.
 
 ### Categorie e regole
 
@@ -100,8 +102,40 @@ alle categorie durante l'importazione dei movimenti bancari.
 
 ### Fatture e pagamenti
 
-Le fatture tracciano fornitore, scadenza, importi e stato. I pagamenti possono
-essere collegati manualmente alle fatture.
+Le fatture tracciano fornitore, scadenza, importi e stato. La riconciliazione
+bancaria segue il flusso:
+
+`Transaction → Payment → InvoicePaymentLink → Invoice`
+
+- `Payment.transaction_id` è una FK nullable e UNIQUE verso `Transaction.id`;
+  NULL mantiene possibili i Payment manuali e una Transaction può alimentare al
+  massimo un Payment.
+- `InvoicePaymentLink.payment_id` è UNIQUE: un Payment può essere collegato a
+  una sola Invoice. Una Invoice può invece avere più Payment per i pagamenti
+  parziali.
+- `ON DELETE RESTRICT` impedisce di cancellare una Transaction già usata da un
+  Payment. Le fatture con almeno un pagamento collegato non possono essere
+  eliminate.
+- Il sistema non trasforma automaticamente una Transaction in costo o
+  pagamento. La ricerca candidati è read-only; l'utente deve confermare
+  l'abbinamento.
+- La riconciliazione confermata crea Payment e link in un'unica transazione,
+  aggiorna lo stato della fattura e rifiuta Transaction positive, overpayment e
+  riuso di movimenti o pagamenti.
+- Il metodo viene derivato dai termini espliciti nella descrizione o nella
+  controparte: SEPA, bonifico o transfer indicano `bank_transfer`; card/carta
+  indica `card`. Per movimenti bancari non classificabili il fallback è
+  `bank_transfer`.
+
+Endpoint di riconciliazione:
+
+- `GET /invoices/{invoice_id}/transaction-candidates`: propone candidati senza
+  creare Payment o link;
+- `POST /invoices/{invoice_id}/reconcile-transaction`: riconcilia il movimento
+  indicato solo dopo la conferma dell'utente.
+
+Un Payment manuale mantiene `transaction_id = NULL`, anche dopo essere stato
+collegato a una fattura tramite il flusso manuale esistente.
 
 ### Analytics
 
@@ -121,10 +155,10 @@ endpoint esistono, ma i risultati possono essere vuoti.
 
 ## Specifica dei costi
 
-La specifica desiderata dei costi e della riconciliazione è mantenuta in
-[DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md). La sua coerenza con
-l'implementazione è un punto aperto da verificare con i test funzionali e non
-viene modificata in questo aggiornamento documentale.
+Il P&L include una fattura una sola volta, per `Invoice.total`, nel mese del
+pagamento che completa il saldo. I pagamenti parziali non generano costi finché
+la fattura resta pending. "Da pagare" somma i residui delle fatture pending.
+Formule ed esempi sono in [DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md).
 
 ## Avvio e clean bootstrap
 

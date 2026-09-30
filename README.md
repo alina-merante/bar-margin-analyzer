@@ -109,6 +109,8 @@ Endpoint analytics principali:
 - `/analytics/invoices-summary`
 - `/analytics/payments-by-method?month=YYYY-MM`
 - `/analytics/insights?month=YYYY-MM`
+- `/invoices/{invoice_id}/transaction-candidates`
+- `/invoices/{invoice_id}/reconcile-transaction`
 
 ## Stato degli analytics
 
@@ -122,20 +124,24 @@ Le seguenti aree sono attualmente placeholder o incomplete nell'API:
 Gli endpoint esistono e restituiscono la forma prevista, ma le liste dei
 risultati possono essere vuote.
 
-## Specifica dei costi e punto aperto
+## Costi e riconciliazione verificati
 
-La specifica desiderata per costi e riconciliazione è descritta in
-[DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md). In particolare, resta
-da verificare separatamente che:
+I test backend verificano che:
 
-- un movimento bancario negativo isolato non generi automaticamente un costo;
-- una fattura isolata o non riconciliata non generi automaticamente un costo;
-- una fattura pagata e riconciliata venga conteggiata una sola volta;
-- fattura, movimento bancario e pagamento non producano doppio conteggio.
+- una fattura non pagata è esclusa dal P&L e il costo viene contato una sola
+   volta;
+- una Transaction bancaria negativa isolata non genera un costo;
+- i pagamenti parziali mantengono il residuo e non generano costo prima del
+   saldo;
+- il costo intero viene attribuito al mese del pagamento che completa il saldo;
+- overpayment, riuso della Transaction e riuso del Payment tra fatture vengono
+   rifiutati;
+- una fattura con pagamenti riconciliati non può essere eliminata.
 
-Questa documentazione conserva la specifica desiderata senza correggerla in
-base all'implementazione attuale. La verifica appartiene ai test funzionali
-successivi.
+La riconciliazione bancaria non è automatica: BarManager propone movimenti
+candidati in sola lettura e crea il pagamento solo dopo conferma dell'utente.
+Le formule e gli esempi P&L sono descritti in
+[DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md).
 
 ## Documentazione correlata
 

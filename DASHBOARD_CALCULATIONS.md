@@ -21,15 +21,20 @@ queste condizioni:
 
 1. `Invoice.status` è `paid`;
 2. esiste almeno un `InvoicePaymentLink` per la fattura;
-3. almeno uno dei pagamenti collegati ha una data rilevante nel periodo
-   selezionato.
+3. la somma dei pagamenti collegati raggiunge `Invoice.total`.
 
 Per ogni fattura valida:
 
 - il costo è `Invoice.total`;
 - la fattura viene conteggiata una sola volta tramite `Invoice.id`;
-- più link o più pagamenti sulla stessa fattura non duplicano il costo;
-- un overpayment non aumenta il costo oltre `Invoice.total`.
+- il costo viene attribuito al mese della data del pagamento che completa il
+  saldo; nell'implementazione tale data è la più recente tra i `Payment` collegati;
+- gli acconti non generano costi finché la fattura non è completamente pagata;
+- un overpayment viene rifiutato dagli endpoint e non può aumentare il costo
+  oltre `Invoice.total`.
+
+Esempio: per una fattura da 420 €, un acconto di 200 € a luglio e il saldo di
+220 € ad agosto, luglio registra 0 € di costo e agosto registra 420 €.
 
 `Invoice.total` rappresenta il totale finale/lordo del documento, comprensivo di
 IVA quando applicabile. `Invoice.vat` rappresenta la quota IVA già contenuta
@@ -102,6 +107,14 @@ Valori mostrati:
 - totale importo in sospeso;
 - totale importo pagato.
 
+L'importo "Da pagare" considera il residuo di ogni fattura pending:
+
+`remaining_amount = max(0, Invoice.total - linked_amount)`
+
+`linked_amount` è la somma dei `Payment.amount` collegati tramite
+`InvoicePaymentLink`. Il totale pending è la somma dei residui, non dei totali
+lordi delle fatture.
+
 ## 9. Pagamenti per metodo
 
 Questa sezione raggruppa i pagamenti per metodo nel mese selezionato.
@@ -111,8 +124,13 @@ Questa sezione raggruppa i pagamenti per metodo nel mese selezionato.
 - Questa aggregazione descrittiva non aggiunge automaticamente i pagamenti agli
   expenses del P&L.
 
-## 10. Problema fuori scope
+## 10. Vincoli di riconciliazione
 
-Il modello attuale consente che lo stesso `Payment` venga collegato a fatture
-diverse. Questo problema non viene risolto dal contratto P&L corrente e resta
-fuori scope per questa modifica.
+- Una `Transaction` può essere associata al massimo a un `Payment` tramite
+  `Payment.transaction_id`, nullable e UNIQUE.
+- Un `Payment` può essere collegato a una sola `Invoice`; il vincolo UNIQUE su
+  `InvoicePaymentLink.payment_id` impedisce il riuso.
+- Una fattura può avere più `Payment`, così da rappresentare pagamenti parziali.
+- Una `Transaction` bancaria negativa isolata non genera un costo. I candidati
+  vengono proposti in sola lettura e diventano pagamenti solo dopo conferma
+  esplicita dell'utente.
