@@ -191,6 +191,17 @@ async function fetchJsonOrThrow(url) {
   return response.json();
 }
 
+async function responseJsonOrThrow(response) {
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const detail = payload?.detail;
+    throw new Error(typeof detail === "string" ? detail : `Errore API (${response.status})`);
+  }
+
+  return payload;
+}
+
 export default function App() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [loading, setLoading] = useState(true);
@@ -216,6 +227,7 @@ export default function App() {
   const [invoiceUploadError, setInvoiceUploadError] = useState("");
   const [invoiceUploading, setInvoiceUploading] = useState(false);
   const [invoiceDeleteError, setInvoiceDeleteError] = useState("");
+  const [invoiceReconciliationMessage, setInvoiceReconciliationMessage] = useState("");
 
   const [documents, setDocuments] = useState([]);
 
@@ -1289,6 +1301,34 @@ export default function App() {
     }
   }
 
+  async function handleLoadTransactionCandidates(invoiceId) {
+    setInvoiceReconciliationMessage("");
+    const response = await fetch(`/api/invoices/${invoiceId}/transaction-candidates`);
+    return responseJsonOrThrow(response);
+  }
+
+  async function handleReconcileTransaction(invoiceId, transactionId) {
+    setInvoiceReconciliationMessage("");
+    const response = await fetch(`/api/invoices/${invoiceId}/reconcile-transaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transaction_id: transactionId }),
+    });
+    const result = await responseJsonOrThrow(response);
+
+    try {
+      await loadDashboardData(month);
+      setInvoiceReconciliationMessage("Pagamento bancario abbinato alla fattura.");
+    } catch (error) {
+      console.error(error);
+      setInvoiceReconciliationMessage(
+        "Pagamento abbinato, ma non è stato possibile aggiornare i dati. Ricarica la pagina."
+      );
+    }
+
+    return result;
+  }
+
   async function handleCreateManualInvoice(invoiceData) {
     const response = await fetch("/api/invoices", {
       method: "POST",
@@ -1565,6 +1605,9 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 setMonth={setMonth}
                 invoices={invoices}
                 invoiceCategories={invoiceCategories}
+                invoiceReconciliationMessage={invoiceReconciliationMessage}
+                handleLoadTransactionCandidates={handleLoadTransactionCandidates}
+                handleReconcileTransaction={handleReconcileTransaction}
                 invoiceUploadMessage={invoiceUploadMessage}
                 invoiceUploadError={invoiceUploadError}
                 invoiceUploading={invoiceUploading}

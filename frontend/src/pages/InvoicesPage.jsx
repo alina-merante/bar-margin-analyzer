@@ -238,6 +238,9 @@ export default function InvoicesPage({
   month,
   invoices = [],
   invoiceCategories = [],
+  invoiceReconciliationMessage,
+  handleLoadTransactionCandidates,
+  handleReconcileTransaction,
   invoiceUploadMessage,
   invoiceUploadError,
   invoiceUploading,
@@ -251,6 +254,13 @@ export default function InvoicesPage({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [reconciliationInvoice, setReconciliationInvoice] = useState(null);
+  const [reconciliationData, setReconciliationData] = useState(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState("");
+  const [candidateToConfirm, setCandidateToConfirm] = useState(null);
+  const [reconciliationSaving, setReconciliationSaving] = useState(false);
+  const reconciliationRequestRef = useRef(0);
   const [isYearView, setIsYearView] = useState(false);
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
@@ -317,6 +327,75 @@ useEffect(() => {
   function closeInvoicePreview() {
     setSelectedInvoice(null);
   }
+
+  async function openReconciliation(invoice) {
+    const requestId = reconciliationRequestRef.current + 1;
+    reconciliationRequestRef.current = requestId;
+    setReconciliationInvoice(invoice);
+    setReconciliationData(null);
+    setCandidateToConfirm(null);
+    setReconciliationError("");
+    setReconciliationLoading(true);
+
+    try {
+      const result = await handleLoadTransactionCandidates(invoice.id);
+      if (reconciliationRequestRef.current === requestId) {
+        setReconciliationData(result);
+      }
+    } catch (error) {
+      if (reconciliationRequestRef.current === requestId) {
+        setReconciliationError(error.message || "Impossibile caricare i movimenti candidati.");
+      }
+    } finally {
+      if (reconciliationRequestRef.current === requestId) {
+        setReconciliationLoading(false);
+      }
+    }
+  }
+
+  function closeReconciliation() {
+    if (reconciliationSaving) return;
+    dismissReconciliation();
+  }
+
+  function dismissReconciliation() {
+    reconciliationRequestRef.current += 1;
+    setReconciliationInvoice(null);
+    setReconciliationData(null);
+    setCandidateToConfirm(null);
+    setReconciliationError("");
+  }
+
+  async function confirmReconciliation() {
+    if (!reconciliationInvoice || !candidateToConfirm || reconciliationSaving) return;
+
+    setReconciliationSaving(true);
+    setReconciliationError("");
+    try {
+      await handleReconcileTransaction(reconciliationInvoice.id, candidateToConfirm.id);
+      dismissReconciliation();
+    } catch (error) {
+      setReconciliationError(error.message || "Riconciliazione non riuscita.");
+    } finally {
+      setReconciliationSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!reconciliationInvoice || reconciliationSaving) return undefined;
+
+    function handleEscape(event) {
+      if (event.key !== "Escape" || reconciliationSaving) return;
+      reconciliationRequestRef.current += 1;
+      setReconciliationInvoice(null);
+      setReconciliationData(null);
+      setCandidateToConfirm(null);
+      setReconciliationError("");
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [reconciliationInvoice, reconciliationSaving]);
 
   function scrollToInvoicesTable() {
     requestAnimationFrame(() => {
@@ -816,6 +895,10 @@ const totalAmount = invoicesForView.reduce(
         <p className="upload-feedback success">{invoiceUploadMessage}</p>
       ) : null}
 
+      {invoiceReconciliationMessage ? (
+        <p className="upload-feedback success" role="status">{invoiceReconciliationMessage}</p>
+      ) : null}
+
       {invoiceUploadError ? (
         <p className="upload-feedback error">{invoiceUploadError}</p>
       ) : null}
@@ -832,6 +915,7 @@ const totalAmount = invoicesForView.reduce(
           <div>CATEGORIA</div>
           <div>TOTALE</div>
           <div>VISUALIZZA</div>
+          <div>PAGAMENTO</div>
           <div>ELIMINA</div>
         </div>
 
@@ -862,7 +946,16 @@ const totalAmount = invoicesForView.reduce(
                   )}
                 </div>
 
-                <div className="invoice-modern-total">{formatEuro(invoice.total)}</div>
+                <div className="invoice-modern-total">
+                  <strong>{formatEuro(invoice.total)}</strong>
+                  {invoice.status === "paid" ? (
+                    <small className="invoice-payment-summary paid">Pagata</small>
+                  ) : (
+                    <small className="invoice-payment-summary">
+                      Pagato {formatEuro(invoice.linked_amount ?? 0)} · residuo {formatEuro(invoice.remaining_amount ?? invoice.total)}
+                    </small>
+                  )}
+                </div>
 
                 <div className="invoice-action-cell">
                   <button
@@ -876,15 +969,37 @@ const totalAmount = invoicesForView.reduce(
                 </div>
 
                 <div className="invoice-action-cell">
+                  {invoice.status === "pending" ? (
+                    <button
+                      type="button"
+                      className="invoice-reconcile-btn"
+                      onClick={() => openReconciliation(invoice)}
+                    >
+                      Abbina pagamento
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="invoice-action-cell">
                   <button
                     type="button"
-                    className="invoice-icon-btn delete"
+                    className={`invoice-icon-btn delete ${Number(invoice.linked_amount) > 0 ? "disabled" : ""}`}
+                    disabled={Number(invoice.linked_amount) > 0}
                     onClick={() => {
                       if (window.confirm("Vuoi eliminare questa fattura?")) {
                         handleDeleteInvoice(invoice.id);
                       }
                     }}
-                    title="Elimina fattura"
+                    title={
+                      Number(invoice.linked_amount) > 0
+                        ? "Fattura non eliminabile: contiene pagamenti riconciliati."
+                        : "Elimina fattura"
+                    }
+                    aria-label={
+                      Number(invoice.linked_amount) > 0
+                        ? "Fattura non eliminabile perché contiene pagamenti riconciliati"
+                        : "Elimina fattura"
+                    }
                   >
                     🗑️
                   </button>
@@ -902,6 +1017,142 @@ const totalAmount = invoicesForView.reduce(
           </div>
         ) : null}
       </section>
+
+      {reconciliationInvoice ? (
+        <div
+          className="invoice-reconciliation-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeReconciliation();
+          }}
+        >
+          <section
+            className="invoice-reconciliation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invoice-reconciliation-title"
+          >
+            <header className="invoice-reconciliation-head">
+              <div>
+                <p className="invoice-reconciliation-eyebrow">RICONCILIAZIONE BANCARIA</p>
+                <h2 id="invoice-reconciliation-title">Abbina pagamento</h2>
+                <p>Seleziona un movimento e conferma l’abbinamento alla fattura.</p>
+              </div>
+              <button
+                type="button"
+                className="invoice-reconciliation-close"
+                onClick={closeReconciliation}
+                disabled={reconciliationSaving}
+                aria-label="Chiudi"
+              >
+                ✕
+              </button>
+            </header>
+
+            <div className="invoice-reconciliation-summary">
+              <div>
+                <span>Fornitore</span>
+                <strong>{reconciliationInvoice.supplier || "Fornitore"}</strong>
+              </div>
+              <div>
+                <span>Fattura</span>
+                <strong>{getInvoiceNumberDisplay(reconciliationInvoice.invoice_number)}</strong>
+              </div>
+              <div>
+                <span>Totale</span>
+                <strong>{formatEuro(reconciliationInvoice.total)}</strong>
+              </div>
+              <div>
+                <span>Già pagato</span>
+                <strong>
+                  {formatEuro(reconciliationData?.linked_amount ?? reconciliationInvoice.linked_amount ?? 0)}
+                </strong>
+              </div>
+              <div>
+                <span>Residuo</span>
+                <strong className="invoice-reconciliation-residual">
+                  {formatEuro(reconciliationData?.remaining_amount ?? reconciliationInvoice.remaining_amount ?? 0)}
+                </strong>
+              </div>
+            </div>
+
+            {reconciliationLoading ? (
+              <p className="invoice-reconciliation-state" role="status">Caricamento movimenti...</p>
+            ) : null}
+
+            {reconciliationError ? (
+              <p className="invoice-reconciliation-error" role="alert">{reconciliationError}</p>
+            ) : null}
+
+            {!reconciliationLoading && reconciliationData?.candidates?.length === 0 ? (
+              <p className="invoice-reconciliation-state">Nessun movimento bancario compatibile.</p>
+            ) : null}
+
+            {reconciliationData?.candidates?.length > 0 ? (
+              <div className="invoice-reconciliation-candidates">
+                {reconciliationData.candidates.map((candidate, index) => (
+                  <article className="invoice-reconciliation-candidate" key={candidate.id}>
+                    <div className="invoice-reconciliation-candidate-main">
+                      <div className="invoice-reconciliation-candidate-meta">
+                        <time dateTime={candidate.date}>{formatDate(candidate.date)}</time>
+                        {index === 0 ? <span className="invoice-suggested-badge">Suggerito</span> : null}
+                      </div>
+                      <strong>{candidate.counterparty}</strong>
+                      <p>{candidate.description}</p>
+                    </div>
+                    <div className="invoice-reconciliation-candidate-action">
+                      <strong>
+                        {formatEuro(candidate.payment_amount ?? Math.abs(Number(candidate.amount) || 0))}
+                      </strong>
+                      <button
+                        type="button"
+                        className="invoice-reconcile-btn"
+                        onClick={() => setCandidateToConfirm(candidate)}
+                        disabled={reconciliationSaving}
+                      >
+                        Abbina
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+
+            {candidateToConfirm ? (
+              <div className="invoice-reconciliation-confirm" role="group" aria-labelledby="invoice-reconciliation-confirm-title">
+                <h3 id="invoice-reconciliation-confirm-title">Conferma abbinamento</h3>
+                <p>
+                  Collega il movimento del <strong>{formatDate(candidateToConfirm.date)}</strong>,
+                  <strong> {candidateToConfirm.counterparty}</strong> per{" "}
+                  <strong>
+                    {formatEuro(candidateToConfirm.payment_amount ?? Math.abs(Number(candidateToConfirm.amount) || 0))}
+                  </strong>{" "}
+                  alla fattura <strong>{getInvoiceNumberDisplay(reconciliationInvoice.invoice_number)}</strong> di{" "}
+                  <strong> {reconciliationInvoice.supplier}</strong> ({formatEuro(reconciliationInvoice.total)}).
+                </p>
+                <div className="invoice-reconciliation-confirm-actions">
+                  <button
+                    type="button"
+                    className="invoice-reconciliation-cancel"
+                    onClick={() => setCandidateToConfirm(null)}
+                    disabled={reconciliationSaving}
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="button"
+                    className="invoice-reconcile-btn primary"
+                    onClick={confirmReconciliation}
+                    disabled={reconciliationSaving}
+                  >
+                    {reconciliationSaving ? "Abbinamento..." : "Conferma abbinamento"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
      {selectedInvoice ? (
   <div className="invoice-preview-backdrop">
