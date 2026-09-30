@@ -417,9 +417,18 @@ def merge_extracted_invoice(
     heuristic_total = parse_decimal(heuristic.get("total"))
     total = str(ai_total if is_reasonable_money(ai_total) else heuristic_total)
 
-    ai_vat = parse_decimal(ai.get("vat"))
+    ai_vat_value = ai.get("vat")
+    ai_vat = (
+        parse_decimal(ai_vat_value)
+        if ai_vat_value is not None and str(ai_vat_value).strip()
+        else None
+    )
     heuristic_vat = parse_decimal(heuristic.get("vat"))
-    vat = str(ai_vat if Decimal("0") <= ai_vat <= parse_decimal(total) else heuristic_vat)
+    vat = str(
+        ai_vat
+        if ai_vat is not None and Decimal("0") <= ai_vat <= parse_decimal(total)
+        else heuristic_vat
+    )
 
     return {
         "supplier": supplier,
@@ -732,8 +741,8 @@ def pick_best_vat(text: str, total_value: Decimal) -> str:
 
     vat_candidates = extract_all_matches(
         [
-            r"(?:iva\s*[:\-]?\s*€?\s*)([\d\.,]+)",
-            r"(?:imposta\s*[:\-]?\s*€?\s*)([\d\.,]+)",
+            r"(?:iva\s*[:\-]?\s*)(?:\d+(?:[\.,]\d+)?\s*%\s*)?€?\s*([\d\.,]+)",
+            r"(?:imposta\s*[:\-]?\s*)(?:\d+(?:[\.,]\d+)?\s*%\s*)?€?\s*([\d\.,]+)",
         ],
         text,
     )
