@@ -142,6 +142,22 @@ def parse_amount(value: str) -> Decimal:
     cleaned = value.strip().replace(".", "").replace(",", ".")
     return Decimal(cleaned)
 
+
+def single_month_from_bank_csv(content: bytes) -> str | None:
+    try:
+        reader = csv.DictReader(StringIO(content.decode("utf-8-sig")))
+        if not reader.fieldnames or "date" not in reader.fieldnames:
+            return None
+
+        months = {
+            dt.date.fromisoformat(row["date"].strip()).strftime("%Y-%m")
+            for row in reader
+        }
+    except (KeyError, UnicodeDecodeError, ValueError):
+        return None
+
+    return next(iter(months)) if len(months) == 1 else None
+
 def ocr_image(image: Image.Image) -> str:
     image = image.convert("L")
 
@@ -279,7 +295,11 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
     extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    document_month = month
     extracted_data = None
+
+    if section == "bank" and extension == "csv":
+        document_month = single_month_from_bank_csv(content) or month
 
     if section in {"cash", "cash_closure"}:
         extracted_data = extract_daily_cash_closure(content, extension)
@@ -340,7 +360,7 @@ async def upload_document(
     category, result = classify_document(file.filename)
 
     document = Document(
-        month=month,
+        month=document_month,
         original_filename=file.filename,
         stored_filename=stored_filename,
         document_type=extension.upper(),

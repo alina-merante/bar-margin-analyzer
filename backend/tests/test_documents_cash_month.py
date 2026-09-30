@@ -12,9 +12,111 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
-from app.models import DailyCashClosure, Document
-from app.routers import documents as documents_router
+from app.models import DailyCashClosure, Document, InvoicePaymentLink, Payment, Transaction
+from app.routers import documents as documents_router, imports as imports_router
 from app.routers.analytics import monthly_pnl
+
+
+def test_bank_csv_document_month_uses_single_transaction_month_not_selected_month():
+    bank_csv = (
+        b"date,description,amount\n"
+        b"2026-07-03,SEPA transfer - Torrefazione Italiana S.p.A.,-420.00\n"
+        b"2026-07-09,Bank transfer - Distribuzione Bevande S.R.L.,-310.00\n"
+        b"2026-07-11,Payment to Energia Bar Luglio,-95.00\n"
+        b"2026-07-12,Card payment - Pulizie Splendore,-120.00\n"
+        b"2026-07-14,POS settlement - Incassi carte,2000.00\n"
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{temp_dir}/test_bank_import.db")
+        Base.metadata.create_all(engine)
+        old_cwd = os.getcwd()
+        os.chdir(temp_dir)
+
+        try:
+            with Session(engine) as session:
+                first_import = imports_router.import_bank_csv(
+                    UploadFile(
+                        file=BytesIO(bank_csv),
+                        filename="05_movimenti_bancari_2026-07.csv",
+                    ),
+                    session,
+                )
+                duplicate_import = imports_router.import_bank_csv(
+                    UploadFile(
+                        file=BytesIO(bank_csv),
+                        filename="05_movimenti_bancari_2026-07.csv",
+                    ),
+                    session,
+                )
+
+                assert first_import == {"imported_rows": 5, "skipped_rows": 0}
+                assert duplicate_import == {"imported_rows": 0, "skipped_rows": 5}
+
+                transactions = session.scalars(
+                    select(Transaction).order_by(Transaction.id)
+                ).all()
+                assert len(transactions) == 5
+                assert transactions[0].counterparty == "Torrefazione Italiana S.p.A."
+                assert transactions[0].amount == Decimal("-420.00")
+
+                document = __import__("asyncio").run(
+                    documents_router.upload_document(
+                        file=UploadFile(
+                            file=BytesIO(bank_csv),
+                            filename="05_movimenti_bancari_2026-07.csv",
+                        ),
+                        month="2026-09",
+                        section="bank",
+                        db=session,
+                    )
+                )
+
+                assert document["month"] == "2026-07"
+                assert len(session.scalars(select(Transaction)).all()) == 5
+                assert session.scalars(select(Payment)).all() == []
+                assert session.scalars(select(InvoicePaymentLink)).all() == []
+
+                pnl = monthly_pnl(
+                    session,
+                    dt.date(2026, 7, 1),
+                    dt.date(2026, 8, 1),
+                )
+                assert pnl["expenses"] == Decimal("0.00")
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_mixed_month_bank_csv_keeps_selected_document_month():
+    bank_csv = (
+        b"date,description,amount\n"
+        b"2026-07-31,Bank movement July,-10.00\n"
+        b"2026-08-01,Bank movement August,-20.00\n"
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{temp_dir}/test_mixed_bank_month.db")
+        Base.metadata.create_all(engine)
+        old_cwd = os.getcwd()
+        os.chdir(temp_dir)
+
+        try:
+            with Session(engine) as session:
+                document = __import__("asyncio").run(
+                    documents_router.upload_document(
+                        file=UploadFile(
+                            file=BytesIO(bank_csv),
+                            filename="mixed_bank_months.csv",
+                        ),
+                        month="2026-09",
+                        section="bank",
+                        db=session,
+                    )
+                )
+
+                assert document["month"] == "2026-09"
+        finally:
+            os.chdir(old_cwd)
 
 
 def test_cash_upload_uses_extracted_closure_month_for_document_history():
