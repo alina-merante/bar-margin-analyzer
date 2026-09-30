@@ -20,3 +20,4 @@ class Transaction(Base):
     )
 
     category = relationship("ExpenseCategory", back_populates="transactions")
+    payment = relationship("Payment", back_populates="transaction", passive_deletes="all", uselist=False)

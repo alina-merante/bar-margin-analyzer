@@ -6,7 +6,10 @@ from app.database import Base
 
 class InvoicePaymentLink(Base):
     __tablename__ = "invoice_payment_links"
-    __table_args__ = (UniqueConstraint("invoice_id", "payment_id", name="uq_invoice_payment_link"),)
+    __table_args__ = (
+        UniqueConstraint("invoice_id", "payment_id", name="uq_invoice_payment_link"),
+        UniqueConstraint("payment_id", name="uq_invoice_payment_links_payment_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)

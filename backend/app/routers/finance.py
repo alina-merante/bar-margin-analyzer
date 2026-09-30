@@ -6,17 +6,17 @@ import unicodedata
 from decimal import Decimal
 import os
 import uuid
-from sqlalchemy import func, select
 import pytesseract
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod
+from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
 from app.services.ai_invoice_parser import parse_invoice_with_llm
 
 from pillow_heif import register_heif_opener
@@ -45,6 +45,41 @@ class PaymentCreate(BaseModel):
 
 class LinkPaymentPayload(BaseModel):
     payment_id: int
+
+
+class ReconcileTransactionPayload(BaseModel):
+    transaction_id: int
+
+
+def invoice_linked_amount(db: Session, invoice_id: int) -> Decimal:
+    amount = db.scalar(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .join(InvoicePaymentLink, InvoicePaymentLink.payment_id == Payment.id)
+        .where(InvoicePaymentLink.invoice_id == invoice_id)
+    )
+    return Decimal(amount or 0)
+
+
+def invoice_remaining_amount(invoice: Invoice, linked_amount: Decimal) -> Decimal:
+    return max(Decimal(invoice.total) - linked_amount, Decimal("0.00"))
+
+
+def invoice_to_dict(invoice: Invoice, db: Session) -> dict:
+    linked_amount = invoice_linked_amount(db, invoice.id)
+    remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+    return {
+        "id": invoice.id,
+        "supplier": invoice.supplier,
+        "invoice_number": invoice.invoice_number,
+        "due_date": invoice.due_date.isoformat(),
+        "total": float(invoice.total),
+        "vat": float(invoice.vat),
+        "linked_amount": float(linked_amount),
+        "remaining_amount": float(remaining_amount),
+        "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
+        "status": invoice.status.value,
+        "file_url": invoice.file_url,
+    }
 
 
 def parse_month(month: str) -> tuple[dt.date, dt.date]:
@@ -941,18 +976,7 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
-    return {
-        "id": invoice.id,
-        "supplier": invoice.supplier,
-        "invoice_number": invoice.invoice_number,
-        "due_date": invoice.due_date.isoformat(),
-        "total": float(invoice.total),
-        "vat": float(invoice.vat),
-        "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
-        "status": invoice.status.value,
-        "file_url": invoice.file_url,
-
-    }
+    return invoice_to_dict(invoice, db)
 
 @router.post("/invoices/extract")
 async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
@@ -1021,18 +1045,9 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             db.commit()
             db.refresh(existing_invoice)
 
-            return {
-                "id": existing_invoice.id,
-                "supplier": existing_invoice.supplier,
-                "invoice_number": existing_invoice.invoice_number,
-                "due_date": existing_invoice.due_date.isoformat(),
-                "total": float(existing_invoice.total),
-                "vat": float(existing_invoice.vat),
-                "category": infer_invoice_category(existing_invoice.supplier, existing_invoice.invoice_number),
-                "status": existing_invoice.status.value,
-                "file_url": existing_invoice.file_url,
-                "already_exists": True,
-            }
+            response = invoice_to_dict(existing_invoice, db)
+            response["already_exists"] = True
+            return response
 
         invoice = Invoice(
             supplier=normalized["supplier"],
@@ -1049,18 +1064,9 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
         db.commit()
         db.refresh(invoice)
 
-        return {
-            "id": invoice.id,
-            "supplier": invoice.supplier,
-            "invoice_number": invoice.invoice_number,
-            "due_date": invoice.due_date.isoformat(),
-            "total": float(invoice.total),
-            "vat": float(invoice.vat),
-            "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
-            "status": invoice.status.value,
-            "file_url": invoice.file_url,
-            "already_exists": False,
-        }
+        response = invoice_to_dict(invoice, db)
+        response["already_exists"] = False
+        return response
 
     except HTTPException:
         raise
@@ -1069,9 +1075,21 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
 @router.delete("/invoices/delete/{invoice_id}")
 def delete_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
-    invoice = db.get(Invoice, invoice_id)
+    invoice = db.scalar(
+        select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
+    if db.scalar(
+        select(InvoicePaymentLink.id)
+        .where(InvoicePaymentLink.invoice_id == invoice_id)
+        .limit(1)
+    ):
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La fattura non può essere eliminata perché contiene pagamenti riconciliati.",
+        )
 
     db.delete(invoice)
     db.commit()
@@ -1096,20 +1114,157 @@ def list_invoices(
         stmt = stmt.where(Invoice.issue_date >= start, Invoice.issue_date < end)
 
     invoices = db.scalars(stmt.order_by(Invoice.issue_date.desc(), Invoice.id.desc())).all()
-    return [
-        {
-            "id": row.id,
-            "supplier": row.supplier,
-            "invoice_number": row.invoice_number,
-            "due_date": row.due_date.isoformat(),
-            "total": float(row.total),
-            "vat": float(row.vat),
-            "category": infer_invoice_category(row.supplier, row.invoice_number),
-            "status": row.status.value,
-            "file_url": row.file_url,
+    return [invoice_to_dict(row, db) for row in invoices]
+
+
+def transaction_candidate_rank(invoice: Invoice, transaction: Transaction, remaining_amount: Decimal) -> tuple:
+    exact_amount_rank = 0 if abs(Decimal(transaction.amount)) == remaining_amount else 1
+    supplier_tokens = {
+        token
+        for token in normalize_lookup_text(invoice.supplier).split()
+        if len(token) >= 4
+    }
+    transaction_tokens = set(
+        normalize_lookup_text(f"{transaction.counterparty} {transaction.description}").split()
+    )
+    matched_tokens = len(supplier_tokens.intersection(transaction_tokens))
+    supplier_rank = 0 if matched_tokens >= 2 else 1 if matched_tokens else 2
+    date_distance = abs((transaction.date - invoice.due_date).days)
+    return exact_amount_rank, supplier_rank, date_distance, transaction.date, transaction.id
+
+
+def payment_method_from_transaction(transaction: Transaction) -> PaymentMethod:
+    """Classify explicit card/transfer descriptions; unknown bank movements default to bank_transfer."""
+    text = normalize_lookup_text(f"{transaction.counterparty} {transaction.description}")
+    tokens = set(text.split())
+
+    if tokens.intersection({"card", "carta"}):
+        return PaymentMethod.card
+    if tokens.intersection({"sepa", "transfer", "bonifico"}):
+        return PaymentMethod.bank_transfer
+
+    return PaymentMethod.bank_transfer
+
+
+@router.get("/invoices/{invoice_id}/transaction-candidates")
+def get_transaction_candidates(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="invoice not found")
+    if invoice.status != InvoiceStatus.pending:
+        raise HTTPException(status_code=409, detail="invoice is not pending")
+
+    linked_amount = invoice_linked_amount(db, invoice.id)
+    remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+    if remaining_amount <= 0:
+        raise HTTPException(status_code=409, detail="invoice has no remaining balance")
+
+    used_transactions = select(Payment.transaction_id).where(Payment.transaction_id.is_not(None))
+    transactions = db.scalars(
+        select(Transaction).where(
+            Transaction.amount < 0,
+            func.abs(Transaction.amount) <= remaining_amount,
+            ~Transaction.id.in_(used_transactions),
+        )
+    ).all()
+    transactions.sort(key=lambda item: transaction_candidate_rank(invoice, item, remaining_amount))
+
+    return {
+        "invoice_id": invoice.id,
+        "linked_amount": float(linked_amount),
+        "remaining_amount": float(remaining_amount),
+        "candidates": [
+            {
+                "id": transaction.id,
+                "date": transaction.date.isoformat(),
+                "description": transaction.description,
+                "amount": float(transaction.amount),
+                "payment_amount": float(abs(Decimal(transaction.amount))),
+                "counterparty": transaction.counterparty,
+                "category_id": transaction.category_id,
+            }
+            for transaction in transactions
+        ],
+    }
+
+
+@router.post("/invoices/{invoice_id}/reconcile-transaction")
+def reconcile_invoice_transaction(
+    invoice_id: int,
+    payload: ReconcileTransactionPayload,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        invoice = db.scalar(
+            select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+        )
+        if not invoice:
+            raise HTTPException(status_code=404, detail="invoice not found")
+
+        transaction = db.scalar(
+            select(Transaction)
+            .where(Transaction.id == payload.transaction_id)
+            .with_for_update()
+        )
+        if not transaction:
+            raise HTTPException(status_code=404, detail="transaction not found")
+        if invoice.status != InvoiceStatus.pending:
+            raise HTTPException(status_code=409, detail="invoice is not pending")
+        if transaction.amount >= 0:
+            raise HTTPException(status_code=400, detail="transaction must be an outgoing payment")
+        if db.scalar(
+            select(Payment.id)
+            .where(Payment.transaction_id == transaction.id)
+            .with_for_update()
+        ):
+            raise HTTPException(status_code=409, detail="transaction is already used by a payment")
+
+        linked_amount = invoice_linked_amount(db, invoice.id)
+        remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+        if remaining_amount <= 0:
+            raise HTTPException(status_code=409, detail="invoice has no remaining balance")
+
+        payment_amount = abs(Decimal(transaction.amount))
+        if payment_amount > remaining_amount:
+            raise HTTPException(status_code=409, detail="transaction exceeds invoice remaining balance")
+
+        payment = Payment(
+            date=transaction.date,
+            amount=payment_amount,
+            method=payment_method_from_transaction(transaction),
+            counterparty=transaction.counterparty,
+            reference=transaction.description,
+            transaction_id=transaction.id,
+        )
+        db.add(payment)
+        db.flush()
+
+        link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
+        db.add(link)
+        db.flush()
+
+        linked_amount += payment_amount
+        remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+        invoice.status = InvoiceStatus.paid if remaining_amount == 0 else InvoiceStatus.pending
+        db.commit()
+
+        return {
+            "payment_id": payment.id,
+            "transaction_id": transaction.id,
+            "invoice_id": invoice.id,
+            "invoice_status": invoice.status.value,
+            "linked_amount": float(linked_amount),
+            "remaining_amount": float(remaining_amount),
         }
-        for row in invoices
-    ]
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="transaction or payment is already linked") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="transaction reconciliation failed") from exc
 
 
 @router.post("/payments")
@@ -1131,6 +1286,7 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)) -> dic
         "method": payment.method.value,
         "counterparty": payment.counterparty,
         "reference": payment.reference,
+        "transaction_id": payment.transaction_id,
     }
 
 
@@ -1160,6 +1316,7 @@ def list_payments(
             "method": row.method.value,
             "counterparty": row.counterparty,
             "reference": row.reference,
+            "transaction_id": row.transaction_id,
         }
         for row in payments
     ]
@@ -1167,45 +1324,51 @@ def list_payments(
 
 @router.post("/invoices/{invoice_id}/link-payment")
 def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Depends(get_db)) -> dict:
-    invoice = db.get(Invoice, invoice_id)
-    if not invoice:
-        raise HTTPException(status_code=404, detail="invoice not found")
+    try:
+        invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id).with_for_update())
+        if not invoice:
+            raise HTTPException(status_code=404, detail="invoice not found")
+        payment = db.scalar(select(Payment).where(Payment.id == payload.payment_id).with_for_update())
+        if not payment:
+            raise HTTPException(status_code=404, detail="payment not found")
+        if invoice.status != InvoiceStatus.pending:
+            raise HTTPException(status_code=409, detail="invoice is not pending")
+        if db.scalar(select(InvoicePaymentLink.id).where(InvoicePaymentLink.payment_id == payment.id)):
+            raise HTTPException(status_code=409, detail="payment already linked to an invoice")
+        if payment.amount <= 0:
+            raise HTTPException(status_code=400, detail="payment amount must be positive")
 
-    payment = db.get(Payment, payload.payment_id)
-    if not payment:
-        raise HTTPException(status_code=404, detail="payment not found")
+        linked_amount = invoice_linked_amount(db, invoice.id)
+        remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+        if remaining_amount <= 0:
+            raise HTTPException(status_code=409, detail="invoice has no remaining balance")
+        if Decimal(payment.amount) > remaining_amount:
+            raise HTTPException(status_code=409, detail="payment exceeds invoice remaining balance")
 
-    existing_link = db.scalar(
-        select(InvoicePaymentLink).where(
-            InvoicePaymentLink.invoice_id == invoice_id,
-            InvoicePaymentLink.payment_id == payload.payment_id,
-        )
-    )
-    if existing_link:
-        raise HTTPException(status_code=400, detail="payment already linked to invoice")
+        link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
+        db.add(link)
+        db.flush()
+        linked_amount += Decimal(payment.amount)
+        remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+        invoice.status = InvoiceStatus.paid if remaining_amount == 0 else InvoiceStatus.pending
+        db.commit()
 
-    link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
-    db.add(link)
-    db.flush()
-
-    linked_total_result = db.execute(
-        select(func.coalesce(func.sum(Payment.amount), 0))
-        .join(InvoicePaymentLink, InvoicePaymentLink.payment_id == Payment.id)
-        .where(InvoicePaymentLink.invoice_id == invoice.id)
-    )
-    linked_total = Decimal(linked_total_result.scalar_one())
-
-    invoice.status = InvoiceStatus.paid if linked_total >= Decimal(invoice.total) else InvoiceStatus.pending
-
-    db.commit()
-    db.refresh(invoice)
-    db.refresh(link)
-
-    return {
-        "id": link.id,
-        "invoice_id": link.invoice_id,
-        "payment_id": link.payment_id,
-        "invoice_status": invoice.status.value,
-        "linked_total": float(linked_total),
-        "invoice_total": float(invoice.total),
-    }
+        return {
+            "id": link.id,
+            "invoice_id": link.invoice_id,
+            "payment_id": payment.id,
+            "invoice_status": invoice.status.value,
+            "linked_total": float(linked_amount),
+            "linked_amount": float(linked_amount),
+            "remaining_amount": float(remaining_amount),
+            "invoice_total": float(invoice.total),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="payment is already linked to an invoice") from exc
+    except Exception:
+        db.rollback()
+        raise

@@ -2,6 +2,8 @@ import sys
 from datetime import date
 from decimal import Decimal
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -209,21 +211,20 @@ def test_multiple_payments_on_same_invoice_count_once():
         assert result["expenses"] == Decimal("100.00")
 
 
-def test_single_payment_for_two_invoices_counts_total_once_per_invoice():
+def test_single_payment_cannot_be_linked_to_two_invoices():
     with build_session() as session:
-        add_cash_closure(session, Decimal("1000.00"))
         invoice_one = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending, invoice_number="INV-1")
         invoice_two = add_invoice(session, Decimal("200.00"), Decimal("0.00"), InvoiceStatus.pending, invoice_number="INV-2")
-        payment = add_payment(session, Decimal("300.00"), reference="PAY-1")
-        link_payment(session, invoice_one, payment)
-        link_payment(session, invoice_two, payment)
-        invoice_one.status = InvoiceStatus.paid
-        invoice_two.status = InvoiceStatus.paid
+        payment = add_payment(session, Decimal("100.00"), reference="PAY-1")
         session.commit()
 
-        result = monthly_pnl(session, date(2026, 9, 1), date(2026, 10, 1))
+        link_payment_endpoint(invoice_one.id, LinkPaymentPayload(payment_id=payment.id), session)
 
-        assert result["expenses"] == Decimal("300.00")
+        with pytest.raises(HTTPException) as error:
+            link_payment_endpoint(invoice_two.id, LinkPaymentPayload(payment_id=payment.id), session)
+
+        assert error.value.status_code == 409
+        assert session.query(InvoicePaymentLink).count() == 1
 
 
 def test_partial_payment_keeps_invoice_unpaid_and_cost_zero():
@@ -289,14 +290,15 @@ def test_invoice_paid_in_following_month_is_counted_in_payment_month():
         assert result["expenses"] == Decimal("100.00")
 
 
-def test_distinct_invoice_ids_are_counted_separately():
+def test_distinct_invoice_ids_with_distinct_payments_are_counted_separately():
     with build_session() as session:
         add_cash_closure(session, Decimal("1000.00"))
         invoice_one = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending, invoice_number="INV-1")
         invoice_two = add_invoice(session, Decimal("100.00"), Decimal("0.00"), InvoiceStatus.pending, invoice_number="INV-1")
-        payment = add_payment(session, Decimal("100.00"), reference="PAY-1")
-        link_payment(session, invoice_one, payment)
-        link_payment(session, invoice_two, payment)
+        payment_one = add_payment(session, Decimal("100.00"), reference="PAY-1")
+        payment_two = add_payment(session, Decimal("100.00"), reference="PAY-2")
+        link_payment(session, invoice_one, payment_one)
+        link_payment(session, invoice_two, payment_two)
         invoice_one.status = InvoiceStatus.paid
         invoice_two.status = InvoiceStatus.paid
         session.commit()
