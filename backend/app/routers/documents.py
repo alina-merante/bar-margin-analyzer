@@ -6,12 +6,13 @@ from io import BytesIO, StringIO
 from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pdf2image import convert_from_bytes
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.document import Document
 from app.models.daily_cash_closure import DailyCashClosure
+from app.models.transaction import Transaction
 
 import datetime as dt
 import re
@@ -40,8 +41,12 @@ def classify_document(filename: str) -> tuple[str, str]:
     return "Documento generico", "Documento acquisito"
 
 
-def document_to_dict(document: Document) -> dict:
-    return {
+def document_to_dict(
+    document: Document,
+    transaction_date_range: tuple[dt.date, dt.date] | None = None,
+    cash_date: dt.date | None = None,
+) -> dict:
+    result = {
         "id": document.id,
         "month": document.month,
         "original_filename": document.original_filename,
@@ -55,6 +60,18 @@ def document_to_dict(document: Document) -> dict:
         "created_at": document.created_at.isoformat(),
         "section": document.section,
     }
+
+    if document.section == "bank":
+        result["effective_date"] = (
+            transaction_date_range[0].isoformat() if transaction_date_range else None
+        )
+        result["effective_date_end"] = (
+            transaction_date_range[1].isoformat() if transaction_date_range else None
+        )
+    elif document.section in {"cash", "cash_closure"}:
+        result["effective_date"] = cash_date.isoformat() if cash_date else None
+
+    return result
 
 
 def create_text_preview_image(
@@ -441,7 +458,8 @@ async def upload_document(
         db.add(cash_closure)
         db.commit()
 
-    return document_to_dict(document)
+    cash_date = extracted_data["date"] if extracted_data else None
+    return document_to_dict(document, cash_date=cash_date)
 
 
 @router.get("")
@@ -455,7 +473,44 @@ def list_documents(
         query = query.where(Document.month == month)
 
     documents = db.scalars(query.order_by(Document.created_at.desc())).all()
-    return [document_to_dict(document) for document in documents]
+    bank_document_ids = [document.id for document in documents if document.section == "bank"]
+    cash_document_ids = [
+        document.id for document in documents if document.section in {"cash", "cash_closure"}
+    ]
+    transaction_date_ranges = {}
+    cash_dates = {}
+
+    if bank_document_ids:
+        date_rows = db.execute(
+            select(
+                Transaction.document_id,
+                func.min(Transaction.date),
+                func.max(Transaction.date),
+            )
+            .where(Transaction.document_id.in_(bank_document_ids))
+            .group_by(Transaction.document_id)
+        ).all()
+        transaction_date_ranges = {
+            document_id: (minimum_date, maximum_date)
+            for document_id, minimum_date, maximum_date in date_rows
+        }
+
+    if cash_document_ids:
+        cash_rows = db.execute(
+            select(DailyCashClosure.document_id, func.min(DailyCashClosure.date))
+            .where(DailyCashClosure.document_id.in_(cash_document_ids))
+            .group_by(DailyCashClosure.document_id)
+        ).all()
+        cash_dates = {document_id: cash_date for document_id, cash_date in cash_rows}
+
+    return [
+        document_to_dict(
+            document,
+            transaction_date_ranges.get(document.id),
+            cash_dates.get(document.id),
+        )
+        for document in documents
+    ]
 
 
 @router.delete("/{document_id}")

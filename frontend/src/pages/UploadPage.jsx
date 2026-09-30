@@ -4,22 +4,39 @@ import { useNavigate } from "react-router-dom";
 function formatShortDate(value) {
   if (!value) return "Nessun file caricato";
 
+  const dateMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = dateMatch
+    ? new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]))
+    : new Date(value);
+
   return new Intl.DateTimeFormat("it-IT", {
-    day: "numeric",
-    month: "long",
+    day: "2-digit",
+    month: "2-digit",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
 }
 
-function formatMonthLabel(month) {
-  if (!month) return "-";
+function formatBankTransactionDate(start, end) {
+  if (!start) return "";
 
-  const [year, monthNum] = month.split("-").map(Number);
+  const startDate = formatShortDate(start);
 
-  return new Intl.DateTimeFormat("it-IT", {
-    month: "long",
-    year: "numeric",
-  }).format(new Date(year, monthNum - 1, 1));
+  if (!end || end === start) return startDate;
+
+  return `${startDate} – ${formatShortDate(end)}`;
+}
+
+function formatUploadMessage(message) {
+  return message.replace(
+    /^Import BANK completato:\s*(\d+)\s+righe importate\./,
+    (_, count) => {
+      const importedCount = Number(count);
+      const movementLabel = importedCount === 1 ? "movimento" : "movimenti";
+      const importedLabel = importedCount === 1 ? "importato" : "importati";
+
+      return `${importedCount} ${movementLabel} bancari ${importedLabel} correttamente.`;
+    }
+  );
 }
 
 function normalizeInvoiceText(value = "") {
@@ -153,10 +170,6 @@ export default function UploadPage({
   uploading,
   uploadMessage,
   uploadError,
-  latestPosUploadDate,
-  latestBankUploadDate,
-  invoiceCountThisMonth,
-  latestInvoiceDate,
   handleInvoiceDocumentUpload,
   invoiceCategories = [],
   invoices = [],
@@ -202,18 +215,28 @@ export default function UploadPage({
   }, [invoiceCategories]);
 
   const historyEntries = useMemo(() => {
-    const documentEntries = documents.map((document) => ({
-      id: `document-${document.id}`,
-      kind: "document",
-      tab: document.section === "cash" ? "cash" : document.section === "bank" ? "bank" : "other",
-      title: document.original_filename,
-      subtitle: document.category,
-      typeLabel: document.document_type,
-      dateValue: document.created_at,
-      dateLabel: formatShortDate(document.created_at),
-      statusLabel: document.status,
-      raw: document,
-    }));
+    const documentEntries = documents.map((document) => {
+      const effectiveDate =
+        ["bank", "cash", "cash_closure"].includes(document.section)
+          ? document.effective_date
+          : null;
+
+      return {
+        id: `document-${document.id}`,
+        kind: "document",
+        tab: document.section === "cash" ? "cash" : document.section === "bank" ? "bank" : "other",
+        title: document.original_filename,
+        subtitle: document.category,
+        typeLabel: document.document_type,
+        dateValue: effectiveDate || document.created_at,
+        dateLabel:
+          document.section === "bank" && effectiveDate
+            ? formatBankTransactionDate(effectiveDate, document.effective_date_end)
+            : formatShortDate(effectiveDate || document.created_at),
+        statusLabel: document.status,
+        raw: document,
+      };
+    });
 
     const invoiceEntries = currentMonthInvoices.map((invoice) => ({
       id: `invoice-${invoice.id}`,
@@ -226,7 +249,7 @@ export default function UploadPage({
       subtitle: formatInvoiceCategory(invoice, knownInvoiceCategoryNames),
       typeLabel: "FATTURA",
       dateValue: invoice.due_date,
-      dateLabel: formatShortDate(invoice.due_date),
+      dateLabel: formatShortDate(invoice.issue_date),
       statusLabel: invoice.status === "paid" ? "Pagata" : invoice.status === "pending" ? "Da pagare" : invoice.status,
       raw: invoice,
     }));
@@ -422,7 +445,9 @@ if (uploaded) setActiveHistoryTab("other");
           ) : null}
 
           {uploadMessage ? (
-            <p className="upload-feedback success">{uploadMessage}</p>
+            <p className="upload-feedback success">
+              {formatUploadMessage(uploadMessage)}
+            </p>
           ) : null}
 
           {uploadError ? (
@@ -445,13 +470,6 @@ if (uploaded) setActiveHistoryTab("other");
             <p className="upload-feedback error">{cashUploadError}</p>
           ) : null}
 
-          {latestPosUploadDate || latestBankUploadDate || invoiceCountThisMonth ? (
-            <p className="upload-feedback">
-              {invoiceCountThisMonth} fatture nel mese{latestInvoiceDate ? ` · ultima scadenza ${formatShortDate(latestInvoiceDate)}` : ""}
-              {latestPosUploadDate ? ` · ultima cassa ${formatShortDate(latestPosUploadDate)}` : ""}
-              {latestBankUploadDate ? ` · ultimo banco ${formatShortDate(latestBankUploadDate)}` : ""}
-            </p>
-          ) : null}
         </div>
       </section>
 
@@ -570,11 +588,6 @@ if (uploaded) setActiveHistoryTab("other");
       <section className="upload-section">
         <div className="upload-history-card">
           <h2>Storico documenti caricati</h2>
-          <p>
-            {formatMonthLabel(month)} · {historyEntries.length} record
-            {currentMonthInvoices.length ? ` · ${currentMonthInvoices.length} fatture` : ""}
-            {latestInvoiceDate ? ` · ultima scadenza ${formatShortDate(latestInvoiceDate)}` : ""}
-          </p>
 
           <div className="upload-history-tabs">
             <button

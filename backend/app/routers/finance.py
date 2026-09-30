@@ -71,6 +71,7 @@ def invoice_to_dict(invoice: Invoice, db: Session) -> dict:
         "id": invoice.id,
         "supplier": invoice.supplier,
         "invoice_number": invoice.invoice_number,
+        "issue_date": invoice.issue_date.isoformat(),
         "due_date": invoice.due_date.isoformat(),
         "total": float(invoice.total),
         "vat": float(invoice.vat),

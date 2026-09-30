@@ -13,10 +13,200 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
-from app.models import DailyCashClosure, Document, InvoicePaymentLink, Payment, Transaction
-from app.routers import documents as documents_router, imports as imports_router
+from app.models import (
+    DailyCashClosure,
+    Document,
+    Invoice,
+    InvoicePaymentLink,
+    InvoiceStatus,
+    Payment,
+    Transaction,
+)
+from app.routers import documents as documents_router, finance as finance_router, imports as imports_router
 from app.routers.analytics import monthly_pnl, overview
 
+
+@pytest.fixture
+def bank_document_db(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'bank_document_dates.db'}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
+
+
+def create_bank_history_document(db):
+    document = Document(
+        month="2026-07",
+        original_filename="bank_test.csv",
+        stored_filename="bank_test.csv",
+        section="bank",
+        document_type="CSV",
+        category="Documento tabellare",
+        result="Dati strutturati rilevati",
+        file_url="/uploads/documents/bank_test.csv",
+        preview_url="/uploads/documents/bank_test.csv",
+        created_at=dt.datetime(2026, 9, 30, 12, 0),
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+def create_cash_history_document(db):
+    document = Document(
+        month="2026-07",
+        original_filename="cash_test.pdf",
+        stored_filename="cash_test.pdf",
+        section="cash",
+        document_type="PDF",
+        category="Documento PDF",
+        result="Testo rilevato",
+        file_url="/uploads/documents/cash_test.pdf",
+        preview_url="/uploads/documents/cash_test.pdf",
+        created_at=dt.datetime(2026, 9, 30, 12, 0),
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+def test_bank_document_history_uses_single_transaction_date(bank_document_db):
+    document = create_bank_history_document(bank_document_db)
+    bank_document_db.add(
+        Transaction(
+            date=dt.date(2026, 7, 18),
+            description="Commissioni bancarie luglio",
+            amount=Decimal("-5.00"),
+            counterparty="Banca Test",
+            document_id=document.id,
+        )
+    )
+    bank_document_db.commit()
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] == "2026-07-18"
+    assert result[0]["effective_date_end"] == "2026-07-18"
+
+
+def test_bank_document_history_uses_transaction_date_range(bank_document_db):
+    document = create_bank_history_document(bank_document_db)
+    bank_document_db.add_all(
+        [
+            Transaction(
+                date=dt.date(2026, 7, 3),
+                description="Primo movimento",
+                amount=Decimal("-5.00"),
+                counterparty="Banca Test",
+                document_id=document.id,
+            ),
+            Transaction(
+                date=dt.date(2026, 7, 31),
+                description="Ultimo movimento",
+                amount=Decimal("-8.00"),
+                counterparty="Banca Test",
+                document_id=document.id,
+            ),
+        ]
+    )
+    bank_document_db.commit()
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] == "2026-07-03"
+    assert result[0]["effective_date_end"] == "2026-07-31"
+
+
+def test_bank_document_history_with_same_transaction_date_stays_single_date(
+    bank_document_db,
+):
+    document = create_bank_history_document(bank_document_db)
+    bank_document_db.add_all(
+        [
+            Transaction(
+                date=dt.date(2026, 7, 18),
+                description="Primo movimento",
+                amount=Decimal("-5.00"),
+                counterparty="Banca Test",
+                document_id=document.id,
+            ),
+            Transaction(
+                date=dt.date(2026, 7, 18),
+                description="Secondo movimento",
+                amount=Decimal("-8.00"),
+                counterparty="Banca Test",
+                document_id=document.id,
+            ),
+        ]
+    )
+    bank_document_db.commit()
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] == "2026-07-18"
+    assert result[0]["effective_date_end"] == "2026-07-18"
+
+
+def test_legacy_bank_document_history_has_no_transaction_date(bank_document_db):
+    document = create_bank_history_document(bank_document_db)
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] is None
+    assert result[0]["effective_date_end"] is None
+    assert result[0]["created_at"] == document.created_at.isoformat()
+
+
+def test_cash_document_history_uses_linked_closure_date(bank_document_db):
+    document = create_cash_history_document(bank_document_db)
+    bank_document_db.add(
+        DailyCashClosure(
+            date=dt.date(2026, 7, 14),
+            total_amount=Decimal("500.00"),
+            document_id=document.id,
+        )
+    )
+    bank_document_db.commit()
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] == "2026-07-14"
+
+
+def test_legacy_cash_document_history_keeps_created_at_fallback(bank_document_db):
+    document = create_cash_history_document(bank_document_db)
+
+    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+
+    assert result[0]["effective_date"] is None
+    assert result[0]["created_at"] == document.created_at.isoformat()
+
+
+def test_invoice_history_payload_includes_issue_date(bank_document_db):
+    invoice = Invoice(
+        supplier="Fornitore Test",
+        invoice_number="FT-2026-07",
+        issue_date=dt.date(2026, 7, 2),
+        due_date=dt.date(2026, 7, 20),
+        total=Decimal("100.00"),
+        vat=Decimal("22.00"),
+        status=InvoiceStatus.pending,
+    )
+    bank_document_db.add(invoice)
+    bank_document_db.commit()
+
+    result = finance_router.list_invoices(
+        status=None,
+        supplier=None,
+        month="2026-07",
+        db=bank_document_db,
+    )
+
+    assert result[0]["issue_date"] == "2026-07-02"
+    assert result[0]["due_date"] == "2026-07-20"
 
 
 def test_dashboard_bank_reminder_uses_latest_transaction_date(tmp_path):

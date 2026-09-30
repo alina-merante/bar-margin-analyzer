@@ -90,10 +90,32 @@ scripts/verify-clean-bootstrap.sh
 ### Movimenti bancari
 
 - Sono memorizzati in `Transaction`.
-- I campi principali sono data, descrizione, importo, controparte e categoria.
+- I campi principali sono data, descrizione, importo, controparte, categoria e
+  `document_id`, FK nullable verso `Document.id`.
 - Le regole sono applicate durante `/imports/bank-csv`.
+- Quando la richiesta include il mese del documento, il CSV viene validato
+  interamente prima di creare il documento. Document e nuove Transaction sono
+  persistiti con un unico commit; in caso di errore il rollback non lascia
+  Document o Transaction parziali.
+- La deduplicazione confronta data, descrizione, importo e controparte; le righe
+  già importate vengono saltate.
 - L'import crea movimenti `Transaction`; non crea automaticamente `Payment` e
   non produce costi nel P&L.
+
+### Storico documenti
+
+La colonna DATA usa date in formato italiano `GG/MM/AAAA` e rappresenta la data
+contabile disponibile per il documento:
+
+- BANK: data della Transaction collegata; se le date sono diverse, intervallo
+  dalla data minima alla massima.
+- CASH: `DailyCashClosure.date` collegata al documento.
+- Fatture: `Invoice.issue_date`.
+- Altri documenti: `Document.created_at` come fallback.
+
+Per documenti BANK legacy senza Transaction collegate, e documenti CASH senza
+una chiusura collegata, la visualizzazione usa `Document.created_at` come
+fallback.
 
 ### Categorie e regole
 
