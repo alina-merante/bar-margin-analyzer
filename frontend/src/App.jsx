@@ -7,6 +7,16 @@ import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
 import { PDFDocument } from "pdf-lib";
+import {
+  buildPdfInsightItems,
+  calculatePdfMetricChanges,
+  calculatePdfMarginPercent,
+  formatPdfMetricTag,
+  formatPendingInvoicesLabel,
+  getPdfMarginBarWidth,
+  hasPdfMonthData,
+  localizePdfCategoryLabel,
+} from "./pdfExportContent";
 
 function getCurrentMonth() {
   const now = new Date();
@@ -143,51 +153,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function translateInsightToItalian(text) {
-  if (!text) return "";
-  const trimmed = String(text).trim();
-
-  const metricMatch = trimmed.match(
-    /^(Revenue|Expenses|Profit)\s+(increased|decreased)\s+by\s+([0-9.]+)%\s+vs\s+previous\s+month\.?$/i
-  );
-  if (metricMatch) {
-    const metric = metricMatch[1].toLowerCase();
-    const direction = metricMatch[2].toLowerCase();
-    const pct = metricMatch[3].replace(".", ",");
-    const metricLabel =
-      metric === "revenue" ? "I ricavi" : metric === "expenses" ? "I costi" : "Il profitto";
-    const directionLabel = direction === "increased" ? "sono aumentati" : "sono diminuiti";
-    return `${metricLabel} ${directionLabel} del ${pct}% rispetto al mese precedente.`;
-  }
-
-  const categoryMatch = trimmed.match(
-    /^Top\s+expense\s+category\s+'(.+)'\s+(increased|decreased)\s+by\s+([0-9.]+)%\s+vs\s+previous\s+month\.?$/i
-  );
-  if (categoryMatch) {
-    const category = categoryMatch[1];
-    const direction = categoryMatch[2].toLowerCase();
-    const pct = categoryMatch[3].replace(".", ",");
-    const directionLabel = direction === "increased" ? "è aumentata" : "è diminuita";
-    return `La categoria di spesa principale "${category}" ${directionLabel} del ${pct}% rispetto al mese precedente.`;
-  }
-
-  const supplierMatch = trimmed.match(
-    /^Top\s+supplier\s+'(.+)'\s+represents\s+([0-9.]+)%\s+of\s+total\s+expenses\.?$/i
-  );
-  if (supplierMatch) {
-    const supplier = supplierMatch[1];
-    const pct = supplierMatch[2].replace(".", ",");
-    return `Il fornitore principale "${supplier}" rappresenta il ${pct}% delle spese totali.`;
-  }
-
-  return trimmed
-    .replace(/vs previous month/gi, "rispetto al mese precedente")
-    .replace(/increased/gi, "aumentato")
-    .replace(/decreased/gi, "diminuito")
-    .replace(/Top supplier/gi, "Fornitore principale")
-    .replace(/Top expense category/gi, "Categoria di spesa principale");
-}
-
 async function fetchJsonOrThrow(url) {
   const response = await fetch(url);
 
@@ -322,6 +287,7 @@ export default function App() {
       (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
       0
     );
+    const hasMonthlyData = hasPdfMonthData(pnl, currentMonthInvoices.length);
     const monthInvoiceTotal = currentMonthInvoices.reduce(
       (sum, invoice) => sum + (Number(invoice.total) || 0),
       0
@@ -334,41 +300,21 @@ export default function App() {
     );
 
     const currentTrendIndex = trendRows.findIndex((item) => item.month === month);
-    const currentTrend = currentTrendIndex >= 0 ? trendRows[currentTrendIndex] : trendRows.at(-1);
-    const prevTrend =
-      currentTrendIndex > 0
-        ? trendRows[currentTrendIndex - 1]
-        : trendRows.length > 1
-        ? trendRows[trendRows.length - 2]
-        : null;
+    const currentTrend = currentTrendIndex >= 0 ? trendRows[currentTrendIndex] : pnl;
+    const previousTrend = currentTrendIndex > 0 ? trendRows[currentTrendIndex - 1] : null;
+    const metricChanges = calculatePdfMetricChanges(currentTrend, previousTrend);
+    const revenueChangeTag = formatPdfMetricTag(metricChanges.revenue, { hasMonthlyData });
+    const expensesChangeTag = formatPdfMetricTag(metricChanges.expenses, {
+      hasMonthlyData,
+      inverse: true,
+    });
+    const profitChangeTag = formatPdfMetricTag(metricChanges.profit, { hasMonthlyData });
 
-    const calcDelta = (curr, prev) => {
-      if (!prev) return 0;
-      if (prev === 0) return curr === 0 ? 0 : 100;
-      return ((curr - prev) / Math.abs(prev)) * 100;
-    };
-
-    const revenueDelta = calcDelta(
-      Number(currentTrend?.revenue || pnl.revenue || 0),
-      Number(prevTrend?.revenue || 0)
-    );
-    const expensesDelta = calcDelta(
-      Number(currentTrend?.expenses || pnl.expenses || 0),
-      Number(prevTrend?.expenses || 0)
-    );
-    const profitDelta = calcDelta(
-      Number(currentTrend?.profit || pnl.profit || 0),
-      Number(prevTrend?.profit || 0)
-    );
-
-    const marginPercent =
-      Number(pnl.revenue) > 0
-        ? Math.max(0, (Number(pnl.profit) / Number(pnl.revenue)) * 100)
-        : 0;
+    const marginPercent = calculatePdfMarginPercent(pnl.profit, pnl.revenue);
 
     const expenseItems = safeArray(expensesByCategory.items)
       .map((item) => ({
-        category: item.category || "Altro",
+        category: localizePdfCategoryLabel(item.category || "Altro"),
         amount: Math.abs(Number(item.total_amount || item.expenses || 0)),
       }))
       .filter((item) => item.amount > 0)
@@ -439,7 +385,9 @@ export default function App() {
         const trClass = isOver ? "urgente" : !isPaid ? "scadenza" : "";
         const amountColor = isOver ? "var(--red)" : !isPaid ? "var(--yellow)" : "var(--text-dark)";
         const dueColor = isOver ? "var(--red)" : !isPaid ? "var(--yellow)" : "var(--text-soft)";
-        const categoryLabel = resolveInvoiceCategoryLabel(invoice, knownCategoryNames);
+        const categoryLabel = localizePdfCategoryLabel(
+          resolveInvoiceCategoryLabel(invoice, knownCategoryNames)
+        );
         return `<tr class="${trClass}"><td><strong>${escapeHtml(
           invoice.supplier || "Fornitore"
         )}</strong></td><td style="color:var(--text-soft)">${escapeHtml(
@@ -461,50 +409,15 @@ export default function App() {
       })
       .join("");
 
-    const apiInsights = safeArray(insights.insights).slice(0, 3);
-    const fallbackInsights = [
-      {
-        tone: profitDelta >= 0 ? "pos" : "neg",
-        icon: profitDelta >= 0 ? "📈" : "📉",
-        title: profitDelta >= 0 ? "Margine in crescita" : "Margine in calo",
-        text: `Il margine netto di ${monthLabel} è al ${marginPercent.toFixed(0)}% (${Math.abs(
-          profitDelta
-        ).toFixed(1)}% vs mese precedente).`,
-      },
-      {
-        tone: unpaidTotal > 0 ? "neg" : "pos",
-        icon: unpaidTotal > 0 ? "⚠️" : "✅",
-        title: unpaidTotal > 0 ? "Fatture da saldare" : "Nessuna fattura aperta",
-        text:
-          unpaidTotal > 0
-            ? `Ci sono ${unpaidInvoices.length} fatture non pagate per ${new Intl.NumberFormat("it-IT", {
-                style: "currency",
-                currency: "EUR",
-                minimumFractionDigits: 0,
-                maximumFractionDigits: 0,
-              }).format(unpaidTotal)}.`
-            : "Tutte le fatture del mese risultano pagate.",
-      },
-      {
-        tone: "neu",
-        icon: "🏷️",
-        title: "Focus costi",
-        text: expenseItems.length
-          ? `${escapeHtml(expenseItems[0].category)} è la categoria con impatto maggiore sui costi del mese.`
-          : "Nessuna categoria di costo disponibile per il mese selezionato.",
-      },
-    ];
+    const apiInsights = safeArray(insights.insights);
 
-    const insightsRows = (apiInsights.length
-      ? apiInsights.map((text, index) => ({
-          tone: index === 0 ? "pos" : index === 1 ? "neg" : "neu",
-          icon: index === 0 ? "📈" : index === 1 ? "⚠️" : "💡",
-          title: index === 0 ? "Andamento" : index === 1 ? "Attenzione" : "Suggerimento",
-          text: translateInsightToItalian(text),
-        }))
-      : fallbackInsights
-    )
-      .slice(0, 3)
+    const insightItems = buildPdfInsightItems({
+      apiInsights,
+      metricChanges,
+      hasMonthlyData,
+    });
+
+    const insightsRows = insightItems
       .map(
         (item) => `<div class="insight-row ${item.tone}"><span class="ir-icon">${item.icon}</span><div><div class="ir-title">${escapeHtml(
           item.title
@@ -528,16 +441,14 @@ export default function App() {
         maximumFractionDigits: 2,
       }).format(Number(value) || 0);
 
-    const kpiTag = (delta) => `${delta >= 0 ? "↑" : "↓"} ${Math.abs(delta).toFixed(1)}%`;
-
-    const totalK = Number(pnl.expenses) > 0 ? `€${(Number(pnl.expenses) / 1000).toFixed(1).replace(".", ",")}k` : "€0";
+    const categoryTotalLabel = euro0(totalCategoryExpenses);
 
     const html = `<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BarManager - Report ${escapeHtml(capMonthLabel)}</title>
+<title>BarManager - Resoconto ${escapeHtml(capMonthLabel)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -799,6 +710,7 @@ export default function App() {
 
   .up { background: var(--green-bg); color: var(--green); }
   .down { background: var(--red-bg); color: var(--red); }
+  .neutral { background: #f1f3f2; color: #68756c; }
 
   .m-wrap {
     height: 5px;
@@ -946,6 +858,7 @@ export default function App() {
   .insight-row.pos { background: var(--green-bg); border-color: #c0e4d4; }
   .insight-row.neg { background: var(--red-bg); border-color: #f5c0bc; }
   .insight-row.neu { background: var(--yellow-bg); border-color: #f0d090; }
+  .insight-row.info { background: #f2f5f3; border-color: #d9e3dc; }
   .ir-icon { font-size: 16px; flex-shrink: 0; }
   .ir-title { font-weight: 600; color: var(--text-dark); margin-bottom: 2px; font-size: 12px; }
   .ir-text { color: var(--text-mid); line-height: 1.4; }
@@ -968,10 +881,23 @@ export default function App() {
     font-size: 9.5px; color: var(--text-soft); margin-top: 3px;
   }
 
+  @page { size: A4 portrait; margin: 0; }
+
   @media print {
-    body { background: #fff; padding: 0; }
+    body { background: #fff; padding: 0; margin: 0; }
     .screen-header { display: none; }
-    .a4 { box-shadow: none; border-radius: 0; width: 100%; }
+    .a4 { box-shadow: none; border-radius: 0; width: 210mm; margin: 0 auto; }
+    .a4,
+    .a4 * {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .doc-header { padding: 26px 40px 22px; }
+    .doc-body { padding: 24px 40px; }
+    .kpi-strip { margin-bottom: 20px; }
+    .ftbl td { padding-top: 6px; padding-bottom: 6px; }
+    .insight-section { margin-top: 16px; }
+    .doc-footer { padding: 10px 0; }
   }
 </style>
 </head>
@@ -993,7 +919,7 @@ export default function App() {
         <div class="logo-icon">☕</div>
         <div>
           <div class="logo-name">BarManager</div>
-          <div class="logo-sub">Report mensile</div>
+          <div class="logo-sub">Resoconto mensile</div>
         </div>
       </div>
       <div class="header-meta">
@@ -1018,33 +944,34 @@ export default function App() {
       <div class="kpi-box dark">
         <div class="kpi-box-label">Margine netto</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pnl.profit))}</div>
-        <div class="m-wrap"><div class="m-fill" style="width:${Math.min(100, marginPercent).toFixed(0)}%"></div></div>
-        <div class="m-labels"><span>0%</span><span class="hi">${marginPercent.toFixed(0)}%</span><span>100%</span></div>
-        <div class="kpi-box-sub">${kpiTag(profitDelta)} vs mese precedente</div>
+        <div class="kpi-box-sub">${marginPercent.toFixed(0)}% dei ricavi</div>
+        <div class="m-wrap"><div class="m-fill" style="width:${getPdfMarginBarWidth(marginPercent).toFixed(0)}%"></div></div>
+        <div class="kpi-box-sub">${profitChangeTag.tone === "neutral" ? "Confronto col mese precedente non disponibile" : `${profitChangeTag.text} rispetto al mese precedente`}</div>
       </div>
       <div class="kpi-box">
         <div class="kpi-box-label">Ricavi totali</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pnl.revenue))}</div>
-        <div class="kpi-tag ${revenueDelta >= 0 ? "up" : "down"}">${kpiTag(revenueDelta)}</div>
-        <div class="kpi-box-sub">${safeArray(topProducts.by_quantity).length} prodotti top</div>
+        ${revenueChangeTag.tone === "neutral"
+          ? `<div class="kpi-box-sub">${escapeHtml(revenueChangeTag.text)}</div>`
+          : `<div class="kpi-tag ${revenueChangeTag.tone}">${escapeHtml(revenueChangeTag.text)}</div>`}
       </div>
       <div class="kpi-box">
         <div class="kpi-box-label">Costi totali</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pnl.expenses))}</div>
-        <div class="kpi-tag ${expensesDelta <= 0 ? "up" : "down"}">${kpiTag(expensesDelta)}</div>
-        <div class="kpi-box-sub">${currentMonthInvoices.length} fatture</div>
+        ${expensesChangeTag.tone === "neutral"
+          ? `<div class="kpi-box-sub">${escapeHtml(expensesChangeTag.text)}</div>`
+          : `<div class="kpi-tag ${expensesChangeTag.tone}">${escapeHtml(expensesChangeTag.text)}</div>`}
       </div>
       <div class="kpi-box">
         <div class="kpi-box-label">Da pagare</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pendingInvoicesAmount))}</div>
-        <div class="kpi-tag ${pendingInvoices.length > 0 ? "down" : "up"}">${pendingInvoices.length > 0 ? "⚠" : "✓"} ${pendingInvoices.length}</div>
-        <div class="kpi-box-sub">fatture in sospeso</div>
+        <div class="kpi-tag ${pendingInvoices.length > 0 ? "down" : "up"}">${escapeHtml(formatPendingInvoicesLabel(pendingInvoices.length))}</div>
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:26px;">
       <div>
-        <div class="section-title">📊 Ricavi vs Costi</div>
+        <div class="section-title">📊 Confronto tra ricavi e costi</div>
         <div class="bar-chart-mini">
           ${trendBars}
         </div>
@@ -1062,7 +989,7 @@ export default function App() {
               ${donutCircles || `<circle cx="50" cy="50" r="35" fill="none" stroke="#e8d8c4" stroke-width="16"/>`}
             </svg>
             <div class="donut-center-mini">
-              <div class="dcv">${escapeHtml(totalK)}</div>
+              <div class="dcv">${escapeHtml(categoryTotalLabel)}</div>
               <div class="dcl">totale</div>
             </div>
           </div>
@@ -1092,13 +1019,13 @@ export default function App() {
       </table>
       <div style="display:flex;justify-content:flex-end;margin-top:10px;padding-top:10px;border-top:1.5px solid var(--espresso);">
         <div style="display:flex;gap:32px;font-size:12px;">
-          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Totale pagate</div><div style="font-weight:700;color:var(--green);">${escapeHtml(
+          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Totale pagato</div><div style="font-weight:700;color:var(--green);">${escapeHtml(
             euro0(paidTotal)
           )}</div></div>
-          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Da saldare</div><div style="font-weight:700;color:var(--red);">${escapeHtml(
+          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Importo da saldare</div><div style="font-weight:700;color:var(--red);">${escapeHtml(
             euro0(unpaidTotal)
           )}</div></div>
-          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Totale mese</div><div style="font-weight:700;color:var(--espresso);font-size:14px;">${escapeHtml(
+          <div style="text-align:right;"><div style="color:var(--text-soft);margin-bottom:2px;">Totale del mese</div><div style="font-weight:700;color:var(--espresso);font-size:14px;">${escapeHtml(
             euro0(monthInvoiceTotal)
           )}</div></div>
         </div>
@@ -1106,7 +1033,7 @@ export default function App() {
     </div>
 
     <div class="insight-section">
-      <div class="section-title">💡 Insight automatici</div>
+      <div class="section-title">💡 Analisi automatiche</div>
       <div class="insight-list-pdf">
         ${insightsRows}
       </div>

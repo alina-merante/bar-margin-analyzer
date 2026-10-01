@@ -615,11 +615,6 @@ useEffect(() => {
     });
 }, [invoicesForView, allVisibleInvoices, statusFilter, supplierSearch, categoryFilter, knownCategoryNames]);
 
-const totalAmount = invoicesForView.reduce(
-      (sum, invoice) => sum + (Number(invoice.total) || 0),
-    0
-  );
-
   const paidAmount = paidInvoices.reduce(
     (sum, invoice) => sum + (Number(invoice.total) || 0),
     0
@@ -648,10 +643,7 @@ const totalAmount = invoicesForView.reduce(
             {statusFilter === "year-overdue" ? (
               `Arretrati anno ${currentYear} · ${yearOverdueInvoices.length} fatture`
             ) : (
-              <>
-                {formatMonthHuman(month)} · {currentMonthInvoices.length} fatture · {" "}
-                {formatEuro(totalAmount)} totale
-              </>
+              formatMonthHuman(month)
             )}
           </p>
         </div>
@@ -703,17 +695,23 @@ const totalAmount = invoicesForView.reduce(
         <article className="invoice-kpi-card">
           <div className="invoice-kpi-label">In scadenza</div>
           <div className="invoice-kpi-value">{formatEuro(monthDueAmount)}</div>
-          <span className="invoice-kpi-pill yellow">⏰ {monthDueInvoices.length} fatture</span>
+          {monthDueInvoices.length ? (
+            <span className="invoice-kpi-pill yellow">⏰ {monthDueInvoices.length} fatture</span>
+          ) : (
+            <span className="invoice-kpi-pill green">✓ Nessuna fattura in scadenza</span>
+          )}
         </article>
 
         <article className="invoice-kpi-card dark">
           <div className="invoice-kpi-label">Scadute</div>
           <div className="invoice-kpi-value">{formatEuro(monthOverdueAmount)}</div>
-          <span className="invoice-kpi-pill red">⚠ Pagamento urgente</span>
+          <span className={`invoice-kpi-pill ${monthOverdueInvoices.length ? "red" : "green"}`}>
+            {monthOverdueInvoices.length ? "⚠ Pagamento urgente" : "✓ Nessuna fattura scaduta"}
+          </span>
         </article>
 
         <article
-          className="invoice-kpi-card overdue"
+          className={`invoice-kpi-card overdue ${yearOverdueInvoices.length ? "has-arrears" : "clear"}`}
           style={{ cursor: "pointer" }}
           onClick={() => {
             setStatusFilter("year-overdue");
@@ -723,9 +721,13 @@ const totalAmount = invoicesForView.reduce(
         >
           <div className="invoice-kpi-label">Arretrati {currentYear}</div>
           <div className="invoice-kpi-value">{formatEuro(yearOverdueTotal)}</div>
-          <span className="invoice-kpi-pill notification-dot">
-            {yearOverdueInvoices.length}
-          </span>
+          {yearOverdueInvoices.length ? (
+            <span className="invoice-kpi-pill red">
+              ⚠ {yearOverdueInvoices.length} fatture
+            </span>
+          ) : (
+            <span className="invoice-kpi-pill green">✓ Nessun arretrato</span>
+          )}
         </article>
       </section>
 
@@ -929,6 +931,9 @@ const totalAmount = invoicesForView.reduce(
         {filteredInvoices.length ? (
           filteredInvoices.map((invoice) => {
             const status = getInvoiceStatus(invoice);
+            const linkedAmount = Number(invoice.linked_amount) || 0;
+            const remainingAmount = getInvoiceRemainingAmount(invoice);
+            const isPartiallyPaid = linkedAmount > 0 && remainingAmount > 0;
 
             return (
               <div className={`invoice-clean-table-row ${status}`} key={invoice.id}>
@@ -955,13 +960,6 @@ const totalAmount = invoicesForView.reduce(
 
                 <div className="invoice-modern-total">
                   <strong>{formatEuro(invoice.total)}</strong>
-                  {invoice.status === "paid" ? (
-                    <small className="invoice-payment-summary paid">Pagata</small>
-                  ) : (
-                    <small className="invoice-payment-summary">
-                      Pagato {formatEuro(invoice.linked_amount ?? 0)} · residuo {formatEuro(invoice.remaining_amount ?? invoice.total)}
-                    </small>
-                  )}
                 </div>
 
                 <div className="invoice-action-cell">
@@ -975,16 +973,25 @@ const totalAmount = invoicesForView.reduce(
                   </button>
                 </div>
 
-                <div className="invoice-action-cell">
-                  {invoice.status === "pending" ? (
-                    <button
-                      type="button"
-                      className="invoice-reconcile-btn"
-                      onClick={() => openReconciliation(invoice)}
-                    >
-                      Abbina pagamento
-                    </button>
-                  ) : null}
+                <div className="invoice-action-cell invoice-payment-cell">
+                  {invoice.status === "paid" ? (
+                    <span className="invoice-payment-paid">✓ Pagata</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="invoice-reconcile-btn"
+                        onClick={() => openReconciliation(invoice)}
+                      >
+                        Abbina pagamento
+                      </button>
+                      {isPartiallyPaid ? (
+                        <small className="invoice-payment-summary">
+                          Pagato {formatEuro(linkedAmount)} · Residuo {formatEuro(remainingAmount)}
+                        </small>
+                      ) : null}
+                    </>
+                  )}
                 </div>
 
                 <div className="invoice-action-cell">

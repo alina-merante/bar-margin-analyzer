@@ -226,7 +226,12 @@ export default function UploadPage({
         kind: "document",
         tab: document.section === "cash" ? "cash" : document.section === "bank" ? "bank" : "other",
         title: document.original_filename,
-        subtitle: document.category,
+        subtitle:
+          document.section === "bank"
+            ? "Movimenti bancari"
+            : document.section === "cash"
+              ? "Chiusura di cassa"
+              : document.category,
         typeLabel: document.document_type,
         dateValue: effectiveDate || document.created_at,
         dateLabel:

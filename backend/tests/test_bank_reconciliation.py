@@ -16,7 +16,7 @@ from app.models import (
     PaymentMethod,
     Transaction,
 )
-from app.routers.analytics import invoices_summary, monthly_pnl
+from app.routers.analytics import expenses_by_category, invoices_summary, monthly_pnl
 from app.routers.finance import (
     LinkPaymentPayload,
     PaymentCreate,
@@ -229,6 +229,44 @@ def test_multiple_transactions_can_pay_one_invoice(db):
     assert second_result["invoice_status"] == "paid"
     assert db.query(Payment).count() == 2
     assert db.query(InvoicePaymentLink).count() == 2
+
+
+def test_expenses_by_category_matches_completed_invoice_pnl_costs(db):
+    coffee_invoice = add_invoice(db, total="420.00")
+    coffee_invoice.supplier = "Torrefazione Italiana S.p.A."
+    coffee_invoice.invoice_number = "TC-2026-071"
+    reconcile(db, coffee_invoice, add_transaction(db, amount="-420.00"))
+
+    beverage_invoice = add_invoice(db, total="500.00")
+    beverage_invoice.supplier = "DISTRIBUZIONE BEVANDE S.R.L."
+    beverage_invoice.invoice_number = "DB-2026-072"
+    reconcile(
+        db,
+        beverage_invoice,
+        add_transaction(db, amount="-200.00", date=dt.date(2026, 7, 15)),
+    )
+    reconcile(
+        db,
+        beverage_invoice,
+        add_transaction(db, amount="-300.00", date=dt.date(2026, 7, 18)),
+    )
+
+    partial_invoice = add_invoice(db, total="100.00")
+    partial_invoice.supplier = "Servizi Alfa"
+    partial_invoice.invoice_number = "SA-2026-001"
+    reconcile(db, partial_invoice, add_transaction(db, amount="-40.00"))
+
+    add_transaction(db, amount="-90.00", description="Unlinked bank debit")
+
+    result = expenses_by_category("2026-07", db)
+    pnl = monthly_pnl(db, dt.date(2026, 7, 1), dt.date(2026, 8, 1))
+
+    assert result["items"] == [
+        {"category": "Bevande", "total_amount": 500.0},
+        {"category": "Caffe", "total_amount": 420.0},
+    ]
+    assert sum(item["total_amount"] for item in result["items"]) == float(pnl["expenses"]) == 920.0
+    assert expenses_by_category("2026-08", db)["items"] == []
 
 
 def test_positive_transaction_cannot_pay_invoice(db):

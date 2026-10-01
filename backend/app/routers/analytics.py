@@ -17,6 +17,7 @@ from app.models import (
     SaleLine,
     Transaction,
 )
+from app.routers.finance import infer_invoice_category
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
@@ -67,7 +68,7 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
     return Decimal(revenue.scalar_one())
 
 
-def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
+def completed_invoice_expenses_query(start: dt.date, end: dt.date):
     linked_payments = (
         select(
             InvoicePaymentLink.invoice_id.label("invoice_id"),
@@ -79,8 +80,8 @@ def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
         .subquery()
     )
 
-    completed_invoices = db.execute(
-        select(Invoice.total)
+    return (
+        select(Invoice.total, Invoice.supplier, Invoice.invoice_number)
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
         .where(
             Invoice.status == InvoiceStatus.paid,
@@ -88,6 +89,12 @@ def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
             linked_payments.c.completion_date >= start,
             linked_payments.c.completion_date < end,
         )
+    )
+
+
+def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
+    completed_invoices = db.execute(
+        completed_invoice_expenses_query(start, end)
     ).scalars().all()
 
     return sum((Decimal(total) for total in completed_invoices), Decimal("0"))
@@ -426,17 +433,22 @@ def expenses_by_category(
     month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)
 ) -> dict:
     start, end = parse_month(month)
+    rows = db.execute(completed_invoice_expenses_query(start, end)).all()
+    category_totals: dict[str, Decimal] = {}
+    for row in rows:
+        category = infer_invoice_category(row.supplier, row.invoice_number)
+        category_totals[category] = category_totals.get(category, Decimal("0")) + Decimal(row.total)
 
-    rows = []
+    items = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)
 
     return {
         "month": month,
         "items": [
             {
-                "category": row.category or "Uncategorized",
-                "total_amount": float(row.total_amount),
+                "category": category,
+                "total_amount": float(total_amount),
             }
-            for row in rows
+            for category, total_amount in items
         ],
     }
 

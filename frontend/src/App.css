@@ -2637,38 +2637,53 @@ body {
 }
 
 .invoice-kpi-card.overdue {
-  background: #4e1318;
-  border-color: transparent;
+  grid-column: 2 / span 2;
+  justify-self: center;
+  width: calc((100% - 18px) / 2);
+  display: block;
+  min-height: 178px;
+  padding: 24px;
+  background: #914650;
+  border: 2px solid #7f3540;
 }
 
 .invoice-kpi-card.overdue::after {
-  background: rgba(181, 38, 56, 0.2);
+  background: rgba(255, 231, 233, 0.12);
 }
 
 .invoice-kpi-card.overdue .invoice-kpi-label,
-.invoice-kpi-card.overdue .invoice-kpi-value,
-.invoice-kpi-card.overdue .invoice-kpi-pill {
+.invoice-kpi-card.overdue .invoice-kpi-value {
   color: #ffffff;
 }
 
-.invoice-kpi-card.overdue .invoice-kpi-pill {
-  background: transparent;
-  padding: 0;
+.invoice-kpi-card.overdue .invoice-kpi-label {
+  color: rgba(255, 249, 248, 0.82);
 }
 
-.invoice-kpi-card.overdue .notification-dot {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  background: #ff1a1a;
-  color: #ffffff;
-  min-width: 32px;
-  font-size: 14px;
-  font-weight: 800;
-  padding: 0;
+.invoice-kpi-card.overdue.has-arrears {
+  background: #9b3f4b;
+  border-color: #84343f;
+}
+
+.invoice-kpi-card.overdue.has-arrears .invoice-kpi-pill.red {
+  background: #f8e1e3;
+  color: #873440;
+  padding: 10px 14px;
+}
+
+@media (max-width: 1300px) {
+  .invoice-kpi-card.overdue {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: calc((100% - 18px) / 2);
+  }
+}
+
+@media (max-width: 900px) {
+  .invoice-kpi-card.overdue {
+    grid-column: 1;
+    width: 100%;
+  }
 }
 
 .invoice-kpi-label {
@@ -3744,14 +3759,6 @@ body {
   background: #fde7e7 !important;
 }
 
-.invoice-clean-table-head,
-.invoice-clean-table-row {
-  display: grid;
-  grid-template-columns: 2fr 0.9fr 1fr 1fr 1.2fr 100px 90px;
-  align-items: center;
-  gap: 14px;
-}
-
 .invoice-clean-table-head {
   padding: 18px 22px;
   border-bottom: 1px solid #eee2d2;
@@ -3819,10 +3826,10 @@ body {
 .invoice-clean-table-head,
 .invoice-clean-table-row {
   display: grid !important;
-  grid-template-columns: minmax(175px, 1.6fr) minmax(95px, 0.8fr) minmax(100px, 0.85fr) minmax(100px, 1fr) minmax(85px, 0.85fr) 56px minmax(132px, 1.15fr) 56px !important;
+  grid-template-columns: minmax(190px, 1.6fr) minmax(110px, 0.95fr) minmax(100px, 0.9fr) minmax(110px, 1fr) minmax(105px, 0.95fr) minmax(105px, 0.9fr) minmax(160px, 1.25fr) minmax(90px, 0.8fr) !important;
   align-items: center !important;
-  column-gap: 18px !important;
-  min-width: 1050px;
+  column-gap: 16px !important;
+  min-width: 1140px;
 }
 
 .invoice-clean-table-head {
@@ -3847,18 +3854,14 @@ body {
   align-items: center !important;
 }
 
-.invoice-clean-table-head > div:nth-child(2),
-.invoice-clean-table-head > div:nth-child(3),
-.invoice-clean-table-head > div:nth-child(4),
-.invoice-clean-table-head > div:nth-child(6),
-.invoice-clean-table-head > div:nth-child(7),
-.invoice-clean-table-head > div:nth-child(8),
-.invoice-clean-table-row > div:nth-child(2),
-.invoice-clean-table-row > div:nth-child(3),
-.invoice-clean-table-row > div:nth-child(4),
-.invoice-clean-table-row > div:nth-child(6),
-.invoice-clean-table-row > div:nth-child(7),
-.invoice-clean-table-row > div:nth-child(8) {
+.invoice-clean-table-head > div:first-child,
+.invoice-clean-table-row > div:first-child {
+  justify-content: flex-start !important;
+  text-align: left !important;
+}
+
+.invoice-clean-table-head > div:not(:first-child),
+.invoice-clean-table-row > div:not(:first-child) {
   justify-content: center !important;
   text-align: center !important;
 }
@@ -3873,7 +3876,7 @@ body {
 
 .invoice-modern-total {
   font-weight: 800 !important;
-  text-align: right !important;
+  text-align: center !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
@@ -3921,35 +3924,40 @@ body {
   background: #fde8e8 !important;
 }
 
-.invoice-modern-total {
-  display: flex !important;
-  flex-direction: column;
-  align-items: flex-end;
+.invoice-payment-cell {
+  flex-direction: column !important;
   gap: 4px;
+  min-width: 0;
 }
 
-.invoice-modern-total .invoice-payment-summary {
+.invoice-payment-summary {
+  width: 100%;
   max-width: 100%;
   color: #6e5e4c;
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.3;
-  white-space: normal !important;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.invoice-modern-total .invoice-payment-summary.paid {
+.invoice-payment-paid {
   color: #1e684b;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .invoice-reconcile-btn {
-  min-height: 40px;
+  min-height: 36px;
   border: 1px solid #8d5a25;
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 6px 8px;
   background: #f4e2c9;
   color: #35200e;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
