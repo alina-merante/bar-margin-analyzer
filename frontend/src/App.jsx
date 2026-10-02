@@ -8,6 +8,13 @@ import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
 import { PDFDocument } from "pdf-lib";
 import {
+  getCalendarDate,
+  getInvoiceDueMonthKey,
+  isInvoiceInDueMonth,
+  isInvoiceOverdue,
+  isInvoiceOverdueInCurrentYear,
+} from "./invoiceDateStatus";
+import {
   buildPdfInsightItems,
   calculatePdfMetricChanges,
   calculatePdfMarginPercent,
@@ -59,8 +66,8 @@ function formatMonthLabel(month) {
 function formatShortDate(value) {
   if (!value) return "-";
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
+  const date = getCalendarDate(value);
+  if (!date) return "-";
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
@@ -265,11 +272,11 @@ export default function App() {
     const currentMonthInvoices = safeArray(invoices)
       .filter(
         (invoice) =>
-          invoice.due_date?.slice(0, 7) === month || invoice.issue_date?.slice(0, 7) === month
+          isInvoiceInDueMonth(invoice, month) || invoice.issue_date?.slice(0, 7) === month
       )
       .sort((a, b) => {
-        const aDate = new Date(a.due_date || a.issue_date || 0).getTime();
-        const bDate = new Date(b.due_date || b.issue_date || 0).getTime();
+        const aDate = getCalendarDate(a.due_date || a.issue_date)?.getTime() || 0;
+        const bDate = getCalendarDate(b.due_date || b.issue_date)?.getTime() || 0;
         return aDate - bDate;
       });
 
@@ -380,9 +387,8 @@ export default function App() {
     const invoiceRows = currentMonthInvoices
       .slice(0, 6)
       .map((invoice) => {
-        const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
         const isPaid = invoice.status === "paid";
-        const isOver = !isPaid && dueDate && dueDate < new Date();
+        const isOver = !isPaid && isInvoiceOverdue(invoice);
         const tone = isPaid ? "paid" : isOver ? "over" : "due";
         const trClass = isOver ? "urgente" : !isPaid ? "scadenza" : "";
         const amountColor = isOver ? "var(--red)" : !isPaid ? "var(--yellow)" : "var(--text-dark)";
@@ -1421,24 +1427,13 @@ async function handleDeleteDocument(documentId) {
     invoices.filter(
       (invoice) =>
         invoice.status === "pending" &&
-        invoice.due_date?.slice(0, 7) === month
+        isInvoiceInDueMonth(invoice, month)
     ),
   [invoices, month]
 );
 
 const overdueInvoices = useMemo(() => {
-  const currentYear = new Date().getFullYear();
-
-  return invoices.filter((invoice) => {
-    if (invoice.status !== "pending") return false;
-    if (!invoice.due_date) return false;
-
-    const dueDate = new Date(invoice.due_date);
-    if (Number.isNaN(dueDate.getTime())) return false;
-    if (dueDate.getFullYear() !== currentYear) return false;
-
-    return dueDate < new Date();
-  });
+  return invoices.filter(isInvoiceOverdueInCurrentYear);
 }, [invoices]);
 
 const overdueInvoicesAmount = useMemo(

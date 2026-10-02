@@ -1,6 +1,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import {
+  getCalendarDate,
+  getInvoiceDateStatus,
+  isInvoiceDue,
+  isInvoiceInDueMonth,
+  isInvoiceOverdue,
+  isInvoiceOverdueInCurrentYear,
+} from "../invoiceDateStatus";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -21,8 +29,8 @@ function getInvoiceRemainingAmount(invoice = {}) {
 function formatDate(value) {
   if (!value) return "-";
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
+  const date = getCalendarDate(value);
+  if (!date) return "-";
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
@@ -50,59 +58,6 @@ function normalizeSearchText(value = "") {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function getInvoiceMonthKey(dateValue) {
-  if (!dateValue) return "";
-
-  if (typeof dateValue === "string") {
-    const isoMatch = dateValue.match(/^(\d{4})-(\d{2})/);
-    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
-  }
-
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return "";
-
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function isOverdue(invoice) {
-  if (invoice.status === "paid") return false;
-  if (!invoice.due_date) return false;
-  return new Date(invoice.due_date) < new Date();
-}
-
-function isDue(invoice) {
-  if (invoice.status === "paid") return false;
-  if (!invoice.due_date) return true;
-  return new Date(invoice.due_date) >= new Date();
-}
-
-function getInvoiceStatus(invoice) {
-  if (invoice.status === "paid") return "paid";
-  if (isOverdue(invoice)) return "overdue";
-  return "due";
-}
-
-function isCurrentYearOverdue(invoice) {
-  if (invoice.status === "paid") return false;
-  if (!invoice.due_date) return false;
-
-  const dueDate = new Date(invoice.due_date);
-  if (Number.isNaN(dueDate.getTime())) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  return dueDate < today && dueDate.getFullYear() === new Date().getFullYear();
-}
-
-function getStatusLabel(invoice) {
-  const status = getInvoiceStatus(invoice);
-
-  if (status === "paid") return "Pagata";
-  if (status === "overdue") return "Scaduta";
-  return "In scadenza";
 }
 
 function getCategoryIcon(category = "") {
@@ -476,11 +431,11 @@ useEffect(() => {
   const currentYear = new Date().getFullYear();
 
   const currentMonthInvoices = useMemo(() => {
-    return invoices.filter((invoice) => getInvoiceMonthKey(invoice.due_date) === month);
+    return invoices.filter((invoice) => isInvoiceInDueMonth(invoice, month));
   }, [invoices, month]);
 
   const yearOverdueInvoices = useMemo(
-    () => invoices.filter(isCurrentYearOverdue),
+    () => invoices.filter(isInvoiceOverdueInCurrentYear),
     [invoices]
   );
 
@@ -492,26 +447,26 @@ useEffect(() => {
 
     if (isYearView && ["paid", "due", "overdue"].includes(statusFilter)) {
       return yearOverdueInvoices.filter((invoice) => {
-        const status = getInvoiceStatus(invoice);
+        const status = getInvoiceDateStatus(invoice);
         return status === statusFilter;
       });
     }
 
     if (statusFilter === "overdue") {
-      return currentMonthInvoices.filter(isOverdue);
+      return currentMonthInvoices.filter(isInvoiceOverdue);
     }
 
     return currentMonthInvoices;
   }, [currentMonthInvoices, yearOverdueInvoices, statusFilter, isYearView]);
 
   const paidInvoices = invoicesForView.filter((invoice) => invoice.status === "paid");
-  const dueInvoices = invoicesForView.filter(isDue);
-  const overdueInvoices = invoicesForView.filter(isOverdue);
+  const dueInvoices = invoicesForView.filter(isInvoiceDue);
+  const overdueInvoices = invoicesForView.filter(isInvoiceOverdue);
 
   // Numero di fatture per i pulsanti filtri: sempre del mese corrente
   const monthPaidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
-  const monthDueInvoices = currentMonthInvoices.filter(isDue);
-  const monthOverdueInvoices = currentMonthInvoices.filter(isOverdue);
+  const monthDueInvoices = currentMonthInvoices.filter(isInvoiceDue);
+  const monthOverdueInvoices = currentMonthInvoices.filter(isInvoiceOverdue);
 
   // Importi totali sempre del mese corrente (per le cornici KPI)
   const monthTotalAmount = currentMonthInvoices.reduce(
@@ -597,7 +552,7 @@ useEffect(() => {
     const invoicesToFilter = normalizedSupplierSearch ? allVisibleInvoices : invoicesForView;
 
     return invoicesToFilter.filter((invoice) => {
-      const status = getInvoiceStatus(invoice);
+      const status = getInvoiceDateStatus(invoice);
       const matchesStatus =
         normalizedSupplierSearch ||
         statusFilter === "all" ||
@@ -930,7 +885,7 @@ useEffect(() => {
 
         {filteredInvoices.length ? (
           filteredInvoices.map((invoice) => {
-            const status = getInvoiceStatus(invoice);
+            const status = getInvoiceDateStatus(invoice);
             const linkedAmount = Number(invoice.linked_amount) || 0;
             const remainingAmount = getInvoiceRemainingAmount(invoice);
             const isPartiallyPaid = linkedAmount > 0 && remainingAmount > 0;

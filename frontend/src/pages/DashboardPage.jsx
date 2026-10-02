@@ -1,5 +1,11 @@
 import { Link } from "react-router-dom";
 import { useMemo } from "react";
+import {
+  getCalendarDate,
+  isInvoiceDue,
+  isInvoiceInDueMonth,
+  isInvoiceOverdue,
+} from "../invoiceDateStatus";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -37,8 +43,8 @@ function formatMonthShort(month) {
 function formatShortDate(value) {
   if (!value) return "-";
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
+  const date = getCalendarDate(value);
+  if (!date) return "-";
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
@@ -97,18 +103,6 @@ function getReminderTone(value, fallbackTone = "danger") {
   return "danger";
 }
 
-function isOverdue(invoice) {
-  if (invoice.status === "paid") return false;
-  if (!invoice.due_date) return false;
-  return new Date(invoice.due_date) < new Date();
-}
-
-function isDue(invoice) {
-  if (invoice.status === "paid") return false;
-  if (!invoice.due_date) return true;
-  return new Date(invoice.due_date) >= new Date();
-}
-
 function productIcon(name = "") {
   const lower = name.toLowerCase();
 
@@ -140,12 +134,12 @@ export default function DashboardPage({
   const hasPreviousOverdueInvoices = previousOverdueInvoices.length > 0;
 
   const currentMonthInvoices = useMemo(() => {
-    return invoices.filter((invoice) => invoice.due_date?.slice(0, 7) === month);
+    return invoices.filter((invoice) => isInvoiceInDueMonth(invoice, month));
   }, [invoices, month]);
 
   const paidInvoices = currentMonthInvoices.filter((i) => i.status === "paid");
-  const overdueInvoices = currentMonthInvoices.filter(isOverdue);
-  const dueInvoices = currentMonthInvoices.filter(isDue);
+  const overdueInvoices = currentMonthInvoices.filter(isInvoiceOverdue);
+  const dueInvoices = currentMonthInvoices.filter(isInvoiceDue);
   const overdueInvoicesAmount = overdueInvoices.reduce(
   (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
   0
@@ -461,7 +455,7 @@ export default function DashboardPage({
             <div className="invoice-critical-list">
               {criticalInvoices.length ? (
                 criticalInvoices.map((invoice) => {
-                  const overdue = isOverdue(invoice);
+                  const overdue = isInvoiceOverdue(invoice);
 
                   return (
                     <div
