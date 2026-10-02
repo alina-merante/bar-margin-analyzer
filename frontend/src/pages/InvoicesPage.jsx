@@ -9,6 +9,11 @@ import {
   isInvoiceOverdue,
   isInvoiceOverdueInCurrentYear,
 } from "../invoiceDateStatus";
+import {
+  countInvoicesByCategory,
+  filterInvoiceList,
+  mergeUniqueInvoices,
+} from "../invoiceCollections";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -508,18 +513,22 @@ useEffect(() => {
       .sort((a, b) => a.localeCompare(b, "it"));
   }, [invoiceCategories]);
 
+  const allVisibleInvoices = useMemo(
+    () => mergeUniqueInvoices(currentMonthInvoices, yearOverdueInvoices),
+    [currentMonthInvoices, yearOverdueInvoices]
+  );
+
   const categoryOptions = useMemo(() => {
-    const allInvoices = [...currentMonthInvoices, ...yearOverdueInvoices];
     const counts = new Map();
 
     knownCategoryNames.forEach((label) => {
       counts.set(label, 0);
     });
 
-    allInvoices.forEach((invoice) => {
-      const label = getCategoryLabel(invoice, knownCategoryNames);
-      if (!label) return;
-      counts.set(label, (counts.get(label) || 0) + 1);
+    countInvoicesByCategory(allVisibleInvoices, (invoice) =>
+      getCategoryLabel(invoice, knownCategoryNames)
+    ).forEach((count, label) => {
+      counts.set(label, (counts.get(label) || 0) + count);
     });
 
     return Array.from(counts.entries())
@@ -530,7 +539,7 @@ useEffect(() => {
         tone: getCategoryTone(label),
       }))
       .sort((a, b) => a.label.localeCompare(b.label, "it"));
-  }, [currentMonthInvoices, yearOverdueInvoices, knownCategoryNames]);
+  }, [allVisibleInvoices, knownCategoryNames]);
 
   const filteredCategoryOptions = useMemo(() => {
     const normalizedSearch = categorySearch.trim().toLowerCase();
@@ -545,10 +554,6 @@ useEffect(() => {
     return categoryOptions.find((category) => category.label === categoryFilter) || null;
   }, [categoryOptions, categoryFilter]);
 
-  const allVisibleInvoices = useMemo(() => {
-    return [...currentMonthInvoices, ...yearOverdueInvoices];
-  }, [currentMonthInvoices, yearOverdueInvoices]);
-
   const invoiceSearchScope = useMemo(() => {
     const normalizedSupplierSearch = supplierSearch.trim();
     return normalizedSupplierSearch ? allVisibleInvoices : invoicesForView;
@@ -558,22 +563,11 @@ useEffect(() => {
     const normalizedSupplierSearch = supplierSearch.trim().toLowerCase();
     const invoicesToFilter = normalizedSupplierSearch ? allVisibleInvoices : invoicesForView;
 
-    return invoicesToFilter.filter((invoice) => {
-      const status = getInvoiceDateStatus(invoice);
-      const matchesStatus =
-        normalizedSupplierSearch ||
-        statusFilter === "all" ||
-        statusFilter === "year-overdue" ||
-        status === statusFilter;
-
-      const matchesSupplier =
-        !normalizedSupplierSearch ||
-        invoice.supplier?.toLowerCase().includes(normalizedSupplierSearch);
-
-      const matchesCategory =
-        !categoryFilter || getCategoryLabel(invoice, knownCategoryNames) === categoryFilter;
-
-      return matchesStatus && matchesSupplier && matchesCategory;
+    return filterInvoiceList(invoicesToFilter, {
+      supplierSearch,
+      statusFilter,
+      categoryFilter,
+      categoryForInvoice: (invoice) => getCategoryLabel(invoice, knownCategoryNames),
     });
 }, [invoicesForView, allVisibleInvoices, statusFilter, supplierSearch, categoryFilter, knownCategoryNames]);
 
