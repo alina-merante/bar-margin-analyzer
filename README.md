@@ -19,7 +19,7 @@ attende il controllo di salute dell'API e avvia il frontend Vite.
 ### Modalità GitHub Codespaces
 
 Il repository include [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json).
-Dopo la creazione del Codespace:
+In Codespaces, l'unico comando standard per avviare l'ambiente è:
 
 ```bash
 npm run dev:codespaces
