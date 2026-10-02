@@ -994,16 +994,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
     try:
-        os.makedirs("uploads/invoices", exist_ok=True)
-
         extension = filename.rsplit(".", 1)[-1]
-        safe_filename = f"{uuid.uuid4()}.{extension}"
-        file_path = os.path.join("uploads", "invoices", safe_filename)
-
-        with open(file_path, "wb") as output:
-            output.write(content)
-
-        file_url = f"/uploads/invoices/{safe_filename}"
 
         if filename.endswith(".xml"):
             extracted = extract_invoice_from_xml(content)
@@ -1032,8 +1023,29 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             select(Invoice).where(
                 Invoice.supplier == normalized["supplier"],
                 Invoice.invoice_number == normalized["invoice_number"],
-            )
+            ).with_for_update()
         )
+
+        if existing_invoice:
+            has_payment_links = db.scalar(
+                select(InvoicePaymentLink.id)
+                .where(InvoicePaymentLink.invoice_id == existing_invoice.id)
+                .limit(1)
+            ) is not None
+            if has_payment_links:
+                response = invoice_to_dict(existing_invoice, db)
+                response["already_exists"] = True
+                response["has_payment_links"] = True
+                response["update_applied"] = False
+                db.rollback()
+                return response
+
+        os.makedirs("uploads/invoices", exist_ok=True)
+        safe_filename = f"{uuid.uuid4()}.{extension}"
+        file_path = os.path.join("uploads", "invoices", safe_filename)
+        with open(file_path, "wb") as output:
+            output.write(content)
+        file_url = f"/uploads/invoices/{safe_filename}"
 
         if existing_invoice:
             existing_invoice.file_url = file_url
@@ -1048,6 +1060,8 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
 
             response = invoice_to_dict(existing_invoice, db)
             response["already_exists"] = True
+            response["has_payment_links"] = False
+            response["update_applied"] = True
             return response
 
         invoice = Invoice(

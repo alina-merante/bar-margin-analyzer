@@ -1215,7 +1215,13 @@ export default function App() {
       const result = await response.json();
       const extractedMonth = result.due_date?.slice(0, 7) || month;
 
-      setInvoiceUploadMessage("Fattura acquisita correttamente.");
+      if (result.has_payment_links && result.update_applied === false) {
+        setInvoiceUploadMessage(
+          "Fattura già presente e associata a uno o più pagamenti. I dati esistenti non sono stati modificati."
+        );
+      } else {
+        setInvoiceUploadMessage("Fattura acquisita correttamente.");
+      }
 
       if (result.due_date) {
         setMonth(extractedMonth);

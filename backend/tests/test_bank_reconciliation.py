@@ -1,8 +1,10 @@
+import asyncio
 import datetime as dt
+from io import BytesIO
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,6 +19,7 @@ from app.models import (
     Transaction,
 )
 from app.routers.analytics import expenses_by_category, invoices_summary, monthly_pnl
+from app.routers import finance as finance_router
 from app.routers.finance import (
     LinkPaymentPayload,
     PaymentCreate,
@@ -80,6 +83,22 @@ def reconcile(db, invoice, transaction):
         ReconcileTransactionPayload(transaction_id=transaction.id),
         db,
     )
+
+
+def reupload_invoice(db, tmp_path, monkeypatch, *, total="525.00"):
+    extracted = {
+        "supplier": "TORREFAZIONE ITALIANA S.p.A.",
+        "invoice_number": "TC-2026-071",
+        "issue_date": dt.date(2026, 8, 1),
+        "due_date": dt.date(2026, 8, 31),
+        "total": Decimal(total),
+        "vat": Decimal("75.00"),
+    }
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(finance_router, "extract_invoice_from_xml", lambda _: {})
+    monkeypatch.setattr(finance_router, "normalize_extracted_invoice", lambda _: extracted)
+    upload = UploadFile(filename="invoice.xml", file=BytesIO(b"<invoice />"))
+    return asyncio.run(finance_router.extract_invoice(upload, db))
 
 
 def test_exact_transaction_is_candidate_without_database_changes(db):
@@ -210,6 +229,123 @@ def test_reconcile_partial_payment_keeps_invoice_pending_and_exposes_residual(db
     assert invoice_response["linked_amount"] == 200.0
     assert invoice_response["remaining_amount"] == 220.0
     assert invoice.status == InvoiceStatus.pending
+
+
+def test_reupload_unpaid_invoice_updates_existing_fields(db, tmp_path, monkeypatch):
+    invoice = add_invoice(db)
+    invoice.file_url = "/uploads/original.xml"
+    db.commit()
+
+    result = reupload_invoice(db, tmp_path, monkeypatch)
+
+    db.refresh(invoice)
+    assert result["already_exists"] is True
+    assert result["has_payment_links"] is False
+    assert result["update_applied"] is True
+    assert invoice.issue_date == dt.date(2026, 8, 1)
+    assert invoice.due_date == dt.date(2026, 8, 31)
+    assert invoice.total == Decimal("525.00")
+    assert invoice.vat == Decimal("75.00")
+    assert invoice.status == InvoiceStatus.pending
+    assert invoice.file_url == result["file_url"]
+    assert invoice.file_url != "/uploads/original.xml"
+    assert db.scalars(select(InvoicePaymentLink)).all() == []
+    assert (tmp_path / invoice.file_url.removeprefix("/" )).is_file()
+
+
+def test_reupload_partially_paid_invoice_preserves_fields_links_and_upload_file(db, tmp_path, monkeypatch):
+    invoice = add_invoice(db)
+    invoice.file_url = "/uploads/original.xml"
+    db.commit()
+    transaction = add_transaction(db, amount="-200.00")
+    reconcile(db, invoice, transaction)
+    original_fields = (
+        invoice.supplier,
+        invoice.invoice_number,
+        invoice.issue_date,
+        invoice.due_date,
+        invoice.total,
+        invoice.vat,
+        invoice.status,
+        invoice.file_url,
+    )
+    original_links = db.scalars(
+        select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+    ).all()
+
+    result = reupload_invoice(db, tmp_path, monkeypatch, total="525.00")
+
+    db.refresh(invoice)
+    current_links = db.scalars(
+        select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+    ).all()
+    assert result["already_exists"] is True
+    assert result["has_payment_links"] is True
+    assert result["update_applied"] is False
+    assert (
+        invoice.supplier,
+        invoice.invoice_number,
+        invoice.issue_date,
+        invoice.due_date,
+        invoice.total,
+        invoice.vat,
+        invoice.status,
+        invoice.file_url,
+    ) == original_fields
+    assert [(link.id, link.payment_id) for link in current_links] == [
+        (link.id, link.payment_id) for link in original_links
+    ]
+    assert result["linked_amount"] == 200.0
+    assert result["remaining_amount"] == 220.0
+    assert not (tmp_path / "uploads").exists()
+
+
+def test_reupload_fully_paid_invoice_preserves_status_links_and_pnl(db, tmp_path, monkeypatch):
+    invoice = add_invoice(db)
+    invoice.file_url = "/uploads/original.xml"
+    db.commit()
+    transaction = add_transaction(db, amount="-420.00")
+    reconcile(db, invoice, transaction)
+    original_fields = (
+        invoice.issue_date,
+        invoice.due_date,
+        invoice.total,
+        invoice.vat,
+        invoice.status,
+        invoice.file_url,
+    )
+    original_links = db.scalars(
+        select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+    ).all()
+    month_start = dt.date(2026, 7, 1)
+    month_end = dt.date(2026, 8, 1)
+    assert monthly_pnl(db, month_start, month_end)["expenses"] == Decimal("420.00")
+
+    result = reupload_invoice(db, tmp_path, monkeypatch, total="525.00")
+
+    db.refresh(invoice)
+    current_links = db.scalars(
+        select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+    ).all()
+    assert result["already_exists"] is True
+    assert result["has_payment_links"] is True
+    assert result["update_applied"] is False
+    assert invoice.status == InvoiceStatus.paid
+    assert (
+        invoice.issue_date,
+        invoice.due_date,
+        invoice.total,
+        invoice.vat,
+        invoice.status,
+        invoice.file_url,
+    ) == original_fields
+    assert [(link.id, link.payment_id) for link in current_links] == [
+        (link.id, link.payment_id) for link in original_links
+    ]
+    assert result["linked_amount"] == 420.0
+    assert result["remaining_amount"] == 0.0
+    assert monthly_pnl(db, month_start, month_end)["expenses"] == Decimal("420.00")
+    assert not (tmp_path / "uploads").exists()
 
 
 def test_multiple_transactions_can_pay_one_invoice(db):
