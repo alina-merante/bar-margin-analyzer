@@ -28,6 +28,13 @@ export function getPdfMarginBarWidth(marginPercent) {
   return Math.min(100, Math.abs(Number(marginPercent) || 0));
 }
 
+export function getPdfMarginBarTone(marginPercent) {
+  const value = Number(marginPercent);
+  if (value < 0) return "negative";
+  if (value > 0) return "positive";
+  return "neutral";
+}
+
 const MONTHLY_METRICS = [
   {
     key: "revenue",

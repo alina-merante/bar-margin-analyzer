@@ -13,6 +13,7 @@ import {
   calculatePdfMarginPercent,
   formatPdfMetricTag,
   formatPendingInvoicesLabel,
+  getPdfMarginBarTone,
   getPdfMarginBarWidth,
   hasPdfMonthData,
   localizePdfCategoryLabel,
@@ -311,6 +312,7 @@ export default function App() {
     const profitChangeTag = formatPdfMetricTag(metricChanges.profit, { hasMonthlyData });
 
     const marginPercent = calculatePdfMarginPercent(pnl.profit, pnl.revenue);
+    const marginBarTone = getPdfMarginBarTone(marginPercent);
 
     const expenseItems = safeArray(expensesByCategory.items)
       .map((item) => ({
@@ -713,6 +715,7 @@ export default function App() {
   .neutral { background: #f1f3f2; color: #68756c; }
 
   .m-wrap {
+    position: relative;
     height: 5px;
     background: rgba(255,255,255,.12);
     border-radius: 10px;
@@ -720,10 +723,14 @@ export default function App() {
     margin: 8px 0 4px;
   }
   .m-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
     height: 100%;
     border-radius: 10px;
-    background: linear-gradient(90deg, var(--crema), var(--crema-light));
   }
+  .m-fill.positive { background: var(--green); }
+  .m-fill.negative { background: var(--red); }
   .m-labels {
     display: flex;
     justify-content: space-between;
@@ -945,7 +952,7 @@ export default function App() {
         <div class="kpi-box-label">Margine netto</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pnl.profit))}</div>
         <div class="kpi-box-sub">${marginPercent.toFixed(0)}% dei ricavi</div>
-        <div class="m-wrap"><div class="m-fill" style="width:${getPdfMarginBarWidth(marginPercent).toFixed(0)}%"></div></div>
+        <div class="m-wrap"><div class="m-fill ${marginBarTone}" style="width:${getPdfMarginBarWidth(marginPercent).toFixed(1)}%"></div></div>
         <div class="kpi-box-sub">${profitChangeTag.tone === "neutral" ? "Confronto col mese precedente non disponibile" : `${profitChangeTag.text} rispetto al mese precedente`}</div>
       </div>
       <div class="kpi-box">

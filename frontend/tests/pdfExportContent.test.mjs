@@ -8,6 +8,7 @@ import {
   calculatePdfMarginPercent,
   formatPdfMetricTag,
   formatPendingInvoicesLabel,
+  getPdfMarginBarTone,
   getPdfMarginBarWidth,
   hasPdfMonthData,
   localizePdfCategoryLabel,
@@ -64,6 +65,9 @@ test("PDF margin percentage is signed and its bar width stays valid", () => {
   assert.equal(getPdfMarginBarWidth(positiveMargin), positiveMargin);
   assert.equal(getPdfMarginBarWidth(negativeMargin), 20);
   assert.equal(getPdfMarginBarWidth(-180), 100);
+  assert.equal(getPdfMarginBarTone(negativeMargin), "negative");
+  assert.equal(getPdfMarginBarTone(positiveMargin), "positive");
+  assert.equal(getPdfMarginBarTone(0), "neutral");
   assert.equal(calculatePdfMarginPercent(0, 0), 0);
 });
 
@@ -72,6 +76,11 @@ test("summary card copy keeps the signed margin, shared comparison, and no dupli
 
   assert.match(appSource, /\$\{marginPercent\.toFixed\(0\)\}% dei ricavi/);
   assert.match(appSource, /<div class="kpi-box-sub">\$\{marginPercent\.toFixed\(0\)\}% dei ricavi<\/div>\s*<div class="m-wrap">/);
+  assert.match(appSource, /class="m-fill \$\{marginBarTone\}" style="width:\$\{getPdfMarginBarWidth\(marginPercent\)\.toFixed\(1\)\}%"/);
+  assert.match(appSource, /\.m-fill \{\s+position: absolute;\s+left: 0;/);
+  assert.match(appSource, /\.m-fill\.negative \{ background: var\(--red\); \}/);
+  assert.match(appSource, /\.m-fill\.positive \{ background: var\(--green\); \}/);
+  assert.doesNotMatch(appSource, /m-axis|m-zero|-100%|\+100%/);
     assert.equal((appSource.match(/kpi-box-sub">\$\{escapeHtml\((?:revenue|expenses)ChangeTag\.text\)\}<\/div>/g) || []).length, 2);
   assert.equal((appSource.match(/Confronto col mese precedente non disponibile/g) || []).length, 1);
   assert.doesNotMatch(appSource, /prodotti più venduti/);
