@@ -94,31 +94,29 @@ jobs:
       - name: Verify Alembic revision and schema
         working-directory: backend
         run: |
-          alembic current | grep -F "20261013_0004 (head)"
           python - <<'PY'
           import os
 
           import psycopg2
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          from app.database import Base
+          from app import models  # noqa: F401
 
-          expected_tables = [
-              "category_rules",
-              "daily_cash_closures",
-              "documents",
-              "expense_categories",
-              "invoice_payment_links",
-              "invoices",
-              "payments",
-              "products",
-              "sale_lines",
-              "transactions",
-          ]
+          migration_heads = set(
+            ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+          )
+          if not migration_heads:
+            raise SystemExit("No Alembic migration heads found")
+
+          expected_tables = sorted(Base.metadata.tables)
           database_url = os.environ["DATABASE_URL"].replace(
               "postgresql+psycopg2://", "postgresql://", 1
           )
           with psycopg2.connect(database_url) as connection:
               with connection.cursor() as cursor:
                   cursor.execute("SELECT version_num FROM alembic_version")
-                  revision = cursor.fetchone()[0]
+                  applied_revisions = {row[0] for row in cursor.fetchall()}
                   cursor.execute(
                       "SELECT tablename FROM pg_tables "
                       "WHERE schemaname = 'public' AND tablename <> 'alembic_version' "
@@ -132,15 +130,21 @@ jobs:
                   )
                   file_url_exists = cursor.fetchone() is not None
 
-          if revision != "20261013_0004":
-              raise SystemExit(f"Unexpected Alembic revision: {revision}")
+          if applied_revisions != migration_heads:
+              raise SystemExit(
+                  "Unexpected Alembic revisions: "
+                  f"expected {sorted(migration_heads)}, got {sorted(applied_revisions)}"
+              )
           if tables != expected_tables:
               raise SystemExit(
                   f"Unexpected tables: expected {expected_tables}, got {tables}"
               )
           if not file_url_exists:
               raise SystemExit("Missing invoices.file_url")
-          print("Alembic revision, 10 tables, and invoices.file_url: PASS")
+          print(
+              "Alembic heads "
+              f"{sorted(migration_heads)}, ORM tables, and invoices.file_url: PASS"
+          )
           PY
 
       - name: Start API
