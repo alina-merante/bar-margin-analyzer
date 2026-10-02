@@ -32,7 +32,6 @@ class InvoiceCreate(BaseModel):
     due_date: dt.date
     total: Decimal
     vat: Decimal
-    status: InvoiceStatus = InvoiceStatus.pending
 
 
 class PaymentCreate(BaseModel):
@@ -445,7 +444,9 @@ def merge_extracted_invoice(
     if not invoice_number and source_text:
         invoice_number = extract_invoice_number_from_text(source_text) or ""
 
-    issue_date = ai.get("issue_date") or heuristic.get("issue_date")
+    ai_issue_date = parse_optional_date(ai.get("issue_date"))
+    heuristic_issue_date = parse_optional_date(heuristic.get("issue_date"))
+    issue_date = ai_issue_date or heuristic_issue_date
     due_date = ai.get("due_date") or heuristic.get("due_date")
     delivery_date = heuristic.get("delivery_date")
 
@@ -469,7 +470,7 @@ def merge_extracted_invoice(
     return {
         "supplier": supplier,
         "invoice_number": invoice_number,
-        "issue_date": issue_date,
+        "issue_date": issue_date.isoformat() if issue_date else None,
         "due_date": due_date,
         "delivery_date": delivery_date,
         "total": total,
@@ -507,10 +508,10 @@ def normalize_extracted_invoice(extracted: dict) -> dict:
     if not invoice_number:
         invoice_number = clamp_text(extracted.get("invoice_number"), 80)
 
-    issue_date = parse_optional_date(extracted.get("issue_date")) or dt.date.today()
+    issue_date = parse_optional_date(extracted.get("issue_date"))
     # se è presente la delivery_date (data di consegna), la usiamo come due_date
     delivery_date = parse_optional_date(extracted.get("delivery_date"))
-    due_date = parse_optional_date(extracted.get("due_date")) or issue_date
+    due_date = parse_optional_date(extracted.get("due_date"))
 
     # Se la delivery_date è stata trovata come stringa ma non parsata (es '22/06/'),
     # proviamo a inferire l'anno da issue_date
@@ -528,11 +529,6 @@ def normalize_extracted_invoice(extracted: dict) -> dict:
             else:
                 # usa l'anno della issue_date come default
                 delivery_date = parse_optional_date(f"{daymonth}/{issue_date.year}")
-
-    if delivery_date:
-        due_date = delivery_date
-
-    
 
     total = parse_decimal(extracted.get("total"))
     vat = parse_decimal(extracted.get("vat"))
@@ -878,13 +874,13 @@ def extract_invoice_from_text(text: str) -> dict:
 
     due_date = extract_field(
         [
-            r"(?:scadenza\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
-            r"(?:data\s*scadenza\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
+            r"(?:scadenza\s*[:\-]?\s*|data\s+scadenza\s*[:\-]?\s*)(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
+            r"(?:da\s+pagare\s+entro|pagare\s+entro|pagamento\s+entro|termine\s+di\s+pagamento)\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
         ],
         normalized_text,
     )
 
-    # Cerca la data di consegna esplicita (pagamento alla consegna)
+    # La data di consegna resta distinta dalla scadenza.
     delivery_date = extract_field(
         [
             r"data\s+di\s+consegna\s*[:\-]?\s*(\d{2}[\/\-.]\d{2}[\/\-.]\d{2,4})",
@@ -894,28 +890,13 @@ def extract_invoice_from_text(text: str) -> dict:
         normalized_text,
     )
 
-    if delivery_date:
-        due_date = delivery_date
-
-    # permissive fallback: se non trovata, cerca righe che contengono 'consegna' e prendi una data permissiva
     if not delivery_date:
         for line in normalized_text.splitlines():
             if "consegna" in line.lower():
                 m = re.search(r"(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.]\d{2,4})?)", line)
                 if m:
                     delivery_date = m.group(1)
-                    due_date = delivery_date
                     break
-
-    # se non trovi una scadenza, prova a cercare vicino alla sezione con 'scadenza' o vicino alla fine
-    if not due_date:
-        tail = "\n".join([l for l in normalized_text.splitlines() if l.strip()][-8:])
-        tail_date = extract_field([
-            r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{4})",
-            r"(\d{2}[\/\-.]\d{2}[\/\-.]\d{2})",
-        ], tail)
-        if tail_date:
-            due_date = tail_date
 
     total_str = pick_best_total(normalized_text)
     total_value = parse_decimal(total_str)
@@ -940,7 +921,6 @@ def extract_invoice_from_text(text: str) -> dict:
 
         if vergnano_date:
             issue_date = vergnano_date
-            due_date = due_date or vergnano_date
 
         total_match = re.search(
             r"\b(\d{1,3},\s?\d{2})\s*(?:IIIIE|FIRMA|FIRMA\s+DEL\s+DESTINATARIO|$)",
@@ -972,7 +952,7 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
         due_date=payload.due_date,
         total=payload.total,
         vat=payload.vat,
-        status=payload.status,
+        status=InvoiceStatus.pending,
     )
     db.add(invoice)
     db.commit()
@@ -1018,6 +998,22 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             )
 
         normalized = normalize_extracted_invoice(extracted)
+        if normalized["issue_date"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "missing_issue_date",
+                    "message": "Non è stato possibile riconoscere la data della fattura. Verifica il documento e inserisci la fattura manualmente.",
+                },
+            )
+        if normalized["due_date"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "missing_due_date",
+                    "message": "Non è stato possibile riconoscere la scadenza della fattura. Inseriscila manualmente prima del salvataggio.",
+                },
+            )
 
         existing_invoice = db.scalar(
             select(Invoice).where(

@@ -190,6 +190,7 @@ function getInvoiceDocumentUrl(invoice) {
 const EMPTY_MANUAL_FORM = {
   supplier: "",
   invoice_number: "",
+  issue_date: "",
   due_date: "",
   category: "",
   total: "",
@@ -369,9 +370,15 @@ useEffect(() => {
   }
 
   async function submitManualInvoice() {
+    if (!manualForm.issue_date.trim()) {
+      setManualError("Inserisci la data della fattura.");
+      return;
+    }
+
     const requiredFields = [
       "supplier",
       "invoice_number",
+      "issue_date",
       "due_date",
       "category",
       "total",
@@ -411,11 +418,11 @@ useEffect(() => {
       await handleCreateManualInvoice({
         supplier: manualForm.supplier.trim(),
         invoice_number: manualForm.invoice_number.trim(),
+        issue_date: manualForm.issue_date,
         due_date: manualForm.due_date,
         category: manualForm.category.trim(),
         total: Number(manualForm.total),
         vat: Number(manualForm.vat),
-        status: "pending",
       });
 
       setManualForm(EMPTY_MANUAL_FORM);
@@ -1204,6 +1211,17 @@ useEffect(() => {
                 }
                 placeholder="Numero fattura"
               />
+
+              <label className="invoice-manual-date-field">
+                Data fattura
+                <input
+                  type="date"
+                  required
+                  aria-label="Data fattura"
+                  value={manualForm.issue_date}
+                  onChange={(event) => updateManualForm("issue_date", event.target.value)}
+                />
+              </label>
 
               <input
                 type="date"

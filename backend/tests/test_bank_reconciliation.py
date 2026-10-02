@@ -1,15 +1,16 @@
 import asyncio
 import datetime as dt
+import json
 from io import BytesIO
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database import Base
+from app.database import Base, get_db
 from app.models import (
     Invoice,
     InvoicePaymentLink,
@@ -101,6 +102,58 @@ def reupload_invoice(db, tmp_path, monkeypatch, *, total="525.00"):
     return asyncio.run(finance_router.extract_invoice(upload, db))
 
 
+def extract_invoice_with_data(db, tmp_path, monkeypatch, extracted):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(finance_router, "extract_invoice_from_xml", lambda _: extracted)
+    upload = UploadFile(filename="invoice.xml", file=BytesIO(b"<invoice />"))
+    return asyncio.run(finance_router.extract_invoice(upload, db))
+
+
+async def post_json(app, path, payload):
+    body = json.dumps(payload).encode()
+    request_sent = False
+    messages = []
+
+    async def receive():
+        nonlocal request_sent
+        if request_sent:
+            return {"type": "http.disconnect"}
+        request_sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "client": ("testclient", 123),
+            "server": ("testserver", 80),
+        },
+        receive,
+        send,
+    )
+    response_start = next(message for message in messages if message["type"] == "http.response.start")
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return response_start["status"], json.loads(response_body)
+
+
 def test_exact_transaction_is_candidate_without_database_changes(db):
     invoice = add_invoice(db)
     transaction = add_transaction(db)
@@ -114,6 +167,54 @@ def test_exact_transaction_is_candidate_without_database_changes(db):
     assert db.scalars(select(Payment)).all() == []
     assert db.scalars(select(InvoicePaymentLink)).all() == []
     assert invoice.status == InvoiceStatus.pending
+
+
+def test_create_invoice_api_requires_issue_date_and_ignores_paid_status(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'create-invoice.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    api = FastAPI()
+    api.include_router(finance_router.router)
+
+    def override_get_db():
+        with Session(engine) as session:
+            yield session
+
+    api.dependency_overrides[get_db] = override_get_db
+    payload_without_issue_date = {
+        "supplier": "Supplier API",
+        "invoice_number": "INV-API-1",
+        "due_date": "2026-09-15",
+        "total": "120.00",
+        "vat": "20.00",
+        "status": "paid",
+    }
+
+    try:
+        status_code, _ = asyncio.run(post_json(api, "/invoices", payload_without_issue_date))
+        assert status_code == 422
+        with Session(engine) as session:
+            assert session.scalars(select(Invoice)).all() == []
+
+        payload_with_issue_date = {
+            **payload_without_issue_date,
+            "issue_date": "2026-08-30",
+        }
+        status_code, result = asyncio.run(post_json(api, "/invoices", payload_with_issue_date))
+        assert status_code == 200
+        assert result["status"] == InvoiceStatus.pending.value
+        assert result["issue_date"] == "2026-08-30"
+        assert result["linked_amount"] == 0.0
+        assert result["remaining_amount"] == 120.0
+        with Session(engine) as session:
+            invoice = session.scalar(select(Invoice))
+            assert invoice.status == InvoiceStatus.pending
+            assert session.scalars(select(InvoicePaymentLink)).all() == []
+    finally:
+        api.dependency_overrides.clear()
+        engine.dispose()
 
 
 def test_candidate_search_excludes_positive_used_and_over_residual_transactions(db):
@@ -157,6 +258,9 @@ def test_reconcile_full_payment_links_transaction_and_marks_invoice_paid(db):
     assert result["linked_amount"] == 420.0
     assert result["remaining_amount"] == 0.0
     assert invoice.status == InvoiceStatus.paid
+    summary = invoices_summary(db)
+    assert summary["paid_invoices"] == 1
+    assert summary["paid_amount"] == 420.0
 
 
 @pytest.mark.parametrize(
@@ -229,6 +333,32 @@ def test_reconcile_partial_payment_keeps_invoice_pending_and_exposes_residual(db
     assert invoice_response["linked_amount"] == 200.0
     assert invoice_response["remaining_amount"] == 220.0
     assert invoice.status == InvoiceStatus.pending
+    summary = invoices_summary(db)
+    assert summary["paid_invoices"] == 0
+    assert summary["paid_amount"] == 0.0
+
+
+def test_invoice_summary_excludes_paid_status_without_full_linked_total(db):
+    invoice_without_links = add_invoice(db, total="120.00", status=InvoiceStatus.paid)
+    invoice_with_partial_links = add_invoice(db, total="100.00", status=InvoiceStatus.paid)
+    payment = Payment(
+        date=dt.date(2026, 7, 3),
+        amount=Decimal("40.00"),
+        method=PaymentMethod.bank_transfer,
+        counterparty="TORREFAZIONE ITALIANA S.p.A.",
+        reference="legacy partial payment",
+    )
+    db.add(payment)
+    db.flush()
+    db.add(InvoicePaymentLink(invoice_id=invoice_with_partial_links.id, payment_id=payment.id))
+    db.commit()
+
+    summary = invoices_summary(db)
+
+    assert db.get(Invoice, invoice_without_links.id).status == InvoiceStatus.paid
+    assert db.get(Invoice, invoice_with_partial_links.id).status == InvoiceStatus.paid
+    assert summary["paid_invoices"] == 0
+    assert summary["paid_amount"] == 0.0
 
 
 def test_reupload_unpaid_invoice_updates_existing_fields(db, tmp_path, monkeypatch):
@@ -251,6 +381,87 @@ def test_reupload_unpaid_invoice_updates_existing_fields(db, tmp_path, monkeypat
     assert invoice.file_url != "/uploads/original.xml"
     assert db.scalars(select(InvoicePaymentLink)).all() == []
     assert (tmp_path / invoice.file_url.removeprefix("/" )).is_file()
+
+
+def test_extract_missing_issue_date_rejects_without_invoice_or_uploaded_file(db, tmp_path, monkeypatch):
+    extracted = {
+        "supplier": "TORREFAZIONE ITALIANA S.p.A.",
+        "invoice_number": "TC-2026-071",
+        "issue_date": None,
+        "due_date": "2026-07-10",
+        "total": "420.00",
+        "vat": "60.00",
+    }
+
+    with pytest.raises(HTTPException) as error:
+        extract_invoice_with_data(db, tmp_path, monkeypatch, extracted)
+
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "missing_issue_date"
+    assert error.value.detail["message"] == (
+        "Non è stato possibile riconoscere la data della fattura. "
+        "Verifica il documento e inserisci la fattura manualmente."
+    )
+    assert db.scalars(select(Invoice)).all() == []
+    assert not (tmp_path / "uploads").exists()
+
+
+def test_extract_missing_due_date_rejects_without_invoice_or_uploaded_file(db, tmp_path, monkeypatch):
+    extracted = {
+        "supplier": "TORREFAZIONE ITALIANA S.p.A.",
+        "invoice_number": "TC-2026-071",
+        "issue_date": "2026-07-02",
+        "due_date": None,
+        "total": "420.00",
+        "vat": "60.00",
+    }
+
+    with pytest.raises(HTTPException) as error:
+        extract_invoice_with_data(db, tmp_path, monkeypatch, extracted)
+
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "missing_due_date"
+    assert db.scalars(select(Invoice)).all() == []
+    assert not (tmp_path / "uploads").exists()
+
+
+def test_ocr_generic_tail_date_is_rejected_without_invoice_or_uploaded_file(db, tmp_path, monkeypatch):
+    ocr_text = (
+        "Fornitore Alfa\nNumero fattura F-123\nData fattura: 02/07/2026\n"
+        "Totale fattura: 420,00 EUR\nIVA 60,00\nPagamento con bonifico\n31/07/2026"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(finance_router, "ocr_pdf_bytes", lambda _: ocr_text)
+    monkeypatch.setattr(finance_router, "parse_invoice_with_llm", lambda _: None)
+    upload = UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-test"))
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(finance_router.extract_invoice(upload, db))
+
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "missing_due_date"
+    assert db.scalars(select(Invoice)).all() == []
+    assert not (tmp_path / "uploads").exists()
+
+
+def test_extract_valid_dates_creates_invoice_and_saves_document(db, tmp_path, monkeypatch):
+    extracted = {
+        "supplier": "TORREFAZIONE ITALIANA S.p.A.",
+        "invoice_number": "TC-2026-071",
+        "issue_date": "2026-07-02",
+        "due_date": "2026-07-10",
+        "total": "420.00",
+        "vat": "60.00",
+    }
+
+    result = extract_invoice_with_data(db, tmp_path, monkeypatch, extracted)
+
+    invoice = db.scalar(select(Invoice).where(Invoice.invoice_number == "TC-2026-071"))
+    assert result["issue_date"] == "2026-07-02"
+    assert result["due_date"] == "2026-07-10"
+    assert invoice.issue_date == dt.date(2026, 7, 2)
+    assert invoice.status == InvoiceStatus.pending
+    assert (tmp_path / invoice.file_url.removeprefix("/")).is_file()
 
 
 def test_reupload_partially_paid_invoice_preserves_fields_links_and_upload_file(db, tmp_path, monkeypatch):

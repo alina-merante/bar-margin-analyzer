@@ -1208,8 +1208,13 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(errorBody || `Upload fattura fallito (${response.status})`);
+        const errorPayload = await response.json().catch(() => null);
+        const detail = errorPayload?.detail;
+        const errorMessage =
+          typeof detail === "string"
+            ? detail
+            : detail?.message || `Upload fattura fallito (${response.status})`;
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
@@ -1231,7 +1236,7 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setInvoiceUploadError(
-        "Errore durante il caricamento della fattura o nell'estrazione dati."
+        err.message || "Errore durante il caricamento della fattura o nell'estrazione dati."
       );
     } finally {
       setInvoiceUploading(false);

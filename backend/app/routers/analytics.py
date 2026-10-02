@@ -2,7 +2,7 @@ import datetime as dt
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -68,8 +68,8 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
     return Decimal(revenue.scalar_one())
 
 
-def completed_invoice_expenses_query(start: dt.date, end: dt.date):
-    linked_payments = (
+def invoice_payment_totals_subquery():
+    return (
         select(
             InvoicePaymentLink.invoice_id.label("invoice_id"),
             func.sum(Payment.amount).label("linked_amount"),
@@ -80,12 +80,22 @@ def completed_invoice_expenses_query(start: dt.date, end: dt.date):
         .subquery()
     )
 
+
+def fully_paid_invoice_condition(linked_payments):
+    return and_(
+        Invoice.status == InvoiceStatus.paid,
+        linked_payments.c.linked_amount >= Invoice.total,
+    )
+
+
+def completed_invoice_expenses_query(start: dt.date, end: dt.date):
+    linked_payments = invoice_payment_totals_subquery()
+
     return (
         select(Invoice.total, Invoice.supplier, Invoice.invoice_number)
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
         .where(
-            Invoice.status == InvoiceStatus.paid,
-            linked_payments.c.linked_amount >= Invoice.total,
+            fully_paid_invoice_condition(linked_payments),
             linked_payments.c.completion_date >= start,
             linked_payments.c.completion_date < end,
         )
@@ -476,28 +486,29 @@ def expenses_by_supplier(
 def invoices_summary(db: Session = Depends(get_db)) -> dict:
     total_invoices = db.scalar(select(func.count(Invoice.id))) or 0
     pending_invoices = db.scalar(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.pending)) or 0
-    paid_invoices = db.scalar(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.paid)) or 0
 
-    linked_amounts = (
-        select(
-            InvoicePaymentLink.invoice_id.label("invoice_id"),
-            func.sum(Payment.amount).label("linked_amount"),
-        )
-        .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
-        .group_by(InvoicePaymentLink.invoice_id)
-        .subquery()
-    )
+    linked_payments = invoice_payment_totals_subquery()
+    fully_paid = fully_paid_invoice_condition(linked_payments)
+    paid_invoices = db.scalar(
+        select(func.count(Invoice.id))
+        .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
+        .where(fully_paid)
+    ) or 0
     remaining_amount = case(
-        (Invoice.total > func.coalesce(linked_amounts.c.linked_amount, 0),
-         Invoice.total - func.coalesce(linked_amounts.c.linked_amount, 0)),
+        (Invoice.total > func.coalesce(linked_payments.c.linked_amount, 0),
+         Invoice.total - func.coalesce(linked_payments.c.linked_amount, 0)),
         else_=0,
     )
     pending_amount = db.scalar(
         select(func.coalesce(func.sum(remaining_amount), 0))
-        .outerjoin(linked_amounts, linked_amounts.c.invoice_id == Invoice.id)
+        .outerjoin(linked_payments, linked_payments.c.invoice_id == Invoice.id)
         .where(Invoice.status == InvoiceStatus.pending)
     ) or 0
-    paid_amount = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.status == InvoiceStatus.paid)) or 0
+    paid_amount = db.scalar(
+        select(func.coalesce(func.sum(Invoice.total), 0))
+        .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
+        .where(fully_paid)
+    ) or 0
 
     return {
         "total_invoices": int(total_invoices),
