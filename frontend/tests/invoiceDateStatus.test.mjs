@@ -28,6 +28,14 @@ test("yesterday is overdue, while today and tomorrow are still due", () => {
   assert.equal(isInvoiceDue(invoice("2026-10-03"), today), true);
 });
 
+test("a paid invoice with a past due date is neither overdue nor due", () => {
+  const paidInvoice = { ...invoice("2026-10-01"), status: "paid" };
+
+  assert.equal(getInvoiceDateStatus(paidInvoice, today), "paid");
+  assert.equal(isInvoiceOverdue(paidInvoice, today), false);
+  assert.equal(isInvoiceDue(paidInvoice, today), false);
+});
+
 test("due-soon window includes the selected month's last day, not the next month", () => {
   assert.equal(isInvoiceInDueMonth(invoice("2026-10-31"), "2026-10"), true);
   assert.equal(isInvoiceInDueMonth(invoice("2026-11-01"), "2026-10"), false);
@@ -43,7 +51,22 @@ test("an overdue invoice in the current month is also a current-year arrear", ()
   assert.equal(isInvoiceOverdueInCurrentYear(invoice("2025-12-31"), today), false);
 });
 
-test("date-only API values keep their calendar day in a western timezone", () => {
+test("year rollover excludes prior-year arrears on January 1 and includes them after they become overdue", () => {
+  const januaryFirst = new Date(2026, 0, 1, 12);
+  const priorYearInvoice = invoice("2025-12-31");
+  const januaryFirstInvoice = invoice("2026-01-01");
+
+  assert.equal(isInvoiceOverdue(priorYearInvoice, januaryFirst), true);
+  assert.equal(isInvoiceOverdueInCurrentYear(priorYearInvoice, januaryFirst), false);
+  assert.equal(isInvoiceOverdue(januaryFirstInvoice, januaryFirst), false);
+  assert.equal(isInvoiceOverdueInCurrentYear(januaryFirstInvoice, januaryFirst), false);
+  assert.equal(
+    isInvoiceOverdueInCurrentYear(januaryFirstInvoice, new Date(2026, 0, 2, 12)),
+    true
+  );
+});
+
+test("date-only API values keep their calendar day in western and UTC timezones", () => {
   const moduleUrl = new URL("../src/invoiceDateStatus.js", import.meta.url).href;
   const script = `
     import { getCalendarDate, isInvoiceDue, isInvoiceOverdue } from ${JSON.stringify(moduleUrl)};
@@ -56,17 +79,19 @@ test("date-only API values keep their calendar day in a western timezone", () =>
       overdue: isInvoiceOverdue(invoice, today),
     }));
   `;
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    encoding: "utf8",
-    env: { ...process.env, TZ: "America/Los_Angeles" },
-  });
+  for (const timezone of ["America/Los_Angeles", "UTC"]) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      env: { ...process.env, TZ: timezone },
+    });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    calendarDate: [2026, 10, 2],
-    due: true,
-    overdue: false,
-  });
+    assert.equal(result.status, 0, `${timezone}: ${result.stderr}`);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      calendarDate: [2026, 10, 2],
+      due: true,
+      overdue: false,
+    });
+  }
 });
 
 test("invoice list, dashboard, and PDF share calendar-date helpers", async () => {
