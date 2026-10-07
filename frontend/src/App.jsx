@@ -8,6 +8,7 @@ import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
 import { PDFDocument } from "pdf-lib";
 import {
+  formatCivilDateDMY,
   getCalendarDate,
   getInvoiceDueMonthKey,
   isInvoiceInDueMonth,
@@ -72,19 +73,6 @@ function formatShortDate(value) {
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
     month: "long",
-    year: "numeric",
-  }).format(date);
-}
-
-function formatDateDMY(value) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "2-digit",
     year: "numeric",
   }).format(date);
 }
@@ -401,7 +389,7 @@ export default function App() {
         )}</strong></td><td style="color:var(--text-soft)">${escapeHtml(
           invoice.invoice_number || "-"
         )}</td><td style="color:${dueColor};font-weight:600">${escapeHtml(
-          formatDateDMY(invoice.due_date)
+          formatCivilDateDMY(invoice.due_date)
         )}</td><td>${escapeHtml(categoryLabel)}</td><td style="text-align:right;font-weight:700;color:${amountColor}">${escapeHtml(
           new Intl.NumberFormat("it-IT", {
             style: "currency",
@@ -1493,6 +1481,7 @@ const overdueInvoicesAmount = useMemo(
       .filter((document) => document.section === "cash")
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at ??
     null;
+  const latestPosUploadDateIsCivil = Boolean(overview?.latest_cash_closure_date);
 
   return (
     <BrowserRouter>
@@ -1521,6 +1510,7 @@ const overdueInvoicesAmount = useMemo(
                 pendingInvoicesAmount={pendingInvoicesAmount}
                 invoices={invoices}
                 latestPosUploadDate={latestPosUploadDate}
+                latestPosUploadDateIsCivil={latestPosUploadDateIsCivil}
                 previousOverdueInvoices={overdueInvoices}
 previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 latestBankTransactionDate={overview?.latest_bank_transaction_date ?? null}

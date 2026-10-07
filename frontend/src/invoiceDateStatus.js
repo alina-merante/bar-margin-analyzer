@@ -38,6 +38,53 @@ export function getCalendarDate(value) {
   return createCalendarDate(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
 }
 
+function localDayOrdinal(date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+}
+
+export function formatCivilDateDMY(value) {
+  const date = getCalendarDate(value);
+  if (!date) return "-";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+export function getCivilDateAgeInDays(value, today = new Date()) {
+  const date = getCalendarDate(value);
+  const todayDate = getCalendarDate(today);
+  if (!date || !todayDate) return null;
+
+  return localDayOrdinal(todayDate) - localDayOrdinal(date);
+}
+
+export function getTimestampAgeInLocalDays(value, today = new Date()) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const date = value instanceof Date ? value : new Date(value);
+  const todayDate = today instanceof Date ? today : new Date(today);
+  if (Number.isNaN(date.getTime()) || Number.isNaN(todayDate.getTime())) return null;
+
+  return localDayOrdinal(todayDate) - localDayOrdinal(date);
+}
+
+export function formatDayAgeLabel(ageInDays) {
+  if (ageInDays === null || ageInDays === undefined) return "MANCANTE";
+  if (ageInDays <= 0) return "OGGI";
+  if (ageInDays === 1) return "IERI";
+  return `${ageInDays} GIORNI FA`;
+}
+
+export function getReminderToneForAge(ageInDays, fallbackTone = "danger") {
+  if (ageInDays === null || ageInDays === undefined) return fallbackTone;
+  if (ageInDays <= 1) return "neutral";
+  if (ageInDays <= 3) return "warning";
+  return "danger";
+}
+
 function getCalendarDateKey(value) {
   const date = getCalendarDate(value);
   if (!date) return "";

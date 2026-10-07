@@ -1,7 +1,12 @@
 import { Link } from "react-router-dom";
 import { useMemo } from "react";
 import {
+  formatCivilDateDMY,
+  formatDayAgeLabel,
+  getCivilDateAgeInDays,
   getCalendarDate,
+  getReminderToneForAge,
+  getTimestampAgeInLocalDays,
   isInvoiceDue,
   isInvoiceInDueMonth,
   isInvoiceOverdue,
@@ -40,11 +45,11 @@ function formatMonthShort(month) {
   }).format(new Date(year, monthNum - 1, 1));
 }
 
-function formatShortDate(value) {
+function formatShortDate(value, isCivilDate = false) {
   if (!value) return "-";
 
-  const date = getCalendarDate(value);
-  if (!date) return "-";
+  const date = isCivilDate ? getCalendarDate(value) : new Date(value);
+  if (!date || Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("it-IT", {
     day: "2-digit",
@@ -52,55 +57,18 @@ function formatShortDate(value) {
   }).format(date);
 }
 
-function formatDateDMY(value) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
+function getReminderAge(value, isCivilDate) {
+  return isCivilDate
+    ? getCivilDateAgeInDays(value)
+    : getTimestampAgeInLocalDays(value);
 }
 
-function daysAgoLabel(value) {
-  if (!value) return "MANCANTE";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "MANCANTE";
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  date.setHours(0, 0, 0, 0);
-
-  const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
-
-  if (diffDays <= 0) return "OGGI";
-  if (diffDays === 1) return "IERI";
-
-  return `${diffDays} GIORNI FA`;
+function daysAgoLabel(value, isCivilDate = false) {
+  return formatDayAgeLabel(getReminderAge(value, isCivilDate));
 }
 
-function getReminderTone(value, fallbackTone = "danger") {
-  if (!value) return fallbackTone;
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return fallbackTone;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  date.setHours(0, 0, 0, 0);
-
-  const diffDays = Math.floor((today - date) / (1000 * 60 * 60 * 24));
-
-  if (diffDays <= 1) return "neutral";
-  if (diffDays <= 3) return "warning";
-
-  return "danger";
+function getReminderTone(value, fallbackTone = "danger", isCivilDate = false) {
+  return getReminderToneForAge(getReminderAge(value, isCivilDate), fallbackTone);
 }
 
 function productIcon(name = "") {
@@ -128,6 +96,7 @@ export default function DashboardPage({
   previousOverdueInvoicesAmount = 0,
   invoices = [],
   latestPosUploadDate = null,
+  latestPosUploadDateIsCivil = false,
   latestBankTransactionDate = null,
 }) {
   const monthLabel = formatMonthLabel(month);
@@ -176,25 +145,25 @@ export default function DashboardPage({
   const reminders = [
     {
       icon: "🖨️",
-      badge: daysAgoLabel(latestPosUploadDate),
+      badge: daysAgoLabel(latestPosUploadDate, latestPosUploadDateIsCivil),
       title: "Cassa",
       text: latestPosUploadDate
-        ? `Ultima chiusura cassa del ${formatShortDate(latestPosUploadDate)}`
+        ? `Ultima chiusura cassa del ${formatShortDate(latestPosUploadDate, latestPosUploadDateIsCivil)}`
         : "Chiusura cassa non ancora caricata",
       action: latestPosUploadDate ? "Aggiorna" : "Carica ora",
       to: "/upload",
-      tone: getReminderTone(latestPosUploadDate, "danger"),
+      tone: getReminderTone(latestPosUploadDate, "danger", latestPosUploadDateIsCivil),
     },
     {
       icon: "🏦",
-      badge: daysAgoLabel(latestBankTransactionDate),
+      badge: daysAgoLabel(latestBankTransactionDate, true),
       title: "Movimenti bancari",
       text: latestBankTransactionDate
-        ? `Ultimo movimento registrato il ${formatDateDMY(latestBankTransactionDate)}`
+        ? `Ultimo movimento registrato il ${formatCivilDateDMY(latestBankTransactionDate)}`
         : "Nessun movimento bancario registrato",
       action: latestBankTransactionDate ? "Aggiorna" : "Carica ora",
       to: "/upload",
-      tone: getReminderTone(latestBankTransactionDate, "warning"),
+      tone: getReminderTone(latestBankTransactionDate, "warning", true),
     },
     {
   icon: "🧾",
@@ -217,7 +186,8 @@ export default function DashboardPage({
       title: firstDueInvoice?.supplier || "Prossime scadenze",
       text: firstDueInvoice
         ? `${formatEuro(getInvoiceRemainingAmount(firstDueInvoice))} · scade il ${formatShortDate(
-            firstDueInvoice.due_date
+            firstDueInvoice.due_date,
+            true
           )}`
         : "Nessuna scadenza aperta.",
       action: "Vedi dettagli",

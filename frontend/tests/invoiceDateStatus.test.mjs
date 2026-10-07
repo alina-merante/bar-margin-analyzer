@@ -4,8 +4,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  formatCivilDateDMY,
+  formatDayAgeLabel,
+  getCivilDateAgeInDays,
   getCalendarDate,
   getInvoiceDateStatus,
+  getReminderToneForAge,
+  getTimestampAgeInLocalDays,
   isInvoiceDue,
   isInvoiceInDueMonth,
   isInvoiceOverdue,
@@ -66,20 +71,41 @@ test("year rollover excludes prior-year arrears on January 1 and includes them a
   );
 });
 
-test("date-only API values keep their calendar day in western and UTC timezones", () => {
+test("civil date formatting and reminder age stay stable across Rome, western, and UTC timezones", async () => {
   const moduleUrl = new URL("../src/invoiceDateStatus.js", import.meta.url).href;
   const script = `
-    import { getCalendarDate, isInvoiceDue, isInvoiceOverdue } from ${JSON.stringify(moduleUrl)};
+    import {
+      formatCivilDateDMY,
+      formatDayAgeLabel,
+      getCalendarDate,
+      getCivilDateAgeInDays,
+      getReminderToneForAge,
+      getTimestampAgeInLocalDays,
+      isInvoiceDue,
+      isInvoiceOverdue,
+    } from ${JSON.stringify(moduleUrl)};
     const dueDate = getCalendarDate("2026-10-02");
     const invoice = { status: "pending", due_date: "2026-10-02" };
     const today = new Date(2026, 9, 2, 23, 0);
+    const reminderToday = new Date(2026, 9, 7, 12, 0);
+    const civilTodayAge = getCivilDateAgeInDays("2026-10-07", reminderToday);
+    const civilYesterdayAge = getCivilDateAgeInDays("2026-10-06", reminderToday);
+    const timestampAge = getTimestampAgeInLocalDays("2026-10-07T00:30:00Z", reminderToday);
     console.log(JSON.stringify({
       calendarDate: [dueDate.getFullYear(), dueDate.getMonth() + 1, dueDate.getDate()],
       due: isInvoiceDue(invoice, today),
       overdue: isInvoiceOverdue(invoice, today),
+      pdfDate: formatCivilDateDMY("2026-07-10"),
+      dashboardDate: formatCivilDateDMY("2026-10-07"),
+      todayLabel: formatDayAgeLabel(civilTodayAge),
+      yesterdayLabel: formatDayAgeLabel(civilYesterdayAge),
+      todayTone: getReminderToneForAge(civilTodayAge),
+      yesterdayTone: getReminderToneForAge(civilYesterdayAge),
+      timestampAge,
+      missingTimestampAge: getTimestampAgeInLocalDays(null, reminderToday),
     }));
   `;
-  for (const timezone of ["America/Los_Angeles", "UTC"]) {
+  for (const timezone of ["Europe/Rome", "America/Los_Angeles", "UTC"]) {
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
       encoding: "utf8",
       env: { ...process.env, TZ: timezone },
@@ -90,8 +116,26 @@ test("date-only API values keep their calendar day in western and UTC timezones"
       calendarDate: [2026, 10, 2],
       due: true,
       overdue: false,
+      pdfDate: "10/07/2026",
+      dashboardDate: "07/10/2026",
+      todayLabel: "OGGI",
+      yesterdayLabel: "IERI",
+      todayTone: "neutral",
+      yesterdayTone: "neutral",
+      timestampAge: timezone === "America/Los_Angeles" ? 1 : 0,
+      missingTimestampAge: null,
     });
   }
+
+  const appSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const dashboardSource = await readFile(new URL("../src/pages/DashboardPage.jsx", import.meta.url), "utf8");
+  assert.match(appSource, /formatCivilDateDMY\(invoice\.due_date\)/);
+  assert.match(dashboardSource, /formatCivilDateDMY\(latestBankTransactionDate\)/);
+  assert.match(dashboardSource, /daysAgoLabel\(latestBankTransactionDate, true\)/);
+  assert.match(dashboardSource, /getReminderTone\(latestBankTransactionDate, "warning", true\)/);
+  assert.match(dashboardSource, /const date = isCivilDate \? getCalendarDate\(value\) : new Date\(value\)/);
+  assert.match(dashboardSource, /formatShortDate\(latestPosUploadDate, latestPosUploadDateIsCivil\)/);
+  assert.match(appSource, /latestPosUploadDateIsCivil = Boolean\(overview\?\.latest_cash_closure_date\)/);
 });
 
 test("invoice list, dashboard, and PDF share calendar-date helpers", async () => {
