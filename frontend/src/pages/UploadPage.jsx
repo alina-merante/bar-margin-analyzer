@@ -1,29 +1,27 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-function formatShortDate(value) {
+import {
+  HISTORY_DATE_KIND_CIVIL,
+  HISTORY_DATE_KIND_TIMESTAMP,
+  compareHistoryEntriesDesc,
+  formatCivilDate,
+  formatHistoryDate,
+} from "../historyDates.js";
+
+function formatHistoryEntryDate(value, kind) {
   if (!value) return "Nessun file caricato";
-
-  const dateMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  const date = dateMatch
-    ? new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]))
-    : new Date(value);
-
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
+  return formatHistoryDate(value, kind);
 }
 
 function formatBankTransactionDate(start, end) {
   if (!start) return "";
 
-  const startDate = formatShortDate(start);
+  const startDate = formatCivilDate(start);
 
   if (!end || end === start) return startDate;
 
-  return `${startDate} – ${formatShortDate(end)}`;
+  return `${startDate} – ${formatCivilDate(end)}`;
 }
 
 function formatUploadMessage(message) {
@@ -234,10 +232,14 @@ export default function UploadPage({
               : document.category,
         typeLabel: document.document_type,
         dateValue: effectiveDate || document.created_at,
+        dateKind: effectiveDate ? HISTORY_DATE_KIND_CIVIL : HISTORY_DATE_KIND_TIMESTAMP,
         dateLabel:
           document.section === "bank" && effectiveDate
             ? formatBankTransactionDate(effectiveDate, document.effective_date_end)
-            : formatShortDate(effectiveDate || document.created_at),
+            : formatHistoryEntryDate(
+                effectiveDate || document.created_at,
+                effectiveDate ? HISTORY_DATE_KIND_CIVIL : HISTORY_DATE_KIND_TIMESTAMP
+              ),
         statusLabel: document.status,
         raw: document,
       };
@@ -253,15 +255,14 @@ export default function UploadPage({
         : "Fattura fornitore",
       subtitle: formatInvoiceCategory(invoice, knownInvoiceCategoryNames),
       typeLabel: "FATTURA",
-      dateValue: invoice.due_date,
-      dateLabel: formatShortDate(invoice.issue_date),
+      dateValue: invoice.issue_date,
+      dateKind: HISTORY_DATE_KIND_CIVIL,
+      dateLabel: formatHistoryEntryDate(invoice.issue_date, HISTORY_DATE_KIND_CIVIL),
       statusLabel: invoice.status === "paid" ? "Pagata" : invoice.status === "pending" ? "Da pagare" : invoice.status,
       raw: invoice,
     }));
 
-    return [...documentEntries, ...invoiceEntries].sort(
-      (a, b) => new Date(b.dateValue || 0) - new Date(a.dateValue || 0)
-    );
+    return [...documentEntries, ...invoiceEntries].sort(compareHistoryEntriesDesc);
   }, [documents, currentMonthInvoices, knownInvoiceCategoryNames]);
 
   const visibleHistoryEntries = useMemo(() => {

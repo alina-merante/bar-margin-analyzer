@@ -18,6 +18,8 @@ from app.models import (
     Transaction,
 )
 from app.routers.finance import infer_invoice_category
+from app.time_utils import to_utc_iso
+
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
@@ -429,9 +431,7 @@ def overview(
             "profit": float(pnl_summary["profit"]),
         },
         "latest_cash_closure_date": latest_cash_closure_date.isoformat() if latest_cash_closure_date else None,
-        "latest_cash_closure_uploaded_at": latest_cash_closure_uploaded_at.isoformat()
-        if latest_cash_closure_uploaded_at
-        else None,
+        "latest_cash_closure_uploaded_at": to_utc_iso(latest_cash_closure_uploaded_at),
         "latest_bank_transaction_date": latest_bank_transaction_date.isoformat()
         if latest_bank_transaction_date
         else None,

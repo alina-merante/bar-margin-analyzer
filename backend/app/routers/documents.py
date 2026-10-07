@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.document import Document
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.transaction import Transaction
+from app.time_utils import to_utc_iso
 
 import datetime as dt
 import re
@@ -57,7 +58,7 @@ def document_to_dict(
         "file_url": document.file_url,
         "preview_url": document.preview_url,
         "status": document.status,
-        "created_at": document.created_at.isoformat(),
+        "created_at": to_utc_iso(document.created_at),
         "section": document.section,
     }
 

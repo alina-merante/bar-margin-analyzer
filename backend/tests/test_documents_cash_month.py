@@ -157,7 +157,7 @@ def test_legacy_bank_document_history_has_no_transaction_date(bank_document_db):
 
     assert result[0]["effective_date"] is None
     assert result[0]["effective_date_end"] is None
-    assert result[0]["created_at"] == document.created_at.isoformat()
+    assert result[0]["created_at"] == "2026-09-30T12:00:00+00:00"
 
 
 def test_cash_document_history_uses_linked_closure_date(bank_document_db):
@@ -182,7 +182,7 @@ def test_legacy_cash_document_history_keeps_created_at_fallback(bank_document_db
     result = documents_router.list_documents(month="2026-07", db=bank_document_db)
 
     assert result[0]["effective_date"] is None
-    assert result[0]["created_at"] == document.created_at.isoformat()
+    assert result[0]["created_at"] == "2026-09-30T12:00:00+00:00"
 
 
 def test_invoice_history_payload_includes_issue_date(bank_document_db):
