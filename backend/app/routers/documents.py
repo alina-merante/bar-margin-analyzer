@@ -347,7 +347,7 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     print("TESTO OCR CHIUSURA CASSA:")
     print(text)
 
-    date = dt.date.today()
+    date = None
 
     date_match = re.search(
         r"(?:DEL GIORNO:|DATA)?\s*(\d{2})[-/](\d{2})[-/](\d{2,4})",
@@ -363,7 +363,10 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
         if year < 100:
             year += 2000
 
-        date = dt.date(year, month, day)
+        try:
+            date = dt.date(year, month, day)
+        except ValueError:
+            date = None
 
     closure_number_match = re.search(
         r"(?:NUM\.\s*CHIUSURA|CHIUSURA\s*N\.?)\s*[:\-]?\s*(\d+)",
@@ -426,6 +429,14 @@ async def upload_document(
 
     if section in {"cash", "cash_closure"}:
         extracted_data = extract_daily_cash_closure(content, extension)
+        if extracted_data["date"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Data della chiusura non rilevata o non valida. "
+                    "Carica un'immagine o un PDF più leggibile."
+                ),
+            )
         if not extracted_data["closure_number"]:
             raise HTTPException(
                 status_code=422,

@@ -915,3 +915,82 @@ def test_other_integrity_errors_are_not_reported_as_duplicate_closure(
         assert session.scalars(select(Document)).all() == []
 
     assert _list_files("uploads") == []
+
+
+DATE_ERROR_DETAIL = (
+    "Data della chiusura non rilevata o non valida. "
+    "Carica un'immagine o un PDF più leggibile."
+)
+
+
+def _extract_with_text(monkeypatch, text):
+    monkeypatch.setattr(documents_router, "extract_text_from_document", lambda c, e: text)
+    return documents_router.extract_daily_cash_closure(b"x", "png")
+
+
+def test_extractor_reads_four_digit_year_date(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nDEL GIORNO: 14/07/2026")
+    assert data["date"] == dt.date(2026, 7, 14)
+
+
+def test_extractor_reads_two_digit_year_date(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nDATA 14/07/26")
+    assert data["date"] == dt.date(2026, 7, 14)
+
+
+def test_extractor_returns_none_when_no_date_found(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nAMMONTARE GIORNO 10,00")
+    assert data["date"] is None
+    assert data["closure_number"] == "201"
+
+
+def test_extractor_returns_none_for_impossible_date_without_raising(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nDEL GIORNO: 45/13/2026")
+    assert data["date"] is None
+
+
+def _assert_rejected_without_writes(session, monkeypatch, expected_detail):
+    commits, flushes = [], []
+    monkeypatch.setattr(session, "commit", lambda: commits.append(1))
+    monkeypatch.setattr(session, "flush", lambda *a, **k: flushes.append(1))
+
+    with pytest.raises(HTTPException) as exc_info:
+        _upload_cash_pdf(session)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == expected_detail
+    assert commits == [] and flushes == []
+    assert session.scalars(select(Document)).all() == []
+    assert session.scalars(select(DailyCashClosure)).all() == []
+    assert not os.path.exists("uploads") or _list_files("uploads") == []
+
+
+def test_cash_upload_with_missing_date_is_rejected_before_any_write(
+    cash_upload_env, monkeypatch
+):
+    monkeypatch.setattr(
+        documents_router,
+        "extract_daily_cash_closure",
+        lambda content, extension: {**_fake_cash_data(content, extension), "date": None},
+    )
+
+    with Session(cash_upload_env) as session:
+        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+
+
+def test_cash_upload_with_impossible_ocr_date_returns_422_not_500(
+    cash_upload_env, monkeypatch
+):
+    # Real extractor, only the OCR text is controlled.
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+    monkeypatch.setattr(
+        documents_router,
+        "extract_text_from_document",
+        lambda c, e: "NUM. CHIUSURA 301\nDEL GIORNO: 45/13/2026\nAMMONTARE GIORNO 10,00",
+    )
+
+    with Session(cash_upload_env) as session:
+        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+
+
+_real_extractor = documents_router.extract_daily_cash_closure
