@@ -19,13 +19,14 @@ from app.models import (
     PaymentMethod,
     Transaction,
 )
-from app.routers.analytics import expenses_by_category, invoices_summary, monthly_pnl
+from app.routers.analytics import expenses_by_category, invoices_summary, monthly_pnl, overview
 from app.routers import finance as finance_router
 from app.routers.finance import (
     LinkPaymentPayload,
     PaymentCreate,
     ReconcileTransactionPayload,
     create_payment,
+    create_invoice,
     delete_invoice,
     get_transaction_candidates,
     link_payment,
@@ -336,6 +337,100 @@ def test_reconcile_partial_payment_keeps_invoice_pending_and_exposes_residual(db
     summary = invoices_summary(db)
     assert summary["paid_invoices"] == 0
     assert summary["paid_amount"] == 0.0
+
+
+def test_invoice_two_reconciled_payments_flow_updates_dashboard_pnl_once(db):
+    taxable_amount = Decimal("409.84")
+    vat_amount = Decimal("90.16")
+    invoice = add_invoice(db, total="500.00")
+    invoice.invoice_number = "INV-E2E-500"
+    invoice.vat = vat_amount
+    db.commit()
+
+    assert taxable_amount + invoice.vat == invoice.total
+    assert invoice.status == InvoiceStatus.pending
+
+    month_start = dt.date(2026, 7, 1)
+    month_end = dt.date(2026, 8, 1)
+
+    def assert_invoice_and_analytics(expected_linked, expected_remaining, expected_expenses):
+        invoice_result = next(
+            row for row in list_invoices(status=None, supplier=None, month=None, db=db)
+            if row["id"] == invoice.id
+        )
+        pnl_result = monthly_pnl(db, month_start, month_end)
+        dashboard_result = overview(month="2026-07", db=db)
+
+        assert invoice_result["status"] == (
+            InvoiceStatus.paid.value
+            if expected_remaining == 0
+            else InvoiceStatus.pending.value
+        )
+        assert invoice_result["total"] == 500.0
+        assert invoice_result["vat"] == 90.16
+        assert invoice_result["linked_amount"] == expected_linked
+        assert invoice_result["remaining_amount"] == expected_remaining
+        assert pnl_result["expenses"] == Decimal(str(expected_expenses))
+        assert dashboard_result["pnl_summary"]["expenses"] == expected_expenses
+
+    assert_invoice_and_analytics(0.0, 500.0, 0.0)
+
+    transaction_one = add_transaction(db, amount="-200.00", date=dt.date(2026, 7, 10))
+    first_result = reconcile(db, invoice, transaction_one)
+
+    assert first_result["invoice_status"] == InvoiceStatus.pending.value
+    assert first_result["linked_amount"] == 200.0
+    assert first_result["remaining_amount"] == 300.0
+    assert_invoice_and_analytics(200.0, 300.0, 0.0)
+
+    transaction_two = add_transaction(db, amount="-300.00", date=dt.date(2026, 7, 20))
+    second_result = reconcile(db, invoice, transaction_two)
+
+    assert second_result["invoice_status"] == InvoiceStatus.paid.value
+    assert second_result["linked_amount"] == 500.0
+    assert second_result["remaining_amount"] == 0.0
+    assert_invoice_and_analytics(500.0, 0.0, 500.0)
+
+    second_invoice_result = create_invoice(
+        finance_router.InvoiceCreate(
+            supplier="Supplier B",
+            invoice_number="INV-E2E-REUSE-GUARD",
+            issue_date=dt.date(2026, 7, 2),
+            due_date=dt.date(2026, 7, 31),
+            total=Decimal("600.00"),
+            vat=Decimal("108.20"),
+        ),
+        db,
+    )
+    second_invoice_id = second_invoice_result["id"]
+    first_payment = db.scalar(select(Payment).where(Payment.transaction_id == transaction_one.id))
+    second_payment = db.scalar(select(Payment).where(Payment.transaction_id == transaction_two.id))
+    original_links = db.scalars(
+        select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+    ).all()
+    original_payment_ids = {link.payment_id for link in original_links}
+
+    assert len(original_links) == 2
+    assert original_payment_ids == {first_payment.id, second_payment.id}
+
+    for payment in (first_payment, second_payment):
+        with pytest.raises(HTTPException) as error:
+            link_payment(
+                second_invoice_id,
+                LinkPaymentPayload(payment_id=payment.id),
+                db,
+            )
+
+        assert error.value.status_code == 409
+        current_links = db.scalars(
+            select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == invoice.id)
+        ).all()
+        assert {link.payment_id for link in current_links} == original_payment_ids
+        assert db.scalars(
+            select(InvoicePaymentLink).where(InvoicePaymentLink.invoice_id == second_invoice_id)
+        ).all() == []
+
+    assert_invoice_and_analytics(500.0, 0.0, 500.0)
 
 
 def test_invoice_summary_excludes_paid_status_without_full_linked_total(db):
