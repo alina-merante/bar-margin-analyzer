@@ -740,3 +740,178 @@ def test_cash_upload_refresh_failure_after_commit_keeps_records_and_files(
         assert closures[0].document_id == documents[0].id
 
     assert len(_list_files("uploads")) == 3
+
+
+def test_cash_upload_without_closure_number_is_rejected_before_any_write(
+    cash_upload_env, monkeypatch
+):
+    monkeypatch.setattr(
+        documents_router,
+        "extract_daily_cash_closure",
+        lambda content, extension: {**_fake_cash_data(content, extension), "closure_number": None},
+    )
+
+    with Session(cash_upload_env) as session:
+        commits = []
+        flushes = []
+        monkeypatch.setattr(session, "commit", lambda: commits.append(1))
+        monkeypatch.setattr(session, "flush", lambda *a, **k: flushes.append(1))
+
+        with pytest.raises(HTTPException) as exc_info:
+            _upload_cash_pdf(session)
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == (
+            "Numero di chiusura non rilevato. "
+            "Carica un'immagine o un PDF più leggibile."
+        )
+        assert commits == [] and flushes == []
+        assert session.scalars(select(Document)).all() == []
+        assert session.scalars(select(DailyCashClosure)).all() == []
+
+    assert not os.path.exists("uploads") or _list_files("uploads") == []
+
+
+from sqlalchemy.exc import IntegrityError
+
+
+class _FakeDiag:
+    def __init__(self, constraint_name):
+        self.constraint_name = constraint_name
+
+
+class _FakePgError(Exception):
+    def __init__(self, constraint_name):
+        super().__init__("integrity error")
+        self.diag = _FakeDiag(constraint_name)
+
+
+def _add_existing_closure(session):
+    session.add(
+        DailyCashClosure(
+            date=dt.date(2026, 7, 14),
+            closure_number="301",
+            total_amount=Decimal("100.00"),
+            cash_amount=Decimal("40.00"),
+            card_amount=Decimal("60.00"),
+        )
+    )
+    session.commit()
+
+
+def test_db_rejects_duplicate_date_and_closure_number(cash_upload_env):
+    with Session(cash_upload_env) as session:
+        _add_existing_closure(session)
+        session.add(
+            DailyCashClosure(
+                date=dt.date(2026, 7, 14),
+                closure_number="301",
+                total_amount=Decimal("100.00"),
+            )
+        )
+
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+        assert len(session.scalars(select(DailyCashClosure)).all()) == 1
+
+
+def test_db_allows_same_number_on_different_dates_and_different_numbers_same_date(
+    cash_upload_env,
+):
+    with Session(cash_upload_env) as session:
+        _add_existing_closure(session)
+        session.add_all(
+            [
+                DailyCashClosure(
+                    date=dt.date(2026, 7, 15), closure_number="301", total_amount=Decimal("1.00")
+                ),
+                DailyCashClosure(
+                    date=dt.date(2026, 7, 14), closure_number="302", total_amount=Decimal("1.00")
+                ),
+            ]
+        )
+        session.commit()
+
+        assert len(session.scalars(select(DailyCashClosure)).all()) == 3
+
+
+def test_concurrent_duplicate_cash_upload_returns_409_and_cleans_up(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        _add_existing_closure(session)
+
+        # Simulate the race: the pre-check does not see the competing closure,
+        # so the real UNIQUE constraint rejects the insert at commit time.
+        real_find = documents_router.find_existing_cash_closure
+        calls = []
+
+        def find_blind_first_time(db, extracted_data):
+            calls.append(1)
+            return None if len(calls) == 1 else real_find(db, extracted_data)
+
+        monkeypatch.setattr(documents_router, "find_existing_cash_closure", find_blind_first_time)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _upload_cash_pdf(session)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == (
+            "Questa chiusura cassa è già stata caricata "
+            "(14/07/2026 – chiusura n. 301 – 100,00 €)."
+        )
+        assert session.scalars(select(Document)).all() == []
+        closures = session.scalars(select(DailyCashClosure)).all()
+        assert len(closures) == 1 and closures[0].total_amount == Decimal("100.00")
+        revenue = monthly_pnl(session, dt.date(2026, 7, 1), dt.date(2026, 8, 1))
+        assert revenue["revenue"] == Decimal("100.00")
+
+    assert _list_files("uploads") == []
+
+
+def test_postgres_unique_violation_by_constraint_name_returns_409(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        def failing_commit():
+            raise IntegrityError(
+                "INSERT", {}, _FakePgError(documents_router.CASH_CLOSURE_UNIQUE_CONSTRAINT)
+            )
+
+        monkeypatch.setattr(session, "commit", failing_commit)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _upload_cash_pdf(session)
+
+        assert exc_info.value.status_code == 409
+        assert session.scalars(select(Document)).all() == []
+
+    assert _list_files("uploads") == []
+
+
+def test_other_integrity_errors_are_not_reported_as_duplicate_closure(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        _add_existing_closure(session)
+        real_find = documents_router.find_existing_cash_closure
+        calls = []
+        monkeypatch.setattr(
+            documents_router,
+            "find_existing_cash_closure",
+            lambda db, data: None if not calls.append(1) and len(calls) == 1 else real_find(db, data),
+        )
+
+        def failing_commit():
+            raise IntegrityError("INSERT", {}, _FakePgError("some_other_constraint"))
+
+        monkeypatch.setattr(session, "commit", failing_commit)
+
+        with pytest.raises(IntegrityError):
+            _upload_cash_pdf(session)
+
+        assert session.scalars(select(Document)).all() == []
+
+    assert _list_files("uploads") == []

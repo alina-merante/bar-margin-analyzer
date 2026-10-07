@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pdf2image import convert_from_bytes
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -74,6 +75,47 @@ def document_to_dict(
         result["effective_date"] = cash_date.isoformat() if cash_date else None
 
     return result
+
+
+CASH_CLOSURE_UNIQUE_CONSTRAINT = "uq_daily_cash_closures_date_closure_number"
+
+
+def cash_closure_conflict(
+    extracted_data: dict,
+    existing_closure: DailyCashClosure | None,
+) -> HTTPException:
+    formatted_date = extracted_data["date"].strftime("%d/%m/%Y")
+    detail = (
+        "Questa chiusura cassa è già stata caricata "
+        f"({formatted_date} – chiusura n. {extracted_data['closure_number']}"
+    )
+    if existing_closure is not None:
+        formatted_amount = (
+            f"{existing_closure.total_amount:,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
+        detail += f" – {formatted_amount} €"
+    return HTTPException(status_code=409, detail=detail + ").")
+
+
+def find_existing_cash_closure(db: Session, extracted_data: dict) -> DailyCashClosure | None:
+    return db.scalar(
+        select(DailyCashClosure).where(
+            DailyCashClosure.date == extracted_data["date"],
+            DailyCashClosure.closure_number == extracted_data["closure_number"],
+        )
+    )
+
+
+def is_cash_closure_unique_violation(exc: IntegrityError) -> bool | None:
+    # PostgreSQL (psycopg2) exposes the violated constraint name; other drivers
+    # (e.g. SQLite) do not, in which case None is returned.
+    constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+    if constraint_name is None:
+        return None
+    return constraint_name == CASH_CLOSURE_UNIQUE_CONSTRAINT
 
 
 def remove_created_upload_files(created_paths: list[str], stored_stem: str) -> None:
@@ -384,28 +426,17 @@ async def upload_document(
 
     if section in {"cash", "cash_closure"}:
         extracted_data = extract_daily_cash_closure(content, extension)
-        existing_closure = db.scalar(
-            select(DailyCashClosure).where(
-                DailyCashClosure.date == extracted_data["date"],
-                DailyCashClosure.closure_number == extracted_data["closure_number"],
-            )
-        )
-        if existing_closure:
-            formatted_date = extracted_data["date"].strftime("%d/%m/%Y")
-            formatted_amount = (
-                f"{existing_closure.total_amount:,.2f}"
-                .replace(",", "X")
-                .replace(".", ",")
-                .replace("X", ".")
-            )
+        if not extracted_data["closure_number"]:
             raise HTTPException(
-                status_code=409,
+                status_code=422,
                 detail=(
-                    "Questa chiusura cassa è già stata caricata "
-                    f"({formatted_date} – chiusura n. {extracted_data['closure_number']} "
-                    f"– {formatted_amount} €)."
+                    "Numero di chiusura non rilevato. "
+                    "Carica un'immagine o un PDF più leggibile."
                 ),
             )
+        existing_closure = find_existing_cash_closure(db, extracted_data)
+        if existing_closure:
+            raise cash_closure_conflict(extracted_data, existing_closure)
 
     os.makedirs("uploads/documents", exist_ok=True)
 
@@ -475,9 +506,19 @@ async def upload_document(
             )
 
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
         remove_created_upload_files(created_paths, stored_stem)
+
+        if extracted_data and isinstance(exc, IntegrityError):
+            is_unique_violation = is_cash_closure_unique_violation(exc)
+            existing_closure = find_existing_cash_closure(db, extracted_data)
+            # Without a constraint name (non-PostgreSQL), fall back to checking
+            # that the competing closure now exists.
+            if is_unique_violation or (
+                is_unique_violation is None and existing_closure is not None
+            ):
+                raise cash_closure_conflict(extracted_data, existing_closure) from exc
         raise
 
     db.refresh(document)

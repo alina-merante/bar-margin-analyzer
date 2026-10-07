@@ -1,7 +1,7 @@
 import datetime as dt
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -9,6 +9,13 @@ from app.database import Base
 
 class DailyCashClosure(Base):
     __tablename__ = "daily_cash_closures"
+    __table_args__ = (
+        UniqueConstraint(
+            "date",
+            "closure_number",
+            name="uq_daily_cash_closures_date_closure_number",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
