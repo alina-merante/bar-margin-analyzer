@@ -6,6 +6,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from fastapi import HTTPException, UploadFile
+from PIL import Image
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -609,3 +610,133 @@ def test_duplicate_cash_upload_returns_conflict_without_duplicating_revenue():
         finally:
             documents_router.extract_daily_cash_closure = original_extractor
             os.chdir(old_cwd)
+
+
+def _fake_cash_data(content: bytes, extension: str) -> dict:
+    return {
+        "date": dt.date(2026, 7, 14),
+        "closure_number": "301",
+        "total_amount": Decimal("100.00"),
+        "cash_amount": Decimal("40.00"),
+        "card_amount": Decimal("60.00"),
+        "receipts_count": 5,
+    }
+
+
+def _upload_cash_pdf(session):
+    return __import__("asyncio").run(
+        documents_router.upload_document(
+            file=UploadFile(file=BytesIO(b"%PDF fake"), filename="closure.pdf"),
+            month="2026-09",
+            section="cash",
+            db=session,
+        )
+    )
+
+
+def _list_files(root):
+    return sorted(
+        os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs
+    )
+
+
+@pytest.fixture
+def cash_upload_env(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path}/test_documents.db")
+    Base.metadata.create_all(engine)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _fake_cash_data)
+    monkeypatch.setattr(
+        documents_router,
+        "convert_from_bytes",
+        lambda content, dpi: [Image.new("RGB", (50, 50)), Image.new("RGB", (50, 50))],
+    )
+    return engine
+
+
+def test_cash_upload_failure_after_document_flush_rolls_back_and_removes_files(
+    cash_upload_env, monkeypatch
+):
+    def failing_closure(**kwargs):
+        raise RuntimeError("closure creation failed")
+
+    monkeypatch.setattr(documents_router, "DailyCashClosure", failing_closure)
+
+    with Session(cash_upload_env) as session:
+        with pytest.raises(RuntimeError):
+            _upload_cash_pdf(session)
+
+        assert session.scalars(select(Document)).all() == []
+        assert session.scalars(select(DailyCashClosure)).all() == []
+
+    assert _list_files("uploads") == []
+
+
+def test_cash_upload_commit_failure_rolls_back_and_removes_files(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        original_commit = session.commit
+
+        def failing_commit():
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(session, "commit", failing_commit)
+
+        with pytest.raises(RuntimeError):
+            _upload_cash_pdf(session)
+
+        monkeypatch.setattr(session, "commit", original_commit)
+        assert session.scalars(select(Document)).all() == []
+        assert session.scalars(select(DailyCashClosure)).all() == []
+
+    assert _list_files("uploads") == []
+
+
+def test_cash_upload_success_persists_document_closure_and_files_with_single_commit(
+    cash_upload_env,
+):
+    with Session(cash_upload_env) as session:
+        commits = []
+        original_commit = session.commit
+        session.commit = lambda: commits.append(1) or original_commit()
+
+        payload = _upload_cash_pdf(session)
+
+        documents = session.scalars(select(Document)).all()
+        closures = session.scalars(select(DailyCashClosure)).all()
+
+        assert len(commits) == 1
+        assert len(documents) == 1 and len(closures) == 1
+        assert closures[0].document_id == documents[0].id
+        assert documents[0].month == "2026-07"
+        assert payload["id"] == documents[0].id
+
+    files = _list_files("uploads")
+    assert len(files) == 3  # original + 2 preview pages
+
+
+def test_cash_upload_refresh_failure_after_commit_keeps_records_and_files(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        commits = []
+        original_commit = session.commit
+        session.commit = lambda: commits.append(1) or original_commit()
+
+        def failing_refresh(instance, *args, **kwargs):
+            raise RuntimeError("refresh failed")
+
+        monkeypatch.setattr(session, "refresh", failing_refresh)
+
+        with pytest.raises(RuntimeError, match="refresh failed"):
+            _upload_cash_pdf(session)
+
+        documents = session.scalars(select(Document)).all()
+        closures = session.scalars(select(DailyCashClosure)).all()
+
+        assert len(commits) == 1
+        assert len(documents) == 1 and len(closures) == 1
+        assert closures[0].document_id == documents[0].id
+
+    assert len(_list_files("uploads")) == 3

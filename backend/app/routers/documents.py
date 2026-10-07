@@ -1,4 +1,5 @@
 import csv
+import glob
 import os
 import uuid
 from io import BytesIO, StringIO
@@ -73,6 +74,20 @@ def document_to_dict(
         result["effective_date"] = cash_date.isoformat() if cash_date else None
 
     return result
+
+
+def remove_created_upload_files(created_paths: list[str], stored_stem: str) -> None:
+    # stored_stem is a fresh uuid, so these globs only match files of this attempt.
+    paths = set(created_paths)
+    paths.update(glob.glob(os.path.join("uploads", "previews", f"{stored_stem}.*")))
+    paths.update(glob.glob(os.path.join("uploads", "previews", f"{stored_stem}_*.png")))
+
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
 
 
 def create_text_preview_image(
@@ -398,66 +413,74 @@ async def upload_document(
     stored_stem = stored_filename.rsplit(".", 1)[0]
 
     file_path = os.path.join("uploads", "documents", stored_filename)
+    created_paths = [file_path]
 
-    with open(file_path, "wb") as output:
-        output.write(content)
+    try:
+        with open(file_path, "wb") as output:
+            output.write(content)
 
-    file_url = f"/uploads/documents/{stored_filename}"
-    preview_url = file_url
-    generated_preview_url = None
+        file_url = f"/uploads/documents/{stored_filename}"
+        preview_url = file_url
+        generated_preview_url = None
 
-    if extension == "pdf":
-        generated_preview_url = create_pdf_preview_images(
-            content=content,
-            stored_stem=stored_stem,
-        )
+        if extension == "pdf":
+            generated_preview_url = create_pdf_preview_images(
+                content=content,
+                stored_stem=stored_stem,
+            )
 
-    elif extension in {"csv", "txt"}:
-        generated_preview_url = create_text_preview_image(
+        elif extension in {"csv", "txt"}:
+            generated_preview_url = create_text_preview_image(
+                original_filename=file.filename,
+                content=content,
+                extension=extension,
+                stored_stem=stored_stem,
+            )
+
+        if generated_preview_url:
+            preview_url = generated_preview_url
+
+        category, result = classify_document(file.filename)
+
+        if extracted_data:
+            document_month = extracted_data["date"].strftime("%Y-%m")
+
+        document = Document(
+            month=document_month,
             original_filename=file.filename,
-            content=content,
-            extension=extension,
-            stored_stem=stored_stem,
+            stored_filename=stored_filename,
+            document_type=extension.upper(),
+            category=category,
+            result=result,
+            file_url=file_url,
+            preview_url=preview_url,
+            status="Elaborato",
+            section=section,
         )
 
-    if generated_preview_url:
-        preview_url = generated_preview_url
+        db.add(document)
+        db.flush()
 
-    category, result = classify_document(file.filename)
+        if extracted_data:
+            db.add(
+                DailyCashClosure(
+                    date=extracted_data["date"],
+                    closure_number=extracted_data["closure_number"],
+                    total_amount=extracted_data["total_amount"],
+                    cash_amount=extracted_data["cash_amount"],
+                    card_amount=extracted_data["card_amount"],
+                    receipts_count=extracted_data["receipts_count"],
+                    document_id=document.id,
+                )
+            )
 
-    document = Document(
-        month=document_month,
-        original_filename=file.filename,
-        stored_filename=stored_filename,
-        document_type=extension.upper(),
-        category=category,
-        result=result,
-        file_url=file_url,
-        preview_url=preview_url,
-        status="Elaborato",
-        section=section,
-    )
-
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-
-    if section in {"cash", "cash_closure"}:
-        print("ENTRATO IN CASH CLOSURE")
-        document.month = extracted_data["date"].strftime("%Y-%m")
-
-        cash_closure = DailyCashClosure(
-            date=extracted_data["date"],
-            closure_number=extracted_data["closure_number"],
-            total_amount=extracted_data["total_amount"],
-            cash_amount=extracted_data["cash_amount"],
-            card_amount=extracted_data["card_amount"],
-            receipts_count=extracted_data["receipts_count"],
-            document_id=document.id,
-        )
-
-        db.add(cash_closure)
         db.commit()
+    except Exception:
+        db.rollback()
+        remove_created_upload_files(created_paths, stored_stem)
+        raise
+
+    db.refresh(document)
 
     cash_date = extracted_data["date"] if extracted_data else None
     return document_to_dict(document, cash_date=cash_date)
