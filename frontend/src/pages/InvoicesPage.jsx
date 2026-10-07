@@ -905,6 +905,12 @@ useEffect(() => {
                   }`}
                 >
                   {formatDate(invoice.due_date)}
+                  {status === "overdue" ? (
+                    <small className="invoice-due-status overdue">Scaduta</small>
+                  ) : null}
+                  {status === "due" ? (
+                    <small className="invoice-due-status due">In scadenza</small>
+                  ) : null}
                 </div>
 
                 <div className="invoice-modern-category">

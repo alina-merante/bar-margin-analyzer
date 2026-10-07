@@ -33,7 +33,13 @@ export function countInvoicesByCategory(invoices, categoryForInvoice) {
 
 export function filterInvoiceList(
   invoices,
-  { supplierSearch = "", statusFilter = "all", categoryFilter = "", categoryForInvoice }
+  {
+    supplierSearch = "",
+    statusFilter = "all",
+    categoryFilter = "",
+    categoryForInvoice,
+    today,
+  }
 ) {
   const normalizedSupplierSearch = supplierSearch.trim().toLowerCase();
 
@@ -41,8 +47,8 @@ export function filterInvoiceList(
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "year-overdue"
-        ? isInvoiceOverdueInCurrentYear(invoice)
-        : getInvoiceDateStatus(invoice) === statusFilter);
+        ? isInvoiceOverdueInCurrentYear(invoice, today)
+        : getInvoiceDateStatus(invoice, today) === statusFilter);
     const matchesSupplier =
       !normalizedSupplierSearch ||
       invoice.supplier?.toLowerCase().includes(normalizedSupplierSearch);

@@ -2858,20 +2858,20 @@ body {
   color: var(--espresso);
 }
 
-.invoice-modern-row.overdue {
+.invoice-clean-table-row.overdue {
   background: var(--red-light);
 }
 
-.invoice-modern-row.due {
+.invoice-clean-table-row.due {
   background: var(--yellow-light);
 }
 
-.invoice-modern-row.year-overdue .invoice-modern-due,
+.invoice-clean-table-row.overdue .invoice-modern-due,
 .invoice-modern-due-year-overdue {
   color: #4e1318;
 }
 
-.invoice-modern-row.paid {
+.invoice-clean-table-row.paid {
   background: #fff;
 }
 
@@ -2894,11 +2894,11 @@ body {
   color: #ff1a1a !important;
 }
 
-.invoice-modern-row.overdue .invoice-modern-due {
+.invoice-clean-table-row.overdue .invoice-modern-due {
   color: #d22d2d;
 }
 
-.invoice-modern-row.due .invoice-modern-due {
+.invoice-clean-table-row.due .invoice-modern-due {
   color: var(--yellow);
 }
 
@@ -3904,6 +3904,33 @@ body {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
+}
+
+.invoice-clean-table-row .invoice-modern-due {
+  flex-direction: column;
+  gap: 4px;
+  overflow: visible !important;
+  white-space: normal !important;
+}
+
+.invoice-due-status {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.invoice-due-status.overdue {
+  background: var(--red-light);
+  color: var(--red);
+}
+
+.invoice-due-status.due {
+  background: var(--yellow-light);
+  color: var(--yellow);
 }
 
 .invoice-action-cell {

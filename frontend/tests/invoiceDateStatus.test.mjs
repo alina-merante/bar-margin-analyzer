@@ -84,3 +84,24 @@ test("invoice list, dashboard, and PDF share calendar-date helpers", async () =>
     /new Date\(invoice\.due_date\)\s*</
   );
 });
+
+test("invoice table separates temporal status labels from payment status", async () => {
+  const invoicesSource = await readFile(new URL("../src/pages/InvoicesPage.jsx", import.meta.url), "utf8");
+  const cssSource = await readFile(new URL("../src/App.css", import.meta.url), "utf8");
+  const paymentCell = invoicesSource.match(
+    /<div className="invoice-action-cell invoice-payment-cell">([\s\S]*?)<\/div>\s*<div className="invoice-action-cell">/
+  )?.[1];
+
+  assert.ok(paymentCell, "payment cell should be present");
+  assert.match(invoicesSource, /status === "overdue"[\s\S]*?invoice-due-status overdue">Scaduta/);
+  assert.match(invoicesSource, /status === "due"[\s\S]*?invoice-due-status due">In scadenza/);
+  assert.match(paymentCell, /invoice-payment-paid">✓ Pagata/);
+  assert.match(paymentCell, /invoice-reconcile-btn[\s\S]*?Abbina pagamento/);
+  assert.match(paymentCell, /Pagato \{formatEuro\(linkedAmount\)\} · Residuo/);
+  assert.doesNotMatch(paymentCell, /Scaduta|In scadenza/);
+  assert.match(cssSource, /\.invoice-clean-table-row\.overdue\s*\{/);
+  assert.match(cssSource, /\.invoice-clean-table-row\.due\s*\{/);
+  assert.match(cssSource, /\.invoice-clean-table-row\.paid\s*\{/);
+  assert.match(cssSource, /\.invoice-due-status\.overdue\s*\{/);
+  assert.match(cssSource, /\.invoice-due-status\.due\s*\{/);
+});
