@@ -377,8 +377,6 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     total_amount = find_amount_after_label(text, r"AMMONTARE\s+GIORNO")
     if total_amount is None:
         total_amount = find_amount_after_label(text, r"CORRISP[.,]?\s+GIORNALIERO")
-    if total_amount is None:
-        total_amount = Decimal("0.00")
 
     card_amount = find_amount_after_label(text, r"PAGAM[.,]?\s+ELETTRONICI")
     if card_amount is None:
@@ -440,6 +438,14 @@ async def upload_document(
                 status_code=422,
                 detail=(
                     "Numero di chiusura non rilevato. "
+                    "Carica un'immagine o un PDF più leggibile."
+                ),
+            )
+        if extracted_data["total_amount"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Totale della chiusura non rilevato. "
                     "Carica un'immagine o un PDF più leggibile."
                 ),
             )

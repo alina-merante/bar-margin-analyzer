@@ -1045,9 +1045,9 @@ def test_extractor_keeps_explicit_zero_card_amount(monkeypatch):
     assert data["card_amount"] == Decimal("0.00")
 
 
-def test_extractor_missing_labels_still_default_to_zero(monkeypatch):
+def test_extractor_missing_total_is_none_and_other_amounts_default_to_zero(monkeypatch):
     data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201")
-    assert data["total_amount"] == Decimal("0.00")
+    assert data["total_amount"] is None
     assert data["cash_amount"] == Decimal("0.00")
     assert data["card_amount"] == Decimal("0.00")
     assert data["receipts_count"] is None
@@ -1068,3 +1068,79 @@ def test_extractor_reads_real_closure_documents(
     assert data["cash_amount"] == Decimal(cash)
     assert data["card_amount"] == Decimal(card)
     assert data["receipts_count"] == receipts
+
+
+TOTAL_ERROR_DETAIL = (
+    "Totale della chiusura non rilevato. "
+    "Carica un'immagine o un PDF più leggibile."
+)
+
+
+def _upload_with_ocr_text(session, monkeypatch, text):
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+    monkeypatch.setattr(documents_router, "extract_text_from_document", lambda c, e: text)
+    return _upload_cash_pdf(session)
+
+
+def test_cash_upload_with_missing_total_is_rejected_before_any_write(
+    cash_upload_env, monkeypatch
+):
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+    monkeypatch.setattr(
+        documents_router,
+        "extract_text_from_document",
+        lambda c, e: "NUM. CHIUSURA 301\nDATA 14-07-26\nAMMONTARE 40,00",
+    )
+
+    with Session(cash_upload_env) as session:
+        _assert_rejected_without_writes(session, monkeypatch, TOTAL_ERROR_DETAIL)
+
+
+def test_cash_upload_missing_total_is_rejected_before_duplicate_check(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        _add_existing_closure(session)
+        monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+        monkeypatch.setattr(
+            documents_router,
+            "extract_text_from_document",
+            lambda c, e: "NUM. CHIUSURA 301\nDATA 14-07-26",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _upload_cash_pdf(session)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == TOTAL_ERROR_DETAIL
+
+
+def test_cash_upload_with_explicit_zero_total_is_saved_as_zero(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        _upload_with_ocr_text(
+            session,
+            monkeypatch,
+            "NUM. CHIUSURA 302\nDATA 14-07-26\nAMMONTARE GIORNO 0,00",
+        )
+        closure = session.scalars(select(DailyCashClosure)).one()
+
+    assert closure.total_amount == Decimal("0.00")
+    assert closure.cash_amount == Decimal("0.00")
+    assert closure.card_amount == Decimal("0.00")
+
+
+def test_cash_upload_total_from_corrisp_fallback_with_missing_cash_and_card(
+    cash_upload_env, monkeypatch
+):
+    with Session(cash_upload_env) as session:
+        _upload_with_ocr_text(
+            session,
+            monkeypatch,
+            "NUM. CHIUSURA 303\nDATA 14-07-26\nCORRISP, GIORNALIERO 1.124,20",
+        )
+        closure = session.scalars(select(DailyCashClosure)).one()
+
+    assert closure.total_amount == Decimal("1124.20")
+    assert closure.cash_amount == Decimal("0.00")
+    assert closure.card_amount == Decimal("0.00")
