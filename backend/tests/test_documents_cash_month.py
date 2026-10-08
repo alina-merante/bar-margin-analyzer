@@ -1043,13 +1043,22 @@ def test_extractor_total_falls_back_to_daily_corrispettivo(monkeypatch, label):
 def test_extractor_keeps_explicit_zero_card_amount(monkeypatch):
     data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nPAGAM, ELETTRONICI 0,00")
     assert data["card_amount"] == Decimal("0.00")
+    assert data["cash_amount"] is None
 
 
-def test_extractor_missing_total_is_none_and_other_amounts_default_to_zero(monkeypatch):
+def test_extractor_keeps_explicit_zero_cash_amount(monkeypatch):
+    data = _extract_with_text(
+        monkeypatch, "NUM. CHIUSURA 201\nAMMONTARE GIORNO 10,00\nAMMONTARE 0,00"
+    )
+    assert data["cash_amount"] == Decimal("0.00")
+    assert data["card_amount"] is None
+
+
+def test_extractor_missing_amounts_are_none_and_not_zero(monkeypatch):
     data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201")
     assert data["total_amount"] is None
-    assert data["cash_amount"] == Decimal("0.00")
-    assert data["card_amount"] == Decimal("0.00")
+    assert data["cash_amount"] is None
+    assert data["card_amount"] is None
     assert data["receipts_count"] is None
 
 
@@ -1144,3 +1153,96 @@ def test_cash_upload_total_from_corrisp_fallback_with_missing_cash_and_card(
     assert closure.total_amount == Decimal("1124.20")
     assert closure.cash_amount == Decimal("0.00")
     assert closure.card_amount == Decimal("0.00")
+
+
+NO_CASH_WARNING = "Contanti non rilevati: verifica l'importo sul documento originale."
+NO_CARD_WARNING = (
+    "Pagamenti elettronici non rilevati: verifica l'importo sul documento originale."
+)
+MISMATCH_WARNING = (
+    "Il totale non coincide con la somma di contanti e pagamenti elettronici. "
+    "Verifica eventuali altri metodi di pagamento."
+)
+
+
+def _upload_with_amounts(cash_upload_env, monkeypatch, amounts, closure_number="401"):
+    lines = [f"NUM. CHIUSURA {closure_number}", "DATA 14-07-26"]
+    lines += amounts
+    payload = _upload_with_ocr_text_session(cash_upload_env, monkeypatch, "\n".join(lines))
+    with Session(cash_upload_env) as session:
+        closure = session.scalars(select(DailyCashClosure)).one()
+        return payload, (closure.total_amount, closure.cash_amount, closure.card_amount)
+
+
+def _upload_with_ocr_text_session(engine, monkeypatch, text):
+    with Session(engine) as session:
+        return _upload_with_ocr_text(session, monkeypatch, text)
+
+
+def test_warning_when_cash_missing(cash_upload_env, monkeypatch):
+    payload, saved = _upload_with_amounts(
+        cash_upload_env,
+        monkeypatch,
+        ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 100,00"],
+    )
+    assert payload["warnings"] == [NO_CASH_WARNING]
+    assert saved == (Decimal("100.00"), Decimal("0.00"), Decimal("100.00"))
+
+
+def test_warning_when_card_missing(cash_upload_env, monkeypatch):
+    payload, saved = _upload_with_amounts(
+        cash_upload_env, monkeypatch, ["AMMONTARE GIORNO 100,00", "AMMONTARE 100,00"]
+    )
+    assert payload["warnings"] == [NO_CARD_WARNING]
+    assert saved == (Decimal("100.00"), Decimal("100.00"), Decimal("0.00"))
+
+
+def test_two_warnings_when_cash_and_card_missing_and_no_mismatch_warning(
+    cash_upload_env, monkeypatch
+):
+    payload, saved = _upload_with_amounts(
+        cash_upload_env, monkeypatch, ["AMMONTARE GIORNO 100,00"]
+    )
+    assert payload["warnings"] == [NO_CASH_WARNING, NO_CARD_WARNING]
+    assert saved == (Decimal("100.00"), Decimal("0.00"), Decimal("0.00"))
+
+
+def test_explicit_zero_amounts_do_not_warn_as_not_detected(cash_upload_env, monkeypatch):
+    payload, saved = _upload_with_amounts(
+        cash_upload_env,
+        monkeypatch,
+        ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 100,00", "AMMONTARE 0,00"],
+    )
+    assert payload["warnings"] == []
+    assert saved == (Decimal("100.00"), Decimal("0.00"), Decimal("100.00"))
+
+
+def test_warning_when_total_differs_from_payments_sum(cash_upload_env, monkeypatch):
+    payload, _ = _upload_with_amounts(
+        cash_upload_env,
+        monkeypatch,
+        ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 60,00", "AMMONTARE 30,00"],
+    )
+    assert payload["warnings"] == [MISMATCH_WARNING]
+
+
+def test_no_warning_when_total_matches_payments_sum(cash_upload_env, monkeypatch):
+    payload, _ = _upload_with_amounts(
+        cash_upload_env,
+        monkeypatch,
+        ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 60,00", "AMMONTARE 40,00"],
+    )
+    assert payload["warnings"] == []
+
+
+def test_non_cash_upload_response_has_no_warnings_key(cash_upload_env):
+    with Session(cash_upload_env) as session:
+        payload = __import__("asyncio").run(
+            documents_router.upload_document(
+                file=UploadFile(file=BytesIO(b"hello"), filename="note.txt"),
+                month="2026-09",
+                section="other",
+                db=session,
+            )
+        )
+    assert "warnings" not in payload

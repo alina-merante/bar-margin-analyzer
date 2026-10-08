@@ -175,3 +175,66 @@ test("a new upload in the same area clears the previous error", async () => {
   assert.match(uploadPage, /async function handleCashDocument\(file\) \{\s*if \(!file\) return;\s*setCashUploadError\(""\);[\s\S]*?clearDocumentMessages\?\.\(\);/);
   assert.match(uploadPage, /async function handleOtherDocument\(file\) \{\s*if \(!file\) return;\s*setCashUploadError\(""\);[\s\S]*?clearDocumentMessages\?\.\(\);/);
 });
+
+const CASH_WARNING = "Contanti non rilevati: verifica l'importo sul documento originale.";
+const CARD_WARNING =
+  "Pagamenti elettronici non rilevati: verifica l'importo sul documento originale.";
+
+test("UploadPage shows OCR warnings next to the success message", () => {
+  const html = renderUploadPage({
+    documentUploadMessage: "Documento acquisito: chiusura.png",
+    documentUploadWarnings: [CASH_WARNING, CARD_WARNING],
+  });
+
+  assert.match(html, /Documento acquisito: chiusura\.png/);
+  assert.match(html, /alert-banner--success/);
+  assert.match(html, /alert-banner--warning/);
+  assert.match(html, /Controlla i dati letti/);
+  assert.ok(html.includes("Contanti non rilevati"));
+  assert.ok(html.includes("Pagamenti elettronici non rilevati"));
+  assert.match(html, /aria-label="Chiudi messaggio"/);
+  assert.doesNotMatch(html, /alert-banner--error/);
+});
+
+test("UploadPage warning stays visible on every render until dismissed", () => {
+  const props = { documentUploadWarnings: [CASH_WARNING] };
+  assert.match(renderUploadPage(props), /Controlla i dati letti/);
+  assert.match(renderUploadPage(props), /Controlla i dati letti/);
+  assert.doesNotMatch(
+    renderUploadPage({ documentUploadWarnings: [] }),
+    /Controlla i dati letti/
+  );
+});
+
+test("UploadPage ignores missing or invalid warnings safely", () => {
+  for (const documentUploadWarnings of [undefined, null, "testo", {}, 42, [null, 1, "", "  "]]) {
+    const html = renderUploadPage({ documentUploadWarnings });
+    assert.doesNotMatch(html, /Controlla i dati letti/);
+  }
+});
+
+test("OCR warning banner keeps 409 and 422 banners unchanged", () => {
+  const html = renderUploadPage({
+    documentUploadError: { variant: "error", title: "Dati non validi", message: "Totale mancante" },
+    documentUploadWarnings: [],
+  });
+  assert.match(html, /alert-banner--error/);
+  assert.match(html, /Dati non validi/);
+  assert.doesNotMatch(html, /alert-banner--warning/);
+});
+
+test("OCR warnings are closed manually, reset on new upload, and use no timers", async () => {
+  const [app, uploadPage] = await Promise.all(
+    ["src/App.jsx", "src/pages/UploadPage.jsx"].map((path) =>
+      readFile(new URL(`../${path}`, import.meta.url), "utf8")
+    )
+  );
+
+  assert.match(app, /setDocumentUploadMessage\(""\);\s*setDocumentUploadWarnings\(\[\]\);/);
+  assert.match(app, /function clearDocumentMessages\(\) \{[\s\S]*?setDocumentUploadWarnings\(\[\]\);/);
+  assert.match(app, /kind === "documentWarnings"\) setDocumentUploadWarnings\(\[\]\)/);
+  assert.match(app, /Array\.isArray\(result\.warnings\)/);
+  assert.match(uploadPage, /dismiss\("documentWarnings"\)/);
+  assert.doesNotMatch(uploadPage, /setTimeout|setInterval/);
+  assert.doesNotMatch(uploadPage, /<main[^>]*onClick/);
+});

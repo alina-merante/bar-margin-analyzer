@@ -321,6 +321,32 @@ def extract_text_from_document(content: bytes, extension: str) -> str:
 
     return content.decode("utf-8-sig", errors="replace")
 
+def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
+    warnings = []
+    cash_amount = extracted_data["cash_amount"]
+    card_amount = extracted_data["card_amount"]
+
+    if cash_amount is None:
+        warnings.append(
+            "Contanti non rilevati: verifica l'importo sul documento originale."
+        )
+    if card_amount is None:
+        warnings.append(
+            "Pagamenti elettronici non rilevati: verifica l'importo sul documento originale."
+        )
+    if (
+        cash_amount is not None
+        and card_amount is not None
+        and extracted_data["total_amount"] != cash_amount + card_amount
+    ):
+        warnings.append(
+            "Il totale non coincide con la somma di contanti e pagamenti elettronici. "
+            "Verifica eventuali altri metodi di pagamento."
+        )
+
+    return warnings
+
+
 def find_amount_after_label(text: str, label: str) -> Decimal | None:
     pattern = rf"{label}\s+(\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}|\d+,\d{{2}})"
     match = re.search(pattern, text, re.IGNORECASE)
@@ -379,12 +405,7 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
         total_amount = find_amount_after_label(text, r"CORRISP[.,]?\s+GIORNALIERO")
 
     card_amount = find_amount_after_label(text, r"PAGAM[.,]?\s+ELETTRONICI")
-    if card_amount is None:
-        card_amount = Decimal("0.00")
-
     cash_amount = find_amount_after_label(text, r"AMMONTARE")
-    if cash_amount is None:
-        cash_amount = Decimal("0.00")
 
     receipts_count = find_int_after_label(text, r"DOCUM\.\s+DI\s+VENDITA")
 
@@ -419,6 +440,7 @@ async def upload_document(
     extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     document_month = month
     extracted_data = None
+    cash_warnings: list[str] = []
 
     if section == "bank" and extension == "csv":
         document_month = single_month_from_bank_csv(content) or month
@@ -452,6 +474,7 @@ async def upload_document(
         existing_closure = find_existing_cash_closure(db, extracted_data)
         if existing_closure:
             raise cash_closure_conflict(extracted_data, existing_closure)
+        cash_warnings = build_cash_closure_warnings(extracted_data)
 
     os.makedirs("uploads/documents", exist_ok=True)
 
@@ -513,8 +536,16 @@ async def upload_document(
                     date=extracted_data["date"],
                     closure_number=extracted_data["closure_number"],
                     total_amount=extracted_data["total_amount"],
-                    cash_amount=extracted_data["cash_amount"],
-                    card_amount=extracted_data["card_amount"],
+                    cash_amount=(
+                        extracted_data["cash_amount"]
+                        if extracted_data["cash_amount"] is not None
+                        else Decimal("0.00")
+                    ),
+                    card_amount=(
+                        extracted_data["card_amount"]
+                        if extracted_data["card_amount"] is not None
+                        else Decimal("0.00")
+                    ),
                     receipts_count=extracted_data["receipts_count"],
                     document_id=document.id,
                 )
@@ -539,7 +570,10 @@ async def upload_document(
     db.refresh(document)
 
     cash_date = extracted_data["date"] if extracted_data else None
-    return document_to_dict(document, cash_date=cash_date)
+    response = document_to_dict(document, cash_date=cash_date)
+    if extracted_data:
+        response["warnings"] = cash_warnings
+    return response
 
 
 @router.get("")

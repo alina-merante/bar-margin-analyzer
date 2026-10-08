@@ -206,6 +206,7 @@ export default function App() {
 
   const [documentUploadMessage, setDocumentUploadMessage] = useState("");
   const [documentUploadError, setDocumentUploadError] = useState(null);
+  const [documentUploadWarnings, setDocumentUploadWarnings] = useState([]);
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentDeleteError, setDocumentDeleteError] = useState("");
 
@@ -1315,6 +1316,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
     setDocumentUploading(true);
     setDocumentUploadError(null);
     setDocumentUploadMessage("");
+    setDocumentUploadWarnings([]);
 
     let fileToUpload = file;
 
@@ -1359,6 +1361,11 @@ async function handleGenericDocumentUpload(file, section = "other") {
     setDocumentUploadMessage(
       `Documento acquisito: ${result.original_filename}`
     );
+    setDocumentUploadWarnings(
+      Array.isArray(result.warnings)
+        ? result.warnings.filter((warning) => typeof warning === "string" && warning.trim())
+        : []
+    );
 
     await loadDocuments(month);
     await loadDashboardData(month);
@@ -1375,6 +1382,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
 function clearDocumentMessages() {
   setDocumentUploadMessage("");
   setDocumentUploadError(null);
+  setDocumentUploadWarnings([]);
   setDocumentDeleteError("");
 }
 
@@ -1383,6 +1391,7 @@ function dismissUploadFeedback(kind) {
   if (kind === "uploadError") setUploadError(null);
   if (kind === "documentMessage") setDocumentUploadMessage("");
   if (kind === "documentError") setDocumentUploadError(null);
+  if (kind === "documentWarnings") setDocumentUploadWarnings([]);
   if (kind === "documentDeleteError") setDocumentDeleteError("");
   if (kind === "invoiceMessage") setInvoiceUploadMessage("");
   if (kind === "invoiceError") setInvoiceUploadError(null);
@@ -1562,6 +1571,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 documentUploading={documentUploading}
                 documentUploadMessage={documentUploadMessage}
                 documentUploadError={documentUploadError}
+                documentUploadWarnings={documentUploadWarnings}
                 documentDeleteError={documentDeleteError}
               />
             }

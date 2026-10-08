@@ -183,6 +183,7 @@ export default function UploadPage({
   documentUploading,
   documentUploadMessage,
   documentUploadError,
+  documentUploadWarnings,
   documentDeleteError,
 }) {
   const navigate = useNavigate();
@@ -195,6 +196,10 @@ export default function UploadPage({
 
   const [cashUploadError, setCashUploadError] = useState("");
   const [otherUploadError, setOtherUploadError] = useState("");
+
+  const uploadWarnings = Array.isArray(documentUploadWarnings)
+    ? documentUploadWarnings.filter((warning) => typeof warning === "string" && warning.trim())
+    : [];
 
   function dismiss(kind) {
     dismissUploadFeedback?.(kind);
@@ -473,6 +478,18 @@ if (uploaded) setActiveHistoryTab("other");
           {documentUploadMessage ? (
             <AlertBanner variant="success" onClose={() => dismiss("documentMessage")}>
               {documentUploadMessage}
+            </AlertBanner>
+          ) : null}
+
+          {uploadWarnings.length > 0 ? (
+            <AlertBanner
+              variant="warning"
+              title="Controlla i dati letti"
+              onClose={() => dismiss("documentWarnings")}
+            >
+              {uploadWarnings.map((warning) => (
+                <div key={warning}>{warning}</div>
+              ))}
             </AlertBanner>
           ) : null}
 
