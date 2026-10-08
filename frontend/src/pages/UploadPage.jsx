@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import AlertBanner from "../components/AlertBanner.jsx";
+
 import {
   HISTORY_DATE_KIND_CIVIL,
   HISTORY_DATE_KIND_TIMESTAMP,
@@ -173,6 +175,7 @@ export default function UploadPage({
   invoices = [],
   handleDeleteInvoice,
   clearDocumentMessages,
+  dismissUploadFeedback,
 
   documents = [],
   handleGenericDocumentUpload,
@@ -192,6 +195,10 @@ export default function UploadPage({
 
   const [cashUploadError, setCashUploadError] = useState("");
   const [otherUploadError, setOtherUploadError] = useState("");
+
+  function dismiss(kind) {
+    dismissUploadFeedback?.(kind);
+  }
 
   const selectedOtherDocumentUrls = selectedOtherDocument?.preview_url
   ? selectedOtherDocument.preview_url
@@ -302,16 +309,12 @@ async function deleteHistoryEntry(entry) {
     }
   }
 
-  function clearLocalUploadErrors() {
+  async function handleCashDocument(file) {
+  if (!file) return;
+
   setCashUploadError("");
   setOtherUploadError("");
   clearDocumentMessages?.();
-}
-
-  async function handleCashDocument(file) {
-  setCashUploadError("");
-
-  if (!file) return;
 
   if (file.size > 20 * 1024 * 1024) {
     setCashUploadError(
@@ -325,9 +328,11 @@ if (uploaded) setActiveHistoryTab("cash");
 }
 
 async function handleOtherDocument(file) {
-  setOtherUploadError("");
-
   if (!file) return;
+
+  setCashUploadError("");
+  setOtherUploadError("");
+  clearDocumentMessages?.();
 
   if (file.size > 20 * 1024 * 1024) {
     setOtherUploadError(
@@ -341,8 +346,7 @@ if (uploaded) setActiveHistoryTab("other");
 }
 
   return (
-    <main className="main upload-page"
-      onClick={clearLocalUploadErrors}>
+    <main className="main upload-page">
       <section className="upload-hero">
         <h1 className="upload-page-title">Carica Documenti ⬆️</h1>
         <p className="upload-page-subtitle"></p>
@@ -451,29 +455,55 @@ if (uploaded) setActiveHistoryTab("other");
           ) : null}
 
           {uploadMessage ? (
-            <p className="upload-feedback success">
+            <AlertBanner variant="success" onClose={() => dismiss("uploadMessage")}>
               {formatUploadMessage(uploadMessage)}
-            </p>
+            </AlertBanner>
           ) : null}
 
           {uploadError ? (
-            <p className="upload-feedback error">{uploadError}</p>
+            <AlertBanner
+              variant={uploadError.variant}
+              title={uploadError.title}
+              onClose={() => dismiss("uploadError")}
+            >
+              {uploadError.message}
+            </AlertBanner>
           ) : null}
 
           {documentUploadMessage ? (
-            <p className="upload-feedback success">{documentUploadMessage}</p>
+            <AlertBanner variant="success" onClose={() => dismiss("documentMessage")}>
+              {documentUploadMessage}
+            </AlertBanner>
           ) : null}
 
           {documentUploadError ? (
-            <p className="upload-feedback error">{documentUploadError}</p>
+            <AlertBanner
+              variant={documentUploadError.variant}
+              title={documentUploadError.title}
+              onClose={() => dismiss("documentError")}
+            >
+              {documentUploadError.message}
+            </AlertBanner>
           ) : null}
 
           {documentDeleteError ? (
-            <p className="upload-feedback error">{documentDeleteError}</p>
+            <AlertBanner
+              variant="error"
+              title="Eliminazione non riuscita"
+              onClose={() => dismiss("documentDeleteError")}
+            >
+              {documentDeleteError}
+            </AlertBanner>
           ) : null}
 
           {cashUploadError ? (
-            <p className="upload-feedback error">{cashUploadError}</p>
+            <AlertBanner
+              variant="error"
+              title="File troppo grande"
+              onClose={() => setCashUploadError("")}
+            >
+              {cashUploadError}
+            </AlertBanner>
           ) : null}
 
         </div>
@@ -583,9 +613,13 @@ if (uploaded) setActiveHistoryTab("other");
             </div>
 
             {otherUploadError ? (
-              <p className="upload-feedback error">
+              <AlertBanner
+                variant="error"
+                title="File troppo grande"
+                onClose={() => setOtherUploadError("")}
+              >
                 {otherUploadError}
-              </p>
+              </AlertBanner>
             ) : null}
           </article>
         </div>

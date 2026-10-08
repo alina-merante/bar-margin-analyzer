@@ -6,6 +6,11 @@ import UploadPage from "./pages/UploadPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
+import {
+  UploadApiError,
+  toUploadError,
+  uploadErrorFromResponse,
+} from "./apiErrors";
 import { PDFDocument } from "pdf-lib";
 import {
   formatCivilDateDMY,
@@ -188,11 +193,11 @@ export default function App() {
   const [insights, setInsights] = useState({ insights: [] });
 
   const [uploadMessage, setUploadMessage] = useState("");
-  const [uploadError, setUploadError] = useState("");
+  const [uploadError, setUploadError] = useState(null);
   const [uploading, setUploading] = useState(false);
 
   const [invoiceUploadMessage, setInvoiceUploadMessage] = useState("");
-  const [invoiceUploadError, setInvoiceUploadError] = useState("");
+  const [invoiceUploadError, setInvoiceUploadError] = useState(null);
   const [invoiceUploading, setInvoiceUploading] = useState(false);
   const [invoiceDeleteError, setInvoiceDeleteError] = useState("");
   const [invoiceReconciliationMessage, setInvoiceReconciliationMessage] = useState("");
@@ -200,7 +205,7 @@ export default function App() {
   const [documents, setDocuments] = useState([]);
 
   const [documentUploadMessage, setDocumentUploadMessage] = useState("");
-  const [documentUploadError, setDocumentUploadError] = useState("");
+  const [documentUploadError, setDocumentUploadError] = useState(null);
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentDeleteError, setDocumentDeleteError] = useState("");
 
@@ -1137,7 +1142,7 @@ export default function App() {
 
     try {
       setUploading(true);
-      setUploadError("");
+      setUploadError(null);
       setUploadMessage("");
 
       const formData = new FormData();
@@ -1155,8 +1160,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(errorBody || `Upload fallito (${response.status})`);
+        throw new UploadApiError(await uploadErrorFromResponse(response));
       }
 
       const result = await response.json();
@@ -1173,7 +1177,7 @@ export default function App() {
 ]);
     } catch (err) {
       console.error(err);
-      setUploadError("Errore durante l'import del file.");
+      setUploadError(toUploadError(err));
     } finally {
       setUploading(false);
     }
@@ -1184,7 +1188,7 @@ export default function App() {
 
     try {
       setInvoiceUploading(true);
-      setInvoiceUploadError("");
+      setInvoiceUploadError(null);
       setInvoiceUploadMessage("");
 
       const formData = new FormData();
@@ -1196,13 +1200,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorPayload = await response.json().catch(() => null);
-        const detail = errorPayload?.detail;
-        const errorMessage =
-          typeof detail === "string"
-            ? detail
-            : detail?.message || `Upload fattura fallito (${response.status})`;
-        throw new Error(errorMessage);
+        throw new UploadApiError(await uploadErrorFromResponse(response));
       }
 
       const result = await response.json();
@@ -1223,9 +1221,7 @@ export default function App() {
       await loadDashboardData(extractedMonth);
     } catch (err) {
       console.error(err);
-      setInvoiceUploadError(
-        err.message || "Errore durante il caricamento della fattura o nell'estrazione dati."
-      );
+      setInvoiceUploadError(toUploadError(err));
     } finally {
       setInvoiceUploading(false);
     }
@@ -1317,7 +1313,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
 
   try {
     setDocumentUploading(true);
-    setDocumentUploadError("");
+    setDocumentUploadError(null);
     setDocumentUploadMessage("");
 
     let fileToUpload = file;
@@ -1333,11 +1329,13 @@ async function handleGenericDocumentUpload(file, section = "other") {
           useWebWorker: true,
         });
       } else {
-        setDocumentUploadError(
-          `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(
+        setDocumentUploadError({
+          variant: "error",
+          title: "File troppo grande",
+          message: `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(
             1
-          )} MB). Va compresso prima di caricarlo.`
-        );
+          )} MB). Va compresso prima di caricarlo.`,
+        });
         return false;
       }
     }
@@ -1353,17 +1351,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
     });
 
     if (!response.ok) {
-      const errorBody = await response.text();
-      let errorMessage = `Upload documento fallito (${response.status})`;
-
-      try {
-        const parsedError = JSON.parse(errorBody);
-        errorMessage = parsedError.detail || errorMessage;
-      } catch {
-        if (errorBody) errorMessage = errorBody;
-      }
-
-      throw new Error(errorMessage);
+      throw new UploadApiError(await uploadErrorFromResponse(response));
     }
 
     const result = await response.json();
@@ -1377,11 +1365,7 @@ async function handleGenericDocumentUpload(file, section = "other") {
     return true;
   } catch (err) {
     console.error(err);
-    setDocumentUploadError(
-      err instanceof Error && err.message
-        ? err.message
-        : "Errore durante il caricamento del documento."
-    );
+    setDocumentUploadError(toUploadError(err));
     return false;
   } finally {
     setDocumentUploading(false);
@@ -1390,8 +1374,18 @@ async function handleGenericDocumentUpload(file, section = "other") {
 
 function clearDocumentMessages() {
   setDocumentUploadMessage("");
-  setDocumentUploadError("");
+  setDocumentUploadError(null);
   setDocumentDeleteError("");
+}
+
+function dismissUploadFeedback(kind) {
+  if (kind === "uploadMessage") setUploadMessage("");
+  if (kind === "uploadError") setUploadError(null);
+  if (kind === "documentMessage") setDocumentUploadMessage("");
+  if (kind === "documentError") setDocumentUploadError(null);
+  if (kind === "documentDeleteError") setDocumentDeleteError("");
+  if (kind === "invoiceMessage") setInvoiceUploadMessage("");
+  if (kind === "invoiceError") setInvoiceUploadError(null);
 }
 
 async function handleDeleteDocument(documentId) {
@@ -1531,6 +1525,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 handleReconcileTransaction={handleReconcileTransaction}
                 invoiceUploadMessage={invoiceUploadMessage}
                 invoiceUploadError={invoiceUploadError}
+                dismissUploadFeedback={dismissUploadFeedback}
                 invoiceUploading={invoiceUploading}
                 handleInvoiceDocumentUpload={handleInvoiceDocumentUpload}
                 handleDeleteInvoice={handleDeleteInvoice}
@@ -1562,6 +1557,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 handleDeleteDocument={handleDeleteDocument}
                 handleDeleteInvoice={handleDeleteInvoice}
                 clearDocumentMessages={clearDocumentMessages}
+                dismissUploadFeedback={dismissUploadFeedback}
 
                 documentUploading={documentUploading}
                 documentUploadMessage={documentUploadMessage}

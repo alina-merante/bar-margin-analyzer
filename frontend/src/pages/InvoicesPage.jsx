@@ -1,6 +1,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import AlertBanner from "../components/AlertBanner.jsx";
 import {
   getCalendarDate,
   getInvoiceDateStatus,
@@ -211,6 +212,7 @@ export default function InvoicesPage({
   handleReconcileTransaction,
   invoiceUploadMessage,
   invoiceUploadError,
+  dismissUploadFeedback,
   invoiceUploading,
   handleDeleteInvoice,
   invoiceDeleteError,
@@ -857,7 +859,12 @@ useEffect(() => {
       </section>
 
       {invoiceUploadMessage ? (
-        <p className="upload-feedback success">{invoiceUploadMessage}</p>
+        <AlertBanner
+          variant="success"
+          onClose={() => dismissUploadFeedback?.("invoiceMessage")}
+        >
+          {invoiceUploadMessage}
+        </AlertBanner>
       ) : null}
 
       {invoiceReconciliationMessage ? (
@@ -865,7 +872,13 @@ useEffect(() => {
       ) : null}
 
       {invoiceUploadError ? (
-        <p className="upload-feedback error">{invoiceUploadError}</p>
+        <AlertBanner
+          variant={invoiceUploadError.variant}
+          title={invoiceUploadError.title}
+          onClose={() => dismissUploadFeedback?.("invoiceError")}
+        >
+          {invoiceUploadError.message}
+        </AlertBanner>
       ) : null}
 
       {invoiceDeleteError ? (
