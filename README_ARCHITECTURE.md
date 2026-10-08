@@ -102,6 +102,52 @@ scripts/verify-clean-bootstrap.sh
 - L'import crea movimenti `Transaction`; non crea automaticamente `Payment` e
   non produce costi nel P&L.
 
+### Chiusure di cassa
+
+Le chiusure sono caricate da `POST /documents/upload` con `section` `cash` o
+`cash_closure`; i dati sono estratti dal documento via OCR/testo e salvati in
+`DailyCashClosure`, collegata a un `Document`.
+
+Validazione, prima di scrivere file o record:
+
+- la data è obbligatoria; se non viene rilevata o non è una data di calendario
+  valida (ad esempio `31/02/2026`) l'API risponde HTTP 422. Non esiste un
+  fallback a `date.today()`;
+- il numero di chiusura è obbligatorio; se manca l'API risponde HTTP 422;
+- l'importo totale mancante viene salvato come `0.00`: l'assenza dell'importo
+  non è ancora segnalata come errore.
+
+Prevenzione dei duplicati:
+
+- pre-check applicativo su (`date`, `closure_number`): se la chiusura esiste già
+  l'API risponde HTTP 409 con il dettaglio della chiusura già caricata;
+- vincolo `UNIQUE(date, closure_number)` (`uq_daily_cash_closures_date_closure_number`,
+  migrazione `20261016_0007`) come difesa per le importazioni concorrenti. Se due
+  richieste superano entrambe il pre-check, la seconda viola il vincolo e riceve
+  anche lei HTTP 409. Su PostgreSQL la violazione è riconosciuta dal nome del
+  vincolo; con altri driver l'API verifica che la chiusura concorrente esista;
+- `closure_number` resta nullable a livello di database ed è obbligatorio solo
+  nel normale flusso di upload. Un inserimento diretto con `closure_number` NULL
+  non è impedito dal database, perché un vincolo UNIQUE non considera uguali i
+  valori NULL.
+
+Atomicità dell'import:
+
+- `Document` e `DailyCashClosure` sono creati nella stessa transazione: dopo
+  `db.add(document)` viene eseguito `db.flush()` per ottenere `document.id`, poi
+  la chiusura è aggiunta e c'è un solo `db.commit()`;
+- se l'errore avviene durante la scrittura del file, la generazione delle
+  preview, il flush o il commit, viene eseguito il rollback e vengono rimossi il
+  file originale e le preview create da quel tentativo. Non resta quindi un
+  `Document` senza chiusura né file orfani;
+- il cleanup non riguarda upload già completati con successo.
+
+Limiti noti dell'estrazione OCR: la ricerca della data accetta qualunque
+sequenza `GG/MM/AA` o `GG-MM-AAAA` presente nel testo, quindi può scegliere una
+data diversa da quella della chiusura; altri formati di data non sono
+riconosciuti e producono HTTP 422. L'audit degli importi estratti non è ancora
+completato.
+
 ### Storico documenti
 
 La colonna DATA usa date in formato italiano `GG/MM/AAAA` e rappresenta la data

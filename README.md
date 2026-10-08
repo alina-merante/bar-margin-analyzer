@@ -98,6 +98,24 @@ curl -X POST http://localhost:8000/imports/bank-csv \
   -F "file=@data/bank_marzo_2026.csv"
 ```
 
+Upload chiusura di cassa (`section=cash`):
+
+```bash
+curl -X POST http://localhost:8000/documents/upload \
+  -F "file=@chiusura.pdf" -F "month=2026-03" -F "section=cash"
+```
+
+L'endpoint crea `Document` e `DailyCashClosure` in un'unica transazione e
+risponde:
+
+- HTTP 409 se esiste già una chiusura con la stessa data e lo stesso numero;
+- HTTP 422 se la data o il numero di chiusura non vengono rilevati o la data non
+  è valida.
+
+Il campo `detail` della risposta contiene il motivo in italiano ed è mostrato
+così com'è nell'interfaccia. Dettagli e limiti dell'estrazione sono in
+[README_ARCHITECTURE.md](README_ARCHITECTURE.md#chiusure-di-cassa).
+
 Endpoint analytics principali:
 
 - `/analytics/pnl?month=YYYY-MM`

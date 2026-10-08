@@ -14,6 +14,13 @@ I ricavi sono la somma delle chiusure di cassa comprese nel periodo selezionato.
 Le righe `SaleLine` sono usate per le analisi dei prodotti, ma non determinano
 il revenue del P&L.
 
+Le chiusure importate dal normale endpoint `POST /documents/upload` hanno data e
+numero di chiusura validi e hanno superato il controllo duplicati
+(`UNIQUE(date, closure_number)`), quindi la stessa chiusura non viene sommata
+due volte. Il database non impedisce però un inserimento diretto con
+`closure_number` NULL. Se l'importo non viene estratto dal documento, la
+chiusura è salvata con totale `0.00` e contribuisce zero ai ricavi.
+
 ## 2. Costi
 
 Gli expenses del P&L comprendono esclusivamente le fatture che soddisfano tutte

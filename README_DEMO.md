@@ -75,6 +75,17 @@ Le breakdown per categoria e fornitore, le sezioni corrispondenti dell'overview
 e alcuni insight analytics sono ancora placeholder nel backend e possono
 risultare vuoti.
 
+### Test manuale degli errori di upload
+
+Nella pagina Upload, sezione chiusura di cassa:
+
+1. Caricare una chiusura già presente: compare un banner rosso
+   "Documento già presente" con il motivo restituito dal backend (HTTP 409).
+2. Cliccare altrove nella pagina: il banner deve restare visibile.
+3. Chiuderlo con la X.
+4. Caricare un documento in cui la data non è leggibile: compare il banner
+   "Dati non validi" con il motivo del rifiuto (HTTP 422).
+
 ## Clean bootstrap
 
 Per verificare schema, endpoint e build frontend usando risorse temporanee:
