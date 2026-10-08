@@ -994,3 +994,77 @@ def test_cash_upload_with_impossible_ocr_date_returns_422_not_500(
 
 
 _real_extractor = documents_router.extract_daily_cash_closure
+
+
+REAL_CLOSURE_201 = """NUM. CHIUSURA 201
+DATA 14-07-26 23:45
+CORRISP, GIORNALIERO 945,80
+AMMONTARE GIORNO 945,80
+DOCUM. DI VENDITA 118
+PAGAM, ELETTRONICI 625,30
+AMMONTARE 320,50
+IMPONIBILE N2 320,50
+"""
+
+REAL_CLOSURE_202 = """NUM. CHIUSURA 202
+DATA 15-07-26 23:45
+CORRISP, GIORNALIERO 1.124,20
+AMMONTARE GIORNO 1.124,20
+DOCUM. DI VENDITA 139
+PAGAM, ELETTRONICI 720,00
+AMMONTARE 404,20
+IMPONIBILE N2 404,20
+"""
+
+
+@pytest.mark.parametrize(
+    "label, amount, expected",
+    [
+        ("PAGAM, ELETTRONICI", "625,30", Decimal("625.30")),
+        ("PAGAM. ELETTRONICI", "720,00", Decimal("720.00")),
+        ("PAGAM ELETTRONICI", "100,00", Decimal("100.00")),
+    ],
+)
+def test_extractor_reads_electronic_payments_with_any_separator(
+    monkeypatch, label, amount, expected
+):
+    data = _extract_with_text(monkeypatch, f"NUM. CHIUSURA 201\n{label} {amount}")
+    assert data["card_amount"] == expected
+
+
+@pytest.mark.parametrize(
+    "label", ["CORRISP, GIORNALIERO", "CORRISP. GIORNALIERO", "CORRISP GIORNALIERO"]
+)
+def test_extractor_total_falls_back_to_daily_corrispettivo(monkeypatch, label):
+    data = _extract_with_text(monkeypatch, f"NUM. CHIUSURA 201\n{label} 1.124,20")
+    assert data["total_amount"] == Decimal("1124.20")
+
+
+def test_extractor_keeps_explicit_zero_card_amount(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201\nPAGAM, ELETTRONICI 0,00")
+    assert data["card_amount"] == Decimal("0.00")
+
+
+def test_extractor_missing_labels_still_default_to_zero(monkeypatch):
+    data = _extract_with_text(monkeypatch, "NUM. CHIUSURA 201")
+    assert data["total_amount"] == Decimal("0.00")
+    assert data["cash_amount"] == Decimal("0.00")
+    assert data["card_amount"] == Decimal("0.00")
+    assert data["receipts_count"] is None
+
+
+@pytest.mark.parametrize(
+    "text, total, cash, card, receipts",
+    [
+        (REAL_CLOSURE_201, "945.80", "320.50", "625.30", 118),
+        (REAL_CLOSURE_202, "1124.20", "404.20", "720.00", 139),
+    ],
+)
+def test_extractor_reads_real_closure_documents(
+    monkeypatch, text, total, cash, card, receipts
+):
+    data = _extract_with_text(monkeypatch, text)
+    assert data["total_amount"] == Decimal(total)
+    assert data["cash_amount"] == Decimal(cash)
+    assert data["card_amount"] == Decimal(card)
+    assert data["receipts_count"] == receipts

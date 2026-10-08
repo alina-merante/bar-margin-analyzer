@@ -374,21 +374,19 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
         re.IGNORECASE,
     )
 
-    total_amount = (
-        find_amount_after_label(text, r"AMMONTARE\s+GIORNO")
-        or find_amount_after_label(text, r"CORRISP\.\s+GIORNALIERO")
-        or Decimal("0.00")
-    )
+    total_amount = find_amount_after_label(text, r"AMMONTARE\s+GIORNO")
+    if total_amount is None:
+        total_amount = find_amount_after_label(text, r"CORRISP[.,]?\s+GIORNALIERO")
+    if total_amount is None:
+        total_amount = Decimal("0.00")
 
-    card_amount = (
-        find_amount_after_label(text, r"PAGAM\.\s+ELETTRONICI")
-        or Decimal("0.00")
-    )
+    card_amount = find_amount_after_label(text, r"PAGAM[.,]?\s+ELETTRONICI")
+    if card_amount is None:
+        card_amount = Decimal("0.00")
 
-    cash_amount = (
-        find_amount_after_label(text, r"AMMONTARE")
-        or Decimal("0.00")
-    )
+    cash_amount = find_amount_after_label(text, r"AMMONTARE")
+    if cash_amount is None:
+        cash_amount = Decimal("0.00")
 
     receipts_count = find_int_after_label(text, r"DOCUM\.\s+DI\s+VENDITA")
 
