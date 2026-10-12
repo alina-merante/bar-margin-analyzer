@@ -781,6 +781,7 @@ useEffect(() => {
                       <button
                         key={category.label}
                         type="button"
+                        aria-pressed={draftCategoryFilter === category.label}
                         className={`invoice-category-card ${category.tone} ${
                           draftCategoryFilter === category.label ? "active" : ""
                         }`}
@@ -818,8 +819,6 @@ useEffect(() => {
                     type="button"
                     className="invoice-category-apply-btn"
                     onClick={() => {
-                      setStatusFilter("all");
-                      setIsYearView(false);
                       setCategoryFilter(draftCategoryFilter);
                       setCategoryDropdownOpen(false);
                       scrollToInvoicesTable();

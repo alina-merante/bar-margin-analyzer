@@ -146,6 +146,91 @@ test("supplier search and active status filter are both applied", () => {
   assert.deepEqual(results.map((invoice) => invoice.id), [1]);
 });
 
+test("category and supplier search combine with every invoice status tab", () => {
+  const invoices = [
+    {
+      id: 1,
+      supplier: "Fornitore Alfa",
+      category: "Bevande",
+      status: "paid",
+      due_date: "2026-10-01",
+    },
+    {
+      id: 2,
+      supplier: "Fornitore Alfa",
+      category: "Bevande",
+      status: "pending",
+      due_date: "2026-10-01",
+    },
+    {
+      id: 3,
+      supplier: "Fornitore Alfa",
+      category: "Bevande",
+      status: "pending",
+      due_date: "2026-10-03",
+    },
+    {
+      id: 4,
+      supplier: "Fornitore Alfa",
+      category: "Caffe",
+      status: "paid",
+      due_date: "2026-10-01",
+    },
+    {
+      id: 5,
+      supplier: "Fornitore Beta",
+      category: "Bevande",
+      status: "paid",
+      due_date: "2026-10-01",
+    },
+  ];
+
+  const cases = [
+    ["all", [1, 2, 3]],
+    ["paid", [1]],
+    ["due", [3]],
+    ["overdue", [2]],
+  ];
+
+  for (const [statusFilter, expectedIds] of cases) {
+    const results = filterInvoiceList(invoices, {
+      supplierSearch: "alfa",
+      statusFilter,
+      categoryFilter: "Bevande",
+      categoryForInvoice: (invoice) => invoice.category,
+      today,
+    });
+
+    assert.deepEqual(results.map((invoice) => invoice.id), expectedIds, statusFilter);
+  }
+});
+
+test("changing or resetting the category leaves the active status tab unchanged", async () => {
+  const pageSource = await readFile(new URL("../src/pages/InvoicesPage.jsx", import.meta.url), "utf8");
+  const applyAction = pageSource.match(
+    /className="invoice-category-apply-btn"[\s\S]*?onClick=\{\(\) => \{([\s\S]*?)\}\}/
+  )?.[1];
+  const resetAction = pageSource.match(
+    /className="invoice-category-reset-btn"[\s\S]*?onClick=\{\(\) => \{([\s\S]*?)\}\}/
+  )?.[1];
+
+  assert.ok(applyAction, "category apply handler should be present");
+  assert.ok(resetAction, "category reset handler should be present");
+  assert.match(applyAction, /setCategoryFilter\(draftCategoryFilter\)/);
+  assert.doesNotMatch(applyAction, /setStatusFilter|setIsYearView/);
+  assert.match(resetAction, /setCategoryFilter\(""\)/);
+  assert.doesNotMatch(resetAction, /setStatusFilter|setIsYearView/);
+});
+
+test("selected category has a clear visual and accessible state", async () => {
+  const pageSource = await readFile(new URL("../src/pages/InvoicesPage.jsx", import.meta.url), "utf8");
+  const cssSource = await readFile(new URL("../src/App.css", import.meta.url), "utf8");
+
+  assert.match(pageSource, /aria-pressed=\{draftCategoryFilter === category\.label\}/);
+  assert.match(cssSource, /\.invoice-category-card\.active\s*\{[^}]*border:\s*2px solid #[0-9a-f]{6}/i);
+  assert.match(cssSource, /\.invoice-category-card\.active::after\s*\{[^}]*content:\s*"✓"/);
+});
+
 test("monthly and arrears KPI sources stay independent from the deduplicated union", async () => {
   const pageSource = await readFile(new URL("../src/pages/InvoicesPage.jsx", import.meta.url), "utf8");
 
