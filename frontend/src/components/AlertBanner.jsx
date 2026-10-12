@@ -1,8 +1,28 @@
+import { useEffect, useRef } from "react";
+
 const VARIANT_ICONS = {
   error: "⛔",
   warning: "⚠️",
   success: "✅",
 };
+
+export function attachAlertDismissalHandlers(element, eventTarget, onClose) {
+  function handlePointerDown(event) {
+    if (!element.contains(event.target)) onClose();
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "Escape") onClose();
+  }
+
+  eventTarget.addEventListener("pointerdown", handlePointerDown);
+  eventTarget.addEventListener("keydown", handleKeyDown);
+
+  return () => {
+    eventTarget.removeEventListener("pointerdown", handlePointerDown);
+    eventTarget.removeEventListener("keydown", handleKeyDown);
+  };
+}
 
 export default function AlertBanner({
   variant = "error",
@@ -11,11 +31,18 @@ export default function AlertBanner({
   onClose,
   className = "",
 }) {
+  const bannerRef = useRef(null);
   const safeVariant = VARIANT_ICONS[variant] ? variant : "error";
   const role = safeVariant === "success" ? "status" : "alert";
 
+  useEffect(() => {
+    if (!onClose || !bannerRef.current) return undefined;
+    return attachAlertDismissalHandlers(bannerRef.current, document, onClose);
+  }, [onClose]);
+
   return (
     <div
+      ref={bannerRef}
       className={`alert-banner alert-banner--${safeVariant} ${className}`.trim()}
       role={role}
     >

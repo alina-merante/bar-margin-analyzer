@@ -15,6 +15,8 @@ import {
   filterInvoiceList,
   mergeUniqueInvoices,
 } from "../invoiceCollections";
+import { extractApiErrorMessage } from "../apiErrors";
+import { validateInvoiceAmounts, validateInvoiceDates } from "../invoiceValidation";
 
 function formatEuro(value) {
   return new Intl.NumberFormat("it-IT", {
@@ -224,6 +226,7 @@ export default function InvoicesPage({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const invoicePreviewRef = useRef(null);
   const [reconciliationInvoice, setReconciliationInvoice] = useState(null);
   const [reconciliationData, setReconciliationData] = useState(null);
   const [reconciliationLoading, setReconciliationLoading] = useState(false);
@@ -250,6 +253,34 @@ useEffect(() => {
     setIsYearView(true);
   }
 }, [searchParams]);
+
+  useEffect(() => {
+    if (!selectedInvoice) return undefined;
+
+    function handlePreviewPointerDown(event) {
+      if (!invoicePreviewRef.current?.contains(event.target)) {
+        setSelectedInvoice(null);
+      }
+    }
+
+    function handlePreviewKeyDown(event) {
+      if (event.key === "Escape") {
+        setSelectedInvoice(null);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePreviewPointerDown);
+    document.addEventListener("keydown", handlePreviewKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePreviewPointerDown);
+      document.removeEventListener("keydown", handlePreviewKeyDown);
+    };
+  }, [selectedInvoice]);
+
+  useEffect(() => {
+    setSelectedInvoice(null);
+  }, [statusFilter, categoryFilter, supplierSearch, isYearView, searchParams]);
 
   useEffect(() => {
     if (!categoryDropdownOpen) return undefined;
@@ -378,7 +409,18 @@ useEffect(() => {
 
   async function submitManualInvoice() {
     if (!manualForm.issue_date.trim()) {
-      setManualError("Inserisci la data della fattura.");
+      setManualError("Inserisci una data fattura valida con anno a quattro cifre.");
+      return;
+    }
+
+    if (!manualForm.due_date.trim()) {
+      setManualError("Inserisci una data di scadenza valida con anno a quattro cifre.");
+      return;
+    }
+
+    const dateError = validateInvoiceDates(manualForm.issue_date, manualForm.due_date);
+    if (dateError) {
+      setManualError(dateError);
       return;
     }
 
@@ -401,13 +443,9 @@ useEffect(() => {
       return;
     }
 
-    if (Number(manualForm.total) <= 0) {
-      setManualError("Il totale deve essere maggiore di zero.");
-      return;
-    }
-
-    if (Number(manualForm.vat) < 0) {
-      setManualError("L'IVA non può essere negativa.");
+    const amountError = validateInvoiceAmounts(manualForm.total, manualForm.vat);
+    if (amountError) {
+      setManualError(amountError);
       return;
     }
 
@@ -436,7 +474,9 @@ useEffect(() => {
       setManualOpen(false);
     } catch (err) {
       console.error(err);
-      setManualError("Errore durante il salvataggio della fattura.");
+      setManualError(
+        extractApiErrorMessage(err?.message) || "Errore durante il salvataggio della fattura."
+      );
     } finally {
       setManualSaving(false);
     }
@@ -974,7 +1014,14 @@ useEffect(() => {
                     className={`invoice-icon-btn delete ${Number(invoice.linked_amount) > 0 ? "disabled" : ""}`}
                     disabled={Number(invoice.linked_amount) > 0}
                     onClick={() => {
-                      if (window.confirm("Vuoi eliminare questa fattura?")) {
+                      const invoiceNumber = invoice.invoice_number?.trim() || "non indicato";
+                      const supplier = invoice.supplier?.trim();
+                      const supplierLabel = supplier ? ` Fornitore: ${supplier}.` : "";
+                      if (
+                        window.confirm(
+                          `Vuoi eliminare definitivamente la fattura n. ${invoiceNumber}?${supplierLabel}`
+                        )
+                      ) {
                         handleDeleteInvoice(invoice.id);
                       }
                     }}
@@ -1144,7 +1191,7 @@ useEffect(() => {
 
      {selectedInvoice ? (
   <div className="invoice-preview-backdrop">
-    <div className="invoice-preview-modal only-document">
+    <div className="invoice-preview-modal only-document" ref={invoicePreviewRef}>
       <button
         type="button"
         className="invoice-preview-floating-close"
@@ -1183,10 +1230,9 @@ useEffect(() => {
           </div>
         ) : (
           <div className="invoice-preview-empty">
-            <div>🧾</div>
             <h3>Documento non disponibile</h3>
             <p>
-              Questa fattura non ha un file associato.
+                Questa fattura è stata inserita manualmente e non ha un file associato.
             </p>
           </div>
         )}
@@ -1210,21 +1256,29 @@ useEffect(() => {
             </div>
 
             <div className="invoice-manual-grid">
-              <input
-                value={manualForm.supplier}
-                onChange={(event) => updateManualForm("supplier", event.target.value)}
-                placeholder="Fornitore"
-              />
+              <label className="invoice-manual-field">
+                Fornitore
+                <input
+                  required
+                  value={manualForm.supplier}
+                  onChange={(event) => updateManualForm("supplier", event.target.value)}
+                  placeholder="Es. Fornitore Rossi"
+                />
+              </label>
 
-              <input
-                value={manualForm.invoice_number}
-                onChange={(event) =>
-                  updateManualForm("invoice_number", event.target.value)
-                }
-                placeholder="Numero fattura"
-              />
+              <label className="invoice-manual-field">
+                Numero fattura
+                <input
+                  required
+                  value={manualForm.invoice_number}
+                  onChange={(event) =>
+                    updateManualForm("invoice_number", event.target.value)
+                  }
+                  placeholder="Es. FT-2026-001"
+                />
+              </label>
 
-              <label className="invoice-manual-date-field">
+              <label className="invoice-manual-field">
                 Data fattura
                 <input
                   type="date"
@@ -1235,35 +1289,52 @@ useEffect(() => {
                 />
               </label>
 
-              <input
-                type="date"
-                value={manualForm.due_date}
-                onChange={(event) => updateManualForm("due_date", event.target.value)}
-              />
+              <label className="invoice-manual-field">
+                Data scadenza
+                <input
+                  type="date"
+                  required
+                  aria-label="Data scadenza"
+                  value={manualForm.due_date}
+                  onChange={(event) => updateManualForm("due_date", event.target.value)}
+                />
+              </label>
 
-              <input
-                value={manualForm.category}
-                onChange={(event) => updateManualForm("category", event.target.value)}
-                placeholder="Categoria"
-              />
+              <label className="invoice-manual-field">
+                Categoria
+                <input
+                  required
+                  value={manualForm.category}
+                  onChange={(event) => updateManualForm("category", event.target.value)}
+                  placeholder="Es. Bevande"
+                />
+              </label>
 
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={manualForm.total}
-                onChange={(event) => updateManualForm("total", event.target.value)}
-                placeholder="Totale"
-              />
+              <label className="invoice-manual-field">
+                Totale fattura (IVA inclusa)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={manualForm.total}
+                  onChange={(event) => updateManualForm("total", event.target.value)}
+                  placeholder="0,00"
+                />
+              </label>
 
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={manualForm.vat}
-                onChange={(event) => updateManualForm("vat", event.target.value)}
-                placeholder="IVA"
-              />
+              <label className="invoice-manual-field">
+                di cui IVA
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={manualForm.vat}
+                  onChange={(event) => updateManualForm("vat", event.target.value)}
+                  placeholder="0,00"
+                />
+              </label>
             </div>
 
             {manualError ? <p className="upload-feedback error">{manualError}</p> : null}

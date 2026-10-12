@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import AlertBanner from "../components/AlertBanner.jsx";
@@ -190,7 +190,46 @@ export default function UploadPage({
 
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
+  const [selectedInvoiceWithoutDocument, setSelectedInvoiceWithoutDocument] = useState(null);
+  const documentPreviewRef = useRef(null);
+  const invoiceWithoutDocumentPreviewRef = useRef(null);
+  const [documentToDelete, setDocumentToDelete] = useState(null);
+  const [deletingDocument, setDeletingDocument] = useState(false);
   const [, setLocalDocumentMessage] = useState("");
+
+  useEffect(() => {
+    if (!selectedOtherDocument && !selectedInvoiceWithoutDocument) return undefined;
+
+    function handlePreviewPointerDown(event) {
+      const clickedInsideDocumentPreview =
+        documentPreviewRef.current?.contains(event.target) ||
+        invoiceWithoutDocumentPreviewRef.current?.contains(event.target);
+      if (!clickedInsideDocumentPreview) {
+        setSelectedOtherDocument(null);
+        setSelectedInvoiceWithoutDocument(null);
+      }
+    }
+
+    function handlePreviewKeyDown(event) {
+      if (event.key === "Escape") {
+        setSelectedOtherDocument(null);
+        setSelectedInvoiceWithoutDocument(null);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePreviewPointerDown);
+    document.addEventListener("keydown", handlePreviewKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePreviewPointerDown);
+      document.removeEventListener("keydown", handlePreviewKeyDown);
+    };
+  }, [selectedOtherDocument, selectedInvoiceWithoutDocument]);
+
+  useEffect(() => {
+    setSelectedOtherDocument(null);
+    setSelectedInvoiceWithoutDocument(null);
+  }, [activeHistoryTab]);
 
   const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
 
@@ -284,6 +323,16 @@ export default function UploadPage({
 
 function openHistoryEntry(entry) {
   if (entry.kind === "invoice") {
+    const invoice = entry.raw;
+    if (
+      !invoice.file_url &&
+      !invoice.document_url &&
+      !invoice.document_path &&
+      !invoice.url
+    ) {
+      setSelectedInvoiceWithoutDocument(invoice);
+      return;
+    }
     navigate("/invoices");
     return;
   }
@@ -294,11 +343,33 @@ function openHistoryEntry(entry) {
 async function deleteHistoryEntry(entry) {
   if (entry.kind === "invoice") {
     if (!handleDeleteInvoice) return;
+    const invoiceNumber = entry.raw.invoice_number?.trim() || "non indicato";
+    const supplier = entry.raw.supplier?.trim();
+    const supplierLabel = supplier ? ` Fornitore: ${supplier}.` : "";
+    if (
+      !window.confirm(
+        `Vuoi eliminare definitivamente la fattura n. ${invoiceNumber}?${supplierLabel}`
+      )
+    ) {
+      return;
+    }
     await handleDeleteInvoice(entry.raw.id);
     return;
   }
 
-  handleDeleteDocument?.(entry.raw.id);
+  setDocumentToDelete(entry.raw);
+}
+
+async function confirmDeleteDocument() {
+  if (!documentToDelete || !handleDeleteDocument || deletingDocument) return;
+
+  try {
+    setDeletingDocument(true);
+    const deleted = await handleDeleteDocument(documentToDelete.id);
+    if (deleted) setDocumentToDelete(null);
+  } finally {
+    setDeletingDocument(false);
+  }
 }
 
   async function uploadInvoiceAndGoToInvoices(file) {
@@ -766,7 +837,7 @@ if (uploaded) setActiveHistoryTab("other");
 
       {selectedOtherDocument ? (
         <div className="invoice-preview-backdrop">
-          <div className="invoice-preview-modal only-document">
+          <div className="invoice-preview-modal only-document" ref={documentPreviewRef}>
             <button
               type="button"
               className="invoice-preview-floating-close"
@@ -800,6 +871,77 @@ if (uploaded) setActiveHistoryTab("other");
               </div>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {selectedInvoiceWithoutDocument ? (
+        <div
+          className="invoice-preview-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedInvoiceWithoutDocument(null);
+            }
+          }}
+        >
+          <section
+            className="document-info-modal"
+            ref={invoiceWithoutDocumentPreviewRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-invoice-document-title"
+          >
+            <h2 id="manual-invoice-document-title">Documento non disponibile</h2>
+            <p>
+              Questa fattura è stata inserita manualmente e non ha un file associato.
+            </p>
+            <div className="document-delete-confirm-actions">
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceWithoutDocument(null)}
+              >
+                Chiudi
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {documentToDelete ? (
+        <div className="document-delete-confirm-backdrop">
+          <section
+            className="document-delete-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="document-delete-confirm-title"
+          >
+            <h2 id="document-delete-confirm-title">Eliminare il documento?</h2>
+            <p>
+              Il documento <strong>{documentToDelete.original_filename}</strong> sarà
+              eliminato definitivamente. Questa operazione non può essere annullata.
+            </p>
+            {documentDeleteError ? (
+              <p className="upload-feedback error" role="alert">
+                {documentDeleteError}
+              </p>
+            ) : null}
+            <div className="document-delete-confirm-actions">
+              <button
+                type="button"
+                onClick={() => setDocumentToDelete(null)}
+                disabled={deletingDocument}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={confirmDeleteDocument}
+                disabled={deletingDocument || !handleDeleteDocument}
+              >
+                {deletingDocument ? "Eliminazione..." : "Elimina definitivamente"}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
     </main>

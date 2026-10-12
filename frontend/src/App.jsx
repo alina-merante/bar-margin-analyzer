@@ -1398,7 +1398,7 @@ function dismissUploadFeedback(kind) {
 }
 
 async function handleDeleteDocument(documentId) {
-  if (!documentId) return;
+  if (!documentId) return false;
 
   try {
     setDocumentDeleteError("");
@@ -1413,15 +1413,22 @@ async function handleDeleteDocument(documentId) {
         errorBody || `Delete documento fallito (${response.status})`
       );
     }
+  } catch (err) {
+    console.error(err);
+    setDocumentDeleteError("Errore durante l'eliminazione del documento.");
+    return false;
+  }
 
-    await loadDocuments();
-    await loadDashboardData(month);
+  try {
+    await Promise.all([loadDocuments(), loadDashboardData(month)]);
   } catch (err) {
     console.error(err);
     setDocumentDeleteError(
-      "Errore durante l'eliminazione del documento."
+      "Documento eliminato, ma non è stato possibile aggiornare lo storico e la Dashboard. Ricarica la pagina."
     );
   }
+
+  return true;
 }
 
   const pendingInvoices = useMemo(

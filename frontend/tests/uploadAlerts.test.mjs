@@ -12,6 +12,7 @@ const DUPLICATE_DETAIL =
 
 let server;
 let AlertBanner;
+let attachAlertDismissalHandlers;
 let UploadPage;
 
 before(async () => {
@@ -22,7 +23,9 @@ before(async () => {
     server: { middlewareMode: true, hmr: false, watch: null },
     optimizeDeps: { noDiscovery: true, include: [] },
   });
-  AlertBanner = (await server.ssrLoadModule("/src/components/AlertBanner.jsx")).default;
+  const alertModule = await server.ssrLoadModule("/src/components/AlertBanner.jsx");
+  AlertBanner = alertModule.default;
+  attachAlertDismissalHandlers = alertModule.attachAlertDismissalHandlers;
   UploadPage = (await server.ssrLoadModule("/src/pages/UploadPage.jsx")).default;
 });
 
@@ -38,19 +41,6 @@ function renderUploadPage(props) {
   return renderToStaticMarkup(
     createElement(MemoryRouter, null, createElement(UploadPage, { month: "2026-10", ...props }))
   );
-}
-
-function findCloseButton(node) {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findCloseButton(child);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (node.type === "button") return node;
-  return findCloseButton(node.props?.children);
 }
 
 test("AlertBanner uses role alert for errors and warnings, status for success", () => {
@@ -77,23 +67,54 @@ test("AlertBanner without onClose renders no close button", () => {
   assert.doesNotMatch(renderBanner({ variant: "error", children: "x" }), /<button/);
 });
 
-test("AlertBanner close button calls onClose manually", () => {
-  let closed = 0;
-  const tree = AlertBanner({
-    variant: "error",
-    title: "Dati non validi",
-    onClose: () => {
-      closed += 1;
-    },
-    children: "dettaglio",
+test("AlertBanner dismisses on outside pointer and Escape without cancelling app actions", () => {
+  const listeners = new Map();
+  const eventTarget = {
+    addEventListener: (type, listener) => listeners.set(type, listener),
+    removeEventListener: (type) => listeners.delete(type),
+  };
+  const element = { contains: (target) => target === "inside-alert" };
+  let closeCount = 0;
+  let appActionCount = 0;
+  const cleanup = attachAlertDismissalHandlers(element, eventTarget, () => {
+    closeCount += 1;
   });
+  let prevented = false;
+  let propagationStopped = false;
 
-  const button = findCloseButton(tree);
+  listeners.get("pointerdown")({
+    target: "app-button",
+    preventDefault: () => {
+      prevented = true;
+    },
+    stopPropagation: () => {
+      propagationStopped = true;
+    },
+  });
+  appActionCount += 1;
 
-  assert.ok(button, "close button must exist");
-  assert.equal(button.props["aria-label"], "Chiudi messaggio");
-  button.props.onClick();
-  assert.equal(closed, 1);
+  assert.equal(closeCount, 1);
+  assert.equal(appActionCount, 1);
+  assert.equal(prevented, false);
+  assert.equal(propagationStopped, false);
+
+  listeners.get("pointerdown")({ target: "inside-alert" });
+  assert.equal(closeCount, 1);
+  listeners.get("keydown")({ key: "Escape" });
+  assert.equal(closeCount, 2);
+
+  cleanup();
+  assert.equal(listeners.size, 0);
+});
+
+test("AlertBanner close button remains available", async () => {
+  const source = await readFile(
+    new URL("../src/components/AlertBanner.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(source, /aria-label="Chiudi messaggio"/);
+  assert.match(source, /onClick=\{onClose\}/);
 });
 
 test("UploadPage shows the 409 backend detail with the duplicate title", () => {

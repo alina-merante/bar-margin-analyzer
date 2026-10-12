@@ -1,8 +1,10 @@
 import datetime as dt
+import hashlib
 import io
 import re
 import xml.etree.ElementTree as ET
 import unicodedata
+from contextlib import contextmanager
 from decimal import Decimal
 import os
 import uuid
@@ -10,7 +12,7 @@ import pytesseract
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pdf2image import convert_from_bytes
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,6 +25,7 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 
 router = APIRouter(tags=["invoices", "payments"])
+DUPLICATE_INVOICE_DETAIL = "Esiste già una fattura con questo numero per il fornitore indicato"
 
 
 class InvoiceCreate(BaseModel):
@@ -32,6 +35,87 @@ class InvoiceCreate(BaseModel):
     due_date: dt.date
     total: Decimal
     vat: Decimal
+
+    @field_validator("issue_date", "due_date", mode="before")
+    @classmethod
+    def validate_date_format(cls, value):
+        if isinstance(value, dt.date):
+            return value
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("La data deve avere un anno composto da quattro cifre.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_invoice_fields(self):
+        if not self.total.is_finite() or not self.vat.is_finite():
+            raise ValueError("Totale e IVA devono essere importi numerici validi e finiti.")
+        if self.total <= 0:
+            raise ValueError("Il totale della fattura deve essere maggiore di zero.")
+        if self.vat < 0:
+            raise ValueError("L'IVA non può essere negativa.")
+        if self.vat > self.total:
+            raise ValueError("L'IVA non può essere superiore al totale della fattura.")
+        if self.due_date < self.issue_date:
+            raise ValueError("La data di scadenza non può precedere la data fattura.")
+        return self
+
+
+def normalize_invoice_supplier(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
+
+
+def normalize_invoice_number(value: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", value).split()).casefold()
+
+
+def invoice_identity_lock_key(supplier: str, invoice_number: str, year: int) -> int:
+    identity = "\0".join(
+        (
+            str(year),
+            normalize_invoice_supplier(supplier),
+            normalize_invoice_number(invoice_number),
+        )
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@contextmanager
+def invoice_identity_lock(db: Session, supplier: str, invoice_number: str, issue_date: dt.date):
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    invoice_identity_lock_key(supplier, invoice_number, issue_date.year)
+                )
+            )
+        )
+    try:
+        yield
+    except Exception:
+        db.rollback()
+        raise
+
+
+def find_duplicate_invoice(
+    db: Session, supplier: str, invoice_number: str, issue_date: dt.date
+) -> Invoice | None:
+    year_start = dt.date(issue_date.year, 1, 1)
+    stmt = select(Invoice).where(Invoice.issue_date >= year_start)
+    if issue_date.year < dt.date.max.year:
+        stmt = stmt.where(Invoice.issue_date < dt.date(issue_date.year + 1, 1, 1))
+
+    normalized_supplier = normalize_invoice_supplier(supplier)
+    normalized_number = normalize_invoice_number(invoice_number)
+    return next(
+        (
+            invoice
+            for invoice in db.scalars(stmt).all()
+            if normalize_invoice_supplier(invoice.supplier) == normalized_supplier
+            and normalize_invoice_number(invoice.invoice_number) == normalized_number
+        ),
+        None,
+    )
 
 
 class PaymentCreate(BaseModel):
@@ -945,19 +1029,27 @@ def extract_invoice_from_text(text: str) -> dict:
 
 @router.post("/invoices")
 def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dict:
-    invoice = Invoice(
-        supplier=payload.supplier.strip(),
-        invoice_number=payload.invoice_number.strip(),
-        issue_date=payload.issue_date,
-        due_date=payload.due_date,
-        total=payload.total,
-        vat=payload.vat,
-        status=InvoiceStatus.pending,
-    )
-    db.add(invoice)
-    db.commit()
-    db.refresh(invoice)
-    return invoice_to_dict(invoice, db)
+    with invoice_identity_lock(
+        db, payload.supplier, payload.invoice_number, payload.issue_date
+    ):
+        if find_duplicate_invoice(
+            db, payload.supplier, payload.invoice_number, payload.issue_date
+        ):
+            raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
+
+        invoice = Invoice(
+            supplier=payload.supplier.strip(),
+            invoice_number=payload.invoice_number.strip(),
+            issue_date=payload.issue_date,
+            due_date=payload.due_date,
+            total=payload.total,
+            vat=payload.vat,
+            status=InvoiceStatus.pending,
+        )
+        db.add(invoice)
+        db.commit()
+        db.refresh(invoice)
+        return invoice_to_dict(invoice, db)
 
 @router.post("/invoices/extract")
 async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
@@ -1015,69 +1107,51 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
                 },
             )
 
-        existing_invoice = db.scalar(
-            select(Invoice).where(
-                Invoice.supplier == normalized["supplier"],
-                Invoice.invoice_number == normalized["invoice_number"],
-            ).with_for_update()
-        )
+        if normalized["due_date"] < normalized["issue_date"]:
+            raise HTTPException(
+                status_code=422,
+                detail="La data di scadenza non può precedere la data fattura.",
+            )
 
-        if existing_invoice:
-            has_payment_links = db.scalar(
-                select(InvoicePaymentLink.id)
-                .where(InvoicePaymentLink.invoice_id == existing_invoice.id)
-                .limit(1)
-            ) is not None
-            if has_payment_links:
-                response = invoice_to_dict(existing_invoice, db)
-                response["already_exists"] = True
-                response["has_payment_links"] = True
-                response["update_applied"] = False
-                db.rollback()
-                return response
+        with invoice_identity_lock(
+            db,
+            normalized["supplier"],
+            normalized["invoice_number"],
+            normalized["issue_date"],
+        ):
+            if find_duplicate_invoice(
+                db,
+                normalized["supplier"],
+                normalized["invoice_number"],
+                normalized["issue_date"],
+            ):
+                raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
 
-        os.makedirs("uploads/invoices", exist_ok=True)
-        safe_filename = f"{uuid.uuid4()}.{extension}"
-        file_path = os.path.join("uploads", "invoices", safe_filename)
-        with open(file_path, "wb") as output:
-            output.write(content)
-        file_url = f"/uploads/invoices/{safe_filename}"
+            os.makedirs("uploads/invoices", exist_ok=True)
+            safe_filename = f"{uuid.uuid4()}.{extension}"
+            file_path = os.path.join("uploads", "invoices", safe_filename)
+            with open(file_path, "wb") as output:
+                output.write(content)
+            file_url = f"/uploads/invoices/{safe_filename}"
 
-        if existing_invoice:
-            existing_invoice.file_url = file_url
-            existing_invoice.issue_date = normalized["issue_date"]
-            existing_invoice.due_date = normalized["due_date"]
-            existing_invoice.total = normalized["total"]
-            existing_invoice.vat = normalized["vat"]
-            existing_invoice.status = InvoiceStatus.pending
+            invoice = Invoice(
+                supplier=normalized["supplier"],
+                invoice_number=normalized["invoice_number"],
+                issue_date=normalized["issue_date"],
+                due_date=normalized["due_date"],
+                total=normalized["total"],
+                vat=normalized["vat"],
+                status=InvoiceStatus.pending,
+                file_url=file_url,
+            )
 
+            db.add(invoice)
             db.commit()
-            db.refresh(existing_invoice)
+            db.refresh(invoice)
 
-            response = invoice_to_dict(existing_invoice, db)
-            response["already_exists"] = True
-            response["has_payment_links"] = False
-            response["update_applied"] = True
+            response = invoice_to_dict(invoice, db)
+            response["already_exists"] = False
             return response
-
-        invoice = Invoice(
-            supplier=normalized["supplier"],
-            invoice_number=normalized["invoice_number"],
-            issue_date=normalized["issue_date"],
-            due_date=normalized["due_date"],
-            total=normalized["total"],
-            vat=normalized["vat"],
-            status=InvoiceStatus.pending,
-            file_url=file_url,
-        )
-
-        db.add(invoice)
-        db.commit()
-        db.refresh(invoice)
-
-        response = invoice_to_dict(invoice, db)
-        response["already_exists"] = False
-        return response
 
     except HTTPException:
         raise
