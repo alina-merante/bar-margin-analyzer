@@ -25,7 +25,7 @@ test("invoice preview closes outside or on Escape without consuming other action
   assert.doesNotMatch(dismissalEffect, /preventDefault|stopPropagation/);
   assert.match(
     invoicesSource,
-    /\}, \[statusFilter, categoryFilter, supplierSearch, isYearView, searchParams\]\);/
+    /\}, \[statusFilter, categoryFilter, supplierSearch, searchParams\]\);/
   );
 });
 
@@ -60,6 +60,7 @@ test("preview overlay allows first-click actions while keeping modal controls in
     uploadSource,
     /className="invoice-preview-floating-close"[\s\S]*?onClick=\{\(\) => setSelectedOtherDocument\(null\)\}/
   );
+  assert.match(styles, /\.invoice-preview-modal\.only-document \.invoice-preview-empty\s*\{[\s\S]*?background:\s*#fff/);
 });
 
 test("destructive document confirmation remains independent from preview dismissal", () => {

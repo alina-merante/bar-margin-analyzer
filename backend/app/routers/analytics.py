@@ -485,7 +485,6 @@ def expenses_by_supplier(
 @router.get("/invoices-summary")
 def invoices_summary(db: Session = Depends(get_db)) -> dict:
     total_invoices = db.scalar(select(func.count(Invoice.id))) or 0
-    pending_invoices = db.scalar(select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.pending)) or 0
 
     linked_payments = invoice_payment_totals_subquery()
     fully_paid = fully_paid_invoice_condition(linked_payments)
@@ -494,6 +493,7 @@ def invoices_summary(db: Session = Depends(get_db)) -> dict:
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
         .where(fully_paid)
     ) or 0
+    pending_invoices = total_invoices - paid_invoices
     remaining_amount = case(
         (Invoice.total > func.coalesce(linked_payments.c.linked_amount, 0),
          Invoice.total - func.coalesce(linked_payments.c.linked_amount, 0)),
@@ -502,7 +502,7 @@ def invoices_summary(db: Session = Depends(get_db)) -> dict:
     pending_amount = db.scalar(
         select(func.coalesce(func.sum(remaining_amount), 0))
         .outerjoin(linked_payments, linked_payments.c.invoice_id == Invoice.id)
-        .where(Invoice.status == InvoiceStatus.pending)
+        .where(remaining_amount > 0)
     ) or 0
     paid_amount = db.scalar(
         select(func.coalesce(func.sum(Invoice.total), 0))

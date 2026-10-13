@@ -4,12 +4,14 @@ import {
   formatCivilDateDMY,
   formatDayAgeLabel,
   getCivilDateAgeInDays,
-  getCalendarDate,
+  getInvoiceRemainingAmount,
   getReminderToneForAge,
   getTimestampAgeInLocalDays,
-  isInvoiceDue,
   isInvoiceInDueMonth,
   isInvoiceOverdue,
+  isInvoiceUnpaid,
+  isInvoiceUrgent,
+  isCurrentCalendarMonth,
 } from "../invoiceDateStatus";
 
 function formatEuro(value) {
@@ -19,13 +21,6 @@ function formatEuro(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(value) || 0);
-}
-
-function getInvoiceRemainingAmount(invoice = {}) {
-  const total = Number(invoice.total) || 0;
-  const linkedAmount = Number(invoice.linked_amount) || 0;
-  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
-  return Math.max(0, Number(remainingAmount) || 0);
 }
 
 function formatMonthLabel(month) {
@@ -43,18 +38,6 @@ function formatMonthShort(month) {
   return new Intl.DateTimeFormat("it-IT", {
     month: "short",
   }).format(new Date(year, monthNum - 1, 1));
-}
-
-function formatShortDate(value, isCivilDate = false) {
-  if (!value) return "-";
-
-  const date = isCivilDate ? getCalendarDate(value) : new Date(value);
-  if (!date || Number.isNaN(date.getTime())) return "-";
-
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "long",
-  }).format(date);
 }
 
 function getReminderAge(value, isCivilDate) {
@@ -101,20 +84,30 @@ export default function DashboardPage({
 }) {
   const monthLabel = formatMonthLabel(month);
   const hasPreviousOverdueInvoices = previousOverdueInvoices.length > 0;
+  const today = new Date();
 
   const currentMonthInvoices = useMemo(() => {
     return invoices.filter((invoice) => isInvoiceInDueMonth(invoice, month));
   }, [invoices, month]);
 
-  const paidInvoices = currentMonthInvoices.filter((i) => i.status === "paid");
-  const overdueInvoices = currentMonthInvoices.filter(isInvoiceOverdue);
-  const dueInvoices = currentMonthInvoices.filter(isInvoiceDue);
-  const overdueInvoicesAmount = overdueInvoices.reduce(
-  (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
-  0
-);
+  const paidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
+  const allOverdueInvoices = invoices.filter(
+    (invoice) => isInvoiceOverdue(invoice, today) && isInvoiceUnpaid(invoice)
+  );
+  const dueInvoices = currentMonthInvoices.filter(isInvoiceUnpaid);
+  const overdueInvoices = dueInvoices.filter((invoice) => isInvoiceOverdue(invoice, today));
+  const dueSoonInvoices = invoices
+    .filter((invoice) => isInvoiceUrgent(invoice, today))
+    .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+  const overdueInvoicesAmount = allOverdueInvoices.reduce(
+    (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
+    0
+  );
 
-  const criticalInvoices = [...overdueInvoices, ...dueInvoices].slice(0, 3);
+  const criticalInvoices = [...dueInvoices].sort((a, b) =>
+    String(a.due_date).localeCompare(String(b.due_date))
+  );
+  const showTodayReminders = isCurrentCalendarMonth(month, today);
 
   const marginPercent =
     Number(pnl.revenue) > 0
@@ -134,13 +127,11 @@ export default function DashboardPage({
     1
   );
 
-  const todayLabel = new Intl.DateTimeFormat("it-IT", {
+  const todayLabel = `${new Intl.DateTimeFormat("it-IT", {
     weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date());
+  }).format(today)} ${formatCivilDateDMY(today)}`;
 
-  const firstDueInvoice = dueInvoices[0];
+  const firstDueInvoice = dueSoonInvoices[0];
 
   const reminders = [
     {
@@ -148,7 +139,7 @@ export default function DashboardPage({
       badge: daysAgoLabel(latestPosUploadDate, latestPosUploadDateIsCivil),
       title: "Cassa",
       text: latestPosUploadDate
-        ? `Ultima chiusura cassa del ${formatShortDate(latestPosUploadDate, latestPosUploadDateIsCivil)}`
+        ? `Ultima chiusura cassa del ${formatCivilDateDMY(latestPosUploadDate)}`
         : "Chiusura cassa non ancora caricata",
       action: latestPosUploadDate ? "Aggiorna" : "Carica ora",
       to: "/upload",
@@ -167,29 +158,28 @@ export default function DashboardPage({
     },
     {
   icon: "🧾",
-  badge: overdueInvoices.length ? "SCADUTA" : "OK",
+  badge: allOverdueInvoices.length ? "SCADUTA" : "OK",
   title: "Fatture scadute",
-  text: overdueInvoices.length
-    ? `${overdueInvoices.length} ${
-        overdueInvoices.length === 1
+  text: allOverdueInvoices.length
+    ? `${allOverdueInvoices.length} ${
+        allOverdueInvoices.length === 1
           ? "fattura scaduta"
           : "fatture scadute"
       } · totale ${formatEuro(overdueInvoicesAmount)}`
     : "Nessuna fattura scaduta.",
-  action: overdueInvoices.length ? "Paga ora" : "Vedi dettagli",
+  action: allOverdueInvoices.length ? "Paga ora" : "Vedi dettagli",
   to: "/invoices",
-  tone: overdueInvoices.length ? "danger" : "neutral",
+  tone: allOverdueInvoices.length ? "danger" : "neutral",
 },
     {
       icon: "⏰",
       badge: firstDueInvoice ? "TRA POCO" : "OK",
       title: firstDueInvoice?.supplier || "Prossime scadenze",
       text: firstDueInvoice
-        ? `${formatEuro(getInvoiceRemainingAmount(firstDueInvoice))} · scade il ${formatShortDate(
-            firstDueInvoice.due_date,
-            true
+        ? `${formatEuro(getInvoiceRemainingAmount(firstDueInvoice))} · scade il ${formatCivilDateDMY(
+            firstDueInvoice.due_date
           )}`
-        : "Nessuna scadenza aperta.",
+        : "Nessuna fattura in scadenza nei prossimi 5 giorni.",
       action: "Vedi dettagli",
       to: "/invoices",
       tone: firstDueInvoice ? "warning" : "neutral",
@@ -316,22 +306,27 @@ export default function DashboardPage({
               const active = item.month === month;
 
               return (
-                <div className="bar-group" key={item.month}>
+                <div
+                  className="bar-group"
+                  key={item.month}
+                  title={`${item.month}: ricavi ${formatEuro(revenue)} · costi ${formatEuro(expenses)}`}
+                  aria-label={`${item.month}: ricavi ${formatEuro(revenue)}, costi ${formatEuro(expenses)}`}
+                >
                   <div className="bar-pair">
                     <div
-                      className={`bar ricavi ${active ? "active-bar" : ""} ${
+                      className={`bar ricavi ${active && revenue > 0 ? "active-bar" : ""} ${
     revenue === 0 ? "zero-bar" : ""
   }`}
   style={{
-    height: revenue > 0 ? `${Math.max(8, (revenue / trendMax) * 100)}%` : "4px",
+    height: `${(revenue / trendMax) * 100}%`,
   }}
        />
                     <div
-                      className={`bar costi ${active ? "active-cost-bar" : ""} ${
+                      className={`bar costi ${active && expenses > 0 ? "active-cost-bar" : ""} ${
     expenses === 0 ? "zero-bar" : ""
   }`}
   style={{
-    height: expenses > 0 ? `${Math.max(8, (expenses / trendMax) * 100)}%` : "4px",
+    height: `${(expenses / trendMax) * 100}%`,
   }}                    />
                   </div>
 
@@ -413,36 +408,41 @@ export default function DashboardPage({
 
               <div className="invoice-mini-stat due">
                 <strong>{dueInvoices.length}</strong>
-                <span>In scadenza</span>
+                <span>Da pagare</span>
               </div>
 
               <div className="invoice-mini-stat overdue">
                 <strong>{overdueInvoices.length}</strong>
-                <span>Scadute</span>
+                <span>Di cui scadute</span>
               </div>
             </div>
 
             <div className="invoice-critical-list">
               {criticalInvoices.length ? (
                 criticalInvoices.map((invoice) => {
-                  const overdue = isInvoiceOverdue(invoice);
+                  const overdue = isInvoiceOverdue(invoice, today);
+                  const urgent = !overdue && isInvoiceUrgent(invoice, today);
 
                   return (
                     <div
                       key={invoice.id}
                       className={`invoice-critical-item ${
-                        overdue ? "overdue" : "due"
+                        overdue ? "overdue" : `due${urgent ? " urgent" : " future"}`
                       }`}
                     >
                       <div className="invoice-critical-icon">
-                        {overdue ? "🧾" : "⏰"}
+                        {overdue ? "⚠️" : urgent ? "⏰" : "🧾"}
                       </div>
 
                       <div className="invoice-critical-info">
                         <strong>{invoice.supplier || "Fornitore"}</strong>
                         <span>
-                          {overdue ? "scaduta il" : "scade il"}{" "}
-                          {formatShortDate(invoice.due_date)}
+                          {overdue
+                            ? "Scaduta il"
+                            : urgent
+                              ? "in scadenza il"
+                              : "da pagare entro il"}{" "}
+                          {formatCivilDateDMY(invoice.due_date)}
                         </span>
                       </div>
 
@@ -453,13 +453,14 @@ export default function DashboardPage({
                   );
                 })
               ) : (
-                <p className="small-muted">Nessuna fattura critica.</p>
+                <p className="small-muted">Nessuna fattura da pagare nel mese selezionato.</p>
               )}
             </div>
           </article>
         </div>
       </section>
 
+      {showTodayReminders ? (
       <section className="daily-reminder-card">
         <div className="daily-reminder-head">
           <div className="daily-reminder-icon">☀️</div>
@@ -490,6 +491,7 @@ export default function DashboardPage({
           ))}
         </div>
       </section>
+      ) : null}
     </main>
   );
 }

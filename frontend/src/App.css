@@ -411,6 +411,10 @@ body {
   max-width: 22px;
 }
 
+.bar.zero-bar {
+  min-height: 3px;
+}
+
 .bar.ricavi {
   background: var(--crema);
 }
@@ -2097,7 +2101,7 @@ body {
 }
 
 .invoice-mini-stat.due {
-  background: var(--yellow-light);
+  background: #fff0dc;
   color: var(--yellow);
 }
 
@@ -2128,8 +2132,18 @@ body {
 }
 
 .invoice-critical-item.due {
-  background: var(--yellow-light);
+  background: #fbf6ef;
+  border-left-color: #d8c2a6;
+}
+
+.invoice-critical-item.due.urgent {
+  background: #fff0dc;
   border-left-color: var(--yellow);
+}
+
+.invoice-critical-item.overdue .invoice-critical-info span,
+.invoice-critical-item.overdue .invoice-critical-amount {
+  color: var(--red);
 }
 
 .invoice-critical-info strong {
@@ -2863,7 +2877,11 @@ body {
 }
 
 .invoice-clean-table-row.due {
-  background: var(--yellow-light);
+  background: #fbf6ef;
+}
+
+.invoice-clean-table-row.due.urgent {
+  background: #fff0dc;
 }
 
 .invoice-clean-table-row.overdue .invoice-modern-due,
@@ -2899,6 +2917,10 @@ body {
 }
 
 .invoice-clean-table-row.due .invoice-modern-due {
+  color: var(--text-mid);
+}
+
+.invoice-clean-table-row.due.urgent .invoice-modern-due {
   color: var(--yellow);
 }
 
@@ -3098,12 +3120,21 @@ body {
   cursor: pointer;
 }
 
-.invoice-manual-actions .invoice-upload-btn {
-  min-width: 128px;
-  min-height: 48px;
-  height: 48px;
+.invoice-manual-actions .invoice-manual-cancel {
+  background: #fff;
+  color: var(--text-mid);
+}
+
+.invoice-manual-actions .invoice-manual-submit {
   border: 1px solid transparent;
+  background: var(--crema);
+  color: #fff;
   box-shadow: 0 3px 8px rgba(200, 129, 58, 0.2);
+}
+
+.invoice-manual-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .invoice-preview-backdrop {
@@ -4066,8 +4097,13 @@ body {
 }
 
 .invoice-due-status.due {
-  background: var(--yellow-light);
-  color: var(--yellow);
+  background: #f3ece2;
+  color: var(--text-mid);
+}
+
+.invoice-due-status.due.urgent {
+  background: #fff0dc;
+  color: #9a5700;
 }
 
 .invoice-action-cell {
@@ -4482,6 +4518,31 @@ body {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+}
+
+.invoice-preview-modal.only-document .invoice-preview-empty {
+  width: min(460px, calc(100vw - 48px));
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 36px;
+  border: 1px solid #ead8c4;
+  border-radius: 24px;
+  background: #fff;
+  color: var(--text-dark);
+  text-align: center;
+  box-shadow: 0 18px 45px rgba(60, 35, 15, 0.2);
+}
+
+.invoice-preview-modal.only-document .invoice-preview-empty h3 {
+  color: var(--text-dark);
+}
+
+.invoice-preview-modal.only-document .invoice-preview-empty p {
+  color: var(--text-mid);
+  line-height: 1.5;
 }
 
 .invoice-preview-document.full {

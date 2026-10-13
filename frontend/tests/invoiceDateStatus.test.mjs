@@ -8,13 +8,16 @@ import {
   formatDayAgeLabel,
   getCivilDateAgeInDays,
   getCalendarDate,
+  getInvoiceDaysUntilDue,
   getInvoiceDateStatus,
   getReminderToneForAge,
   getTimestampAgeInLocalDays,
   isInvoiceDue,
   isInvoiceInDueMonth,
   isInvoiceOverdue,
-  isInvoiceOverdueInCurrentYear,
+  isInvoiceArrearsBeforeMonth,
+  isInvoiceUrgent,
+  isCurrentCalendarMonth,
 } from "../src/invoiceDateStatus.js";
 
 const today = new Date(2026, 9, 2, 15, 30);
@@ -33,6 +36,39 @@ test("yesterday is overdue, while today and tomorrow are still due", () => {
   assert.equal(isInvoiceDue(invoice("2026-10-03"), today), true);
 });
 
+test("dashboard shows today reminders only in the current calendar month", async () => {
+  const october = new Date(2026, 9, 13, 18, 0);
+  assert.equal(isCurrentCalendarMonth("2026-10", october), true);
+  assert.equal(isCurrentCalendarMonth("2026-07", october), false);
+  assert.equal(isCurrentCalendarMonth("2026-11", october), false);
+
+  const julyInvoices = [
+    { supplier: "vvvvv", invoice_number: "44", total: 50, status: "pending", due_date: "2026-07-12" },
+    { supplier: "aaaaa", invoice_number: "12", total: 120, status: "pending", due_date: "2026-07-05" },
+  ];
+  const invoicesRequiringPayment = julyInvoices.filter(
+    (item) => isInvoiceDue(item, october) || isInvoiceOverdue(item, october)
+  );
+  assert.deepEqual(
+    invoicesRequiringPayment.map(({ supplier, invoice_number }) => `${supplier} / ${invoice_number}`),
+    ["vvvvv / 44", "aaaaa / 12"]
+  );
+  assert.ok(invoicesRequiringPayment.every((item) => isInvoiceOverdue(item, october)));
+
+  const dashboardSource = await readFile(
+    new URL("../src/pages/DashboardPage.jsx", import.meta.url),
+    "utf8"
+  );
+  const cssSource = await readFile(new URL("../src/App.css", import.meta.url), "utf8");
+  assert.match(dashboardSource, /isCurrentCalendarMonth\(month, today\)/);
+  assert.match(dashboardSource, /\{showTodayReminders \? \([\s\S]*?<section className="daily-reminder-card">/);
+  assert.match(dashboardSource, /const dueInvoices = currentMonthInvoices\.filter\(isInvoiceUnpaid\)/);
+  assert.match(dashboardSource, /const criticalInvoices = \[\.\.\.dueInvoices\][\s\S]*?\.sort\(/);
+  assert.match(dashboardSource, /overdue \? "overdue" : `due/);
+  assert.match(cssSource, /\.bar\.zero-bar\s*\{\s*min-height:\s*3px;/);
+  assert.match(dashboardSource, /title=\{`\$\{item\.month\}: ricavi \$\{formatEuro\(revenue\)\} · costi \$\{formatEuro\(expenses\)\}`\}/);
+});
+
 test("a paid invoice with a past due date is neither overdue nor due", () => {
   const paidInvoice = { ...invoice("2026-10-01"), status: "paid" };
 
@@ -41,34 +77,55 @@ test("a paid invoice with a past due date is neither overdue nor due", () => {
   assert.equal(isInvoiceDue(paidInvoice, today), false);
 });
 
+test("invoice status and urgency use civil days, including the five-day boundary", () => {
+  const today = new Date(2026, 9, 13, 23, 45);
+  const makeInvoice = (dueDate) => ({ status: "pending", due_date: dueDate });
+  const overdueYesterday = makeInvoice("2026-10-12");
+  const dueToday = makeInvoice("2026-10-13");
+  const urgentFiveDays = makeInvoice("2026-10-18");
+  const notUrgentSixDays = makeInvoice("2026-10-19");
+
+  assert.equal(getInvoiceDateStatus({ ...dueToday, status: "paid" }, today), "paid");
+  assert.equal(getInvoiceDateStatus(overdueYesterday, today), "overdue");
+  assert.equal(getInvoiceDateStatus(dueToday, today), "due");
+  assert.equal(getInvoiceDaysUntilDue(dueToday, today), 0);
+  assert.equal(getInvoiceDaysUntilDue(urgentFiveDays, today), 5);
+  assert.equal(getInvoiceDaysUntilDue(notUrgentSixDays, today), 6);
+  assert.equal(isInvoiceUrgent(overdueYesterday, today), false);
+  assert.equal(isInvoiceUrgent(dueToday, today), true);
+  assert.equal(isInvoiceUrgent(urgentFiveDays, today), true);
+  assert.equal(isInvoiceUrgent(notUrgentSixDays, today), false);
+});
+
 test("due-soon window includes the selected month's last day, not the next month", () => {
   assert.equal(isInvoiceInDueMonth(invoice("2026-10-31"), "2026-10"), true);
   assert.equal(isInvoiceInDueMonth(invoice("2026-11-01"), "2026-10"), false);
   assert.equal(isInvoiceDue(invoice("2026-10-31"), today), true);
 });
 
-test("an overdue invoice in the current month is also a current-year arrear", () => {
-  const overdueThisMonth = invoice("2026-10-01");
+test("arrears are overdue invoices in earlier months of the selected year only", () => {
+  const julyInvoice = invoice("2026-07-12");
+  const octoberInvoice = invoice("2026-10-01");
+  const priorYearInvoice = invoice("2025-12-31");
+  const julyFirst = new Date(2026, 6, 1, 12);
 
-  assert.equal(isInvoiceInDueMonth(overdueThisMonth, "2026-10"), true);
-  assert.equal(isInvoiceOverdue(overdueThisMonth, today), true);
-  assert.equal(isInvoiceOverdueInCurrentYear(overdueThisMonth, today), true);
-  assert.equal(isInvoiceOverdueInCurrentYear(invoice("2025-12-31"), today), false);
+  assert.equal(isInvoiceInDueMonth(julyInvoice, "2026-07"), true);
+  assert.equal(isInvoiceArrearsBeforeMonth(julyInvoice, "2026-07", today), false);
+  assert.equal(isInvoiceArrearsBeforeMonth(julyInvoice, "2026-10", today), true);
+  assert.equal(isInvoiceArrearsBeforeMonth(octoberInvoice, "2026-10", today), false);
+  assert.equal(isInvoiceArrearsBeforeMonth(priorYearInvoice, "2026-10", today), false);
+  assert.equal(isInvoiceArrearsBeforeMonth(julyInvoice, "2026-07", julyFirst), false);
 });
 
-test("year rollover excludes prior-year arrears on January 1 and includes them after they become overdue", () => {
-  const januaryFirst = new Date(2026, 0, 1, 12);
-  const priorYearInvoice = invoice("2025-12-31");
-  const januaryFirstInvoice = invoice("2026-01-01");
+test("arrears stay within the selected year across the December-to-January boundary", () => {
+  const today = new Date(2027, 1, 10, 12);
+  const decemberInvoice = invoice("2026-12-31");
+  const januaryInvoice = invoice("2027-01-31");
 
-  assert.equal(isInvoiceOverdue(priorYearInvoice, januaryFirst), true);
-  assert.equal(isInvoiceOverdueInCurrentYear(priorYearInvoice, januaryFirst), false);
-  assert.equal(isInvoiceOverdue(januaryFirstInvoice, januaryFirst), false);
-  assert.equal(isInvoiceOverdueInCurrentYear(januaryFirstInvoice, januaryFirst), false);
-  assert.equal(
-    isInvoiceOverdueInCurrentYear(januaryFirstInvoice, new Date(2026, 0, 2, 12)),
-    true
-  );
+  assert.equal(isInvoiceOverdue(decemberInvoice, today), true);
+  assert.equal(isInvoiceArrearsBeforeMonth(decemberInvoice, "2027-02", today), false);
+  assert.equal(isInvoiceArrearsBeforeMonth(januaryInvoice, "2027-01", today), false);
+  assert.equal(isInvoiceArrearsBeforeMonth(januaryInvoice, "2027-02", today), true);
 });
 
 test("civil date formatting and reminder age stay stable across Rome, western, and UTC timezones", async () => {
@@ -133,9 +190,35 @@ test("civil date formatting and reminder age stay stable across Rome, western, a
   assert.match(dashboardSource, /formatCivilDateDMY\(latestBankTransactionDate\)/);
   assert.match(dashboardSource, /daysAgoLabel\(latestBankTransactionDate, true\)/);
   assert.match(dashboardSource, /getReminderTone\(latestBankTransactionDate, "warning", true\)/);
-  assert.match(dashboardSource, /const date = isCivilDate \? getCalendarDate\(value\) : new Date\(value\)/);
-  assert.match(dashboardSource, /formatShortDate\(latestPosUploadDate, latestPosUploadDateIsCivil\)/);
+  assert.match(dashboardSource, /formatCivilDateDMY\(latestPosUploadDate\)/);
+  assert.match(dashboardSource, /formatCivilDateDMY\(\s*firstDueInvoice\.due_date\s*\)/);
+  assert.match(dashboardSource, /formatCivilDateDMY\(invoice\.due_date\)/);
+  assert.match(dashboardSource, /weekday: "long"[\s\S]*?formatCivilDateDMY\(today\)/);
+  assert.doesNotMatch(dashboardSource, /formatShortDate|month: "long",\s*\n\s*day: "2-digit"/);
   assert.match(appSource, /latestPosUploadDateIsCivil = Boolean\(overview\?\.latest_cash_closure_date\)/);
+});
+
+test("dashboard reminder dates include padded day, month, and source year across calendar boundaries", () => {
+  const moduleUrl = new URL("../src/invoiceDateStatus.js", import.meta.url).href;
+  const script = `
+    import { formatCivilDateDMY } from ${JSON.stringify(moduleUrl)};
+    console.log(JSON.stringify(
+      ["2025-12-31", "2026-01-05", "2026-07-15", "0026-03-04"].map(formatCivilDateDMY)
+    ));
+  `;
+  for (const timezone of ["Europe/Rome", "America/Los_Angeles", "UTC"]) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      env: { ...process.env, TZ: timezone },
+    });
+
+    assert.equal(result.status, 0, `${timezone}: ${result.stderr}`);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      ["31/12/2025", "05/01/2026", "15/07/2026", "04/03/0026"],
+      timezone
+    );
+  }
 });
 
 test("invoice list, dashboard, and PDF share calendar-date helpers", async () => {
@@ -143,11 +226,11 @@ test("invoice list, dashboard, and PDF share calendar-date helpers", async () =>
   const invoicesSource = await readFile(new URL("../src/pages/InvoicesPage.jsx", import.meta.url), "utf8");
   const dashboardSource = await readFile(new URL("../src/pages/DashboardPage.jsx", import.meta.url), "utf8");
 
-  assert.match(appSource, /isInvoiceOverdue\(invoice\)/);
-  assert.match(appSource, /isInvoiceOverdueInCurrentYear/);
-  assert.match(invoicesSource, /getInvoiceDateStatus\(invoice\)/);
-  assert.match(invoicesSource, /isInvoiceOverdueInCurrentYear/);
-  assert.match(dashboardSource, /currentMonthInvoices\.filter\(isInvoiceOverdue\)/);
+  assert.match(appSource, /getInvoiceDateStatus\(invoice\)/);
+  assert.match(appSource, /isInvoiceArrearsBeforeMonth\(invoice, month\)/);
+  assert.match(invoicesSource, /getInvoiceDateStatus\(invoice, today\)/);
+  assert.match(invoicesSource, /isInvoiceArrearsBeforeMonth\(invoice, month, today\)/);
+  assert.match(dashboardSource, /invoices\.filter\([\s\S]*?isInvoiceOverdue\(invoice, today\) && isInvoiceUnpaid\(invoice\)/);
   assert.doesNotMatch(
     `${appSource}\n${invoicesSource}\n${dashboardSource}`,
     /new Date\(invoice\.due_date\)\s*</
@@ -163,7 +246,7 @@ test("invoice table separates temporal status labels from payment status", async
 
   assert.ok(paymentCell, "payment cell should be present");
   assert.match(invoicesSource, /status === "overdue"[\s\S]*?invoice-due-status overdue">Scaduta/);
-  assert.match(invoicesSource, /status === "due"[\s\S]*?invoice-due-status due">In scadenza/);
+  assert.match(invoicesSource, /status === "due"[\s\S]*?invoice-due-status due\$\{urgent \? " urgent" : ""\}/);
   assert.match(paymentCell, /invoice-payment-paid">✓ Pagata/);
   assert.match(paymentCell, /invoice-reconcile-btn[\s\S]*?Abbina pagamento/);
   assert.match(paymentCell, /Pagato \{formatEuro\(linkedAmount\)\} · Residuo/);
@@ -173,4 +256,5 @@ test("invoice table separates temporal status labels from payment status", async
   assert.match(cssSource, /\.invoice-clean-table-row\.paid\s*\{/);
   assert.match(cssSource, /\.invoice-due-status\.overdue\s*\{/);
   assert.match(cssSource, /\.invoice-due-status\.due\s*\{/);
+  assert.match(cssSource, /\.invoice-due-status\.due\.urgent\s*\{/);
 });

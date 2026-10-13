@@ -46,11 +46,10 @@ export function formatCivilDateDMY(value) {
   const date = getCalendarDate(value);
   if (!date) return "-";
 
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear()).padStart(4, "0");
+  return `${day}/${month}/${year}`;
 }
 
 export function getCivilDateAgeInDays(value, today = new Date()) {
@@ -102,6 +101,11 @@ export function isInvoiceInDueMonth(invoice, month) {
   return getInvoiceDueMonthKey(invoice?.due_date) === month;
 }
 
+export function isCurrentCalendarMonth(month, today = new Date()) {
+  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  return month === currentMonth;
+}
+
 export function isInvoiceOverdue(invoice, today = new Date()) {
   if (invoice?.status === "paid" || !invoice?.due_date) return false;
 
@@ -111,12 +115,7 @@ export function isInvoiceOverdue(invoice, today = new Date()) {
 }
 
 export function isInvoiceDue(invoice, today = new Date()) {
-  if (invoice?.status === "paid") return false;
-  if (!invoice?.due_date) return true;
-
-  const dueDate = getCalendarDateKey(invoice.due_date);
-  const todayDate = getCalendarDateKey(today);
-  return Boolean(dueDate && todayDate && dueDate >= todayDate);
+  return getInvoiceDateStatus(invoice, today) === "due";
 }
 
 export function getInvoiceDateStatus(invoice, today = new Date()) {
@@ -124,14 +123,48 @@ export function getInvoiceDateStatus(invoice, today = new Date()) {
   return isInvoiceOverdue(invoice, today) ? "overdue" : "due";
 }
 
-export function isInvoiceOverdueInCurrentYear(invoice, today = new Date()) {
-  if (invoice?.status === "paid" || !invoice?.due_date) return false;
+export function getInvoiceRemainingAmount(invoice = {}) {
+  const total = Number(invoice.total) || 0;
+  const linkedAmount = Number(invoice.linked_amount) || 0;
+  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
+  return Math.max(0, Number(remainingAmount) || 0);
+}
 
-  const dueDate = getCalendarDate(invoice.due_date);
-  const todayCalendarDate = getCalendarDate(today);
-  if (!dueDate || !todayCalendarDate) return false;
+export function isInvoiceUnpaid(invoice = {}) {
+  if (invoice.status === "paid") return false;
 
-  const dueDateKey = getCalendarDateKey(dueDate);
-  const todayDateKey = getCalendarDateKey(todayCalendarDate);
-  return dueDate.getFullYear() === todayCalendarDate.getFullYear() && dueDateKey < todayDateKey;
+  const hasBalanceData = invoice.remaining_amount != null || invoice.total != null;
+  return !hasBalanceData || getInvoiceRemainingAmount(invoice) > 0;
+}
+
+export function getInvoiceDaysUntilDue(invoice, today = new Date()) {
+  const dueDate = getCalendarDate(invoice?.due_date);
+  const todayDate = getCalendarDate(today);
+  if (!dueDate || !todayDate) return null;
+
+  return localDayOrdinal(dueDate) - localDayOrdinal(todayDate);
+}
+
+export function isInvoiceUrgent(invoice, today = new Date()) {
+  if (!isInvoiceUnpaid(invoice) || getInvoiceDateStatus(invoice, today) !== "due") return false;
+
+  const daysUntilDue = getInvoiceDaysUntilDue(invoice, today);
+  return daysUntilDue !== null && daysUntilDue >= 0 && daysUntilDue <= 5;
+}
+
+export function isInvoiceArrearsBeforeMonth(invoice, month, today = new Date()) {
+  const selectedMonth = typeof month === "string" ? month.match(/^(\d{4})-(\d{2})$/) : null;
+  const dueDateKey = getCalendarDateKey(invoice?.due_date);
+  if (!selectedMonth || !dueDateKey) return false;
+
+  const selectedYear = Number(selectedMonth[1]);
+  const selectedMonthNumber = Number(selectedMonth[2]);
+  if (selectedMonthNumber < 1 || selectedMonthNumber > 12) return false;
+
+  return (
+    dueDateKey.slice(0, 4) === String(selectedYear) &&
+    dueDateKey < month &&
+    isInvoiceOverdue(invoice, today) &&
+    isInvoiceUnpaid(invoice)
+  );
 }

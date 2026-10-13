@@ -1,6 +1,7 @@
 import {
   getInvoiceDateStatus,
-  isInvoiceOverdueInCurrentYear,
+  isInvoiceArrearsBeforeMonth,
+  isInvoiceUnpaid,
 } from "./invoiceDateStatus.js";
 
 export function mergeUniqueInvoices(...collections) {
@@ -38,6 +39,7 @@ export function filterInvoiceList(
     statusFilter = "all",
     categoryFilter = "",
     categoryForInvoice,
+    month,
     today,
   }
 ) {
@@ -47,8 +49,12 @@ export function filterInvoiceList(
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "year-overdue"
-        ? isInvoiceOverdueInCurrentYear(invoice, today)
-        : getInvoiceDateStatus(invoice, today) === statusFilter);
+        ? isInvoiceArrearsBeforeMonth(invoice, month, today)
+        : statusFilter === "due"
+          ? isInvoiceUnpaid(invoice)
+          : statusFilter === "overdue"
+            ? getInvoiceDateStatus(invoice, today) === "overdue" && isInvoiceUnpaid(invoice)
+            : getInvoiceDateStatus(invoice, today) === statusFilter);
     const matchesSupplier =
       !normalizedSupplierSearch ||
       invoice.supplier?.toLowerCase().includes(normalizedSupplierSearch);

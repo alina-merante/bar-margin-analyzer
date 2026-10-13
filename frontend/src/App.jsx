@@ -15,10 +15,13 @@ import { PDFDocument } from "pdf-lib";
 import {
   formatCivilDateDMY,
   getCalendarDate,
-  getInvoiceDueMonthKey,
+  getInvoiceDateStatus,
+  getInvoiceRemainingAmount,
+  isInvoiceArrearsBeforeMonth,
   isInvoiceInDueMonth,
   isInvoiceOverdue,
-  isInvoiceOverdueInCurrentYear,
+  isInvoiceUnpaid,
+  isInvoiceUrgent,
 } from "./invoiceDateStatus";
 import {
   buildPdfInsightItems,
@@ -40,13 +43,6 @@ function getCurrentMonth() {
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function getInvoiceRemainingAmount(invoice = {}) {
-  const total = Number(invoice.total) || 0;
-  const linkedAmount = Number(invoice.linked_amount) || 0;
-  const remainingAmount = invoice.remaining_amount ?? total - linkedAmount;
-  return Math.max(0, Number(remainingAmount) || 0);
 }
 
 function formatEuro(value) {
@@ -264,10 +260,7 @@ export default function App() {
     const reportId = `RPT-${month}-${now.getTime()}`;
 
     const currentMonthInvoices = safeArray(invoices)
-      .filter(
-        (invoice) =>
-          isInvoiceInDueMonth(invoice, month) || invoice.issue_date?.slice(0, 7) === month
-      )
+      .filter((invoice) => isInvoiceInDueMonth(invoice, month))
       .sort((a, b) => {
         const aDate = getCalendarDate(a.due_date || a.issue_date)?.getTime() || 0;
         const bDate = getCalendarDate(b.due_date || b.issue_date)?.getTime() || 0;
@@ -282,10 +275,19 @@ export default function App() {
       .map((value) => String(value).trim())
       .filter(Boolean);
 
-    const paidInvoices = currentMonthInvoices.filter((invoice) => invoice.status === "paid");
-    const unpaidInvoices = currentMonthInvoices.filter((invoice) => invoice.status !== "paid");
+    const paidInvoices = currentMonthInvoices.filter(
+      (invoice) => getInvoiceDateStatus(invoice) === "paid"
+    );
+    const unpaidInvoices = currentMonthInvoices.filter(isInvoiceUnpaid);
+    const overdueInvoices = unpaidInvoices.filter((invoice) =>
+      isInvoiceOverdue(invoice)
+    );
     const paidTotal = paidInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0);
     const unpaidTotal = unpaidInvoices.reduce(
+      (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
+      0
+    );
+    const overdueTotal = overdueInvoices.reduce(
       (sum, invoice) => sum + getInvoiceRemainingAmount(invoice),
       0
     );
@@ -368,11 +370,14 @@ export default function App() {
 
     const trendBars = trendRows
       .map((item) => {
-        const revH = Math.max(4, ((Number(item.revenue) || 0) / trendMax) * 100);
-        const costH = Math.max(4, ((Number(item.expenses) || 0) / trendMax) * 100);
+        const revenue = Number(item.revenue) || 0;
+        const expenses = Number(item.expenses) || 0;
+        const revH = (revenue / trendMax) * 100;
+        const costH = (expenses / trendMax) * 100;
         const currentClass = item.month === month ? " cur" : "";
         const labelClass = item.month === month ? "bm-label cur" : "bm-label";
-        return `<div class="bm-group"><div class="bm-pair"><div class="bm-bar r${currentClass}" style="height:${revH.toFixed(1)}%"></div><div class="bm-bar c${currentClass}" style="height:${costH.toFixed(1)}%"></div></div><div class="${labelClass}">${escapeHtml(
+        const tooltip = `${item.month}: ricavi ${formatEuro(revenue)} · costi ${formatEuro(expenses)}`;
+        return `<div class="bm-group" title="${escapeHtml(tooltip)}"><div class="bm-pair"><div class="bm-bar r${currentClass}" style="height:${revH.toFixed(1)}%"></div><div class="bm-bar c${currentClass}" style="height:${costH.toFixed(1)}%"></div></div><div class="${labelClass}">${escapeHtml(
           formatMonthShort(item.month)
         )}</div></div>`;
       })
@@ -381,12 +386,26 @@ export default function App() {
     const invoiceRows = currentMonthInvoices
       .slice(0, 6)
       .map((invoice) => {
-        const isPaid = invoice.status === "paid";
-        const isOver = !isPaid && isInvoiceOverdue(invoice);
-        const tone = isPaid ? "paid" : isOver ? "over" : "due";
-        const trClass = isOver ? "urgente" : !isPaid ? "scadenza" : "";
-        const amountColor = isOver ? "var(--red)" : !isPaid ? "var(--yellow)" : "var(--text-dark)";
-        const dueColor = isOver ? "var(--red)" : !isPaid ? "var(--yellow)" : "var(--text-soft)";
+        const status = getInvoiceDateStatus(invoice);
+        const isPaid = status === "paid";
+        const isOver = status === "overdue";
+        const urgent = status === "due" && isInvoiceUrgent(invoice);
+        const tone = isPaid ? "paid" : isOver ? "over" : urgent ? "due" : "future";
+        const trClass = isOver ? "urgente" : urgent ? "scadenza-urgente" : !isPaid ? "futura" : "";
+        const amountColor = isOver
+          ? "var(--red)"
+          : urgent
+            ? "var(--yellow)"
+            : !isPaid
+              ? "var(--text-mid)"
+              : "var(--text-dark)";
+        const dueColor = isOver
+          ? "var(--red)"
+          : urgent
+            ? "var(--yellow)"
+            : !isPaid
+              ? "var(--text-mid)"
+              : "var(--text-soft)";
         const categoryLabel = localizePdfCategoryLabel(
           resolveInvoiceCategoryLabel(invoice, knownCategoryNames)
         );
@@ -406,7 +425,7 @@ export default function App() {
             isPaid ? Number(invoice.total) || 0 : getInvoiceRemainingAmount(invoice)
           )
         )}</td><td style="text-align:center"><span class="fbadge ${tone}">${
-          tone === "paid" ? "Pagata" : tone === "over" ? "Scaduta" : "In scadenza"
+          tone === "paid" ? "Pagata" : tone === "over" ? "Scaduta" : "Da pagare"
         }</span></td></tr>`;
       })
       .join("");
@@ -844,7 +863,8 @@ export default function App() {
   }
   .ftbl tr:last-child td { border-bottom: none; }
   .ftbl tr.urgente td { background: #fff8f7; }
-  .ftbl tr.scadenza td { background: #fffbf4; }
+  .ftbl tr.scadenza-urgente td { background: #fff0dc; }
+  .ftbl tr.futura td { background: #fbf6ef; }
 
   .fbadge {
     display: inline-flex; align-items: center; gap: 4px;
@@ -853,6 +873,7 @@ export default function App() {
   }
   .fbadge.paid { background: var(--green-bg); color: var(--green); }
   .fbadge.due  { background: var(--yellow-bg); color: var(--yellow); }
+  .fbadge.future { background: var(--milk); color: var(--text-mid); }
   .fbadge.over { background: var(--red-bg); color: var(--red); }
 
   .insight-section { margin-top: 22px; }
@@ -973,6 +994,7 @@ export default function App() {
         <div class="kpi-box-label">Da pagare</div>
         <div class="kpi-box-value">${escapeHtml(euro0(pendingInvoicesAmount))}</div>
         <div class="kpi-tag ${pendingInvoices.length > 0 ? "down" : "up"}">${escapeHtml(formatPendingInvoicesLabel(pendingInvoices.length))}</div>
+        <div class="kpi-box-sub">Di cui scadute: ${overdueInvoices.length} · ${escapeHtml(euro0(overdueTotal))}</div>
       </div>
     </div>
 
@@ -1270,10 +1292,12 @@ export default function App() {
       throw new Error(errorBody || `Creazione fattura fallita (${response.status})`);
     }
 
+    const invoiceMonth = invoiceData.due_date.slice(0, 7);
+    setMonth(invoiceMonth);
     await Promise.all([
-  loadDashboardData(month),
-  loadDocuments(),
-]);
+      loadDashboardData(invoiceMonth),
+      loadDocuments(invoiceMonth),
+    ]);
   }
 
   async function handleDeleteInvoice(invoiceId) {
@@ -1432,18 +1456,16 @@ async function handleDeleteDocument(documentId) {
 }
 
   const pendingInvoices = useMemo(
-  () =>
-    invoices.filter(
-      (invoice) =>
-        invoice.status === "pending" &&
-        isInvoiceInDueMonth(invoice, month)
+    () => invoices.filter(
+      (invoice) => isInvoiceInDueMonth(invoice, month) && isInvoiceUnpaid(invoice)
     ),
-  [invoices, month]
-);
+    [invoices, month]
+  );
 
-const overdueInvoices = useMemo(() => {
-  return invoices.filter(isInvoiceOverdueInCurrentYear);
-}, [invoices]);
+  const overdueInvoices = useMemo(
+    () => invoices.filter((invoice) => isInvoiceArrearsBeforeMonth(invoice, month)),
+    [invoices, month]
+  );
 
 const overdueInvoicesAmount = useMemo(
   () =>

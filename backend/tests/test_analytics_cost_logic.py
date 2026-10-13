@@ -25,7 +25,7 @@ from app.routers.finance import LinkPaymentPayload, link_payment as link_payment
 
 
 def build_session():
-    engine = create_engine("sqlite:///./test_analytics.db")
+    engine = create_engine("sqlite://")
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     return Session(engine)

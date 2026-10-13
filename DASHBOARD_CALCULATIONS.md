@@ -114,7 +114,10 @@ Valori mostrati:
 - totale importo in sospeso;
 - totale importo pagato.
 
-L'importo "Da pagare" considera il residuo di ogni fattura pending:
+Il numero "Da pagare" comprende tutte le fatture con saldo residuo, incluse
+quelle già scadute; "Di cui scadute" è un sottoinsieme e non va sommato di
+nuovo. Le fatture pagate sono quelle riconciliate a saldo. L'importo "Da
+pagare" considera il residuo di ogni fattura non saldata:
 
 `remaining_amount = max(0, Invoice.total - linked_amount)`
 
@@ -122,7 +125,37 @@ L'importo "Da pagare" considera il residuo di ogni fattura pending:
 `InvoicePaymentLink`. Il totale pending è la somma dei residui, non dei totali
 lordi delle fatture.
 
-## 9. Pagamenti per metodo
+## 9. Stati delle fatture e arretrati
+
+Lo stato di pagamento è confermato solo quando la fattura risulta pagata e i
+pagamenti effettivamente collegati coprono il totale. Una fattura senza
+pagamento registrato non è pagata anche se ha una scadenza passata.
+
+Rispetto alla data odierna:
+
+- **Pagata**: saldo coperto da pagamenti registrati;
+- **Da pagare**: saldo residuo maggiore di zero, indipendentemente dalla
+  scadenza;
+- **Scaduta**: sottoinsieme di "Da pagare" con scadenza precedente a oggi;
+- **In scadenza**: "Da pagare" non scaduta con scadenza entro 5 giorni (oggi
+  incluso);
+- **Futura non urgente**: "Da pagare" non scaduta con scadenza oltre 5 giorni.
+
+La soglia di 5 giorni determina solo l'evidenziazione urgente e non riduce il
+conteggio o l'importo "Da pagare". Le date di scadenza sono date civili: i
+confronti non dipendono dall'ora del giorno o dal fuso orario.
+Il totale documentale resta la somma degli importi originali delle fatture;
+per il debito residuo si sottraggono i pagamenti collegati. Pertanto il totale
+fatture è dato da fatture pagate più fatture con saldo ancora da saldare, senza
+aggiungere una seconda volta le scadute.
+
+I riepiloghi mensili e i filtri della pagina Fatture usano il mese di scadenza
+selezionato. "Arretrati ANNO" include solo fatture non pagate e già scadute,
+dello stesso anno selezionato e con scadenza in un mese precedente. Una fattura
+scaduta nel mese selezionato resta nel filtro mensile "Scadute" e non viene
+duplicata negli arretrati.
+
+## 10. Pagamenti per metodo
 
 Questa sezione raggruppa i pagamenti per metodo nel mese selezionato.
 
@@ -131,7 +164,7 @@ Questa sezione raggruppa i pagamenti per metodo nel mese selezionato.
 - Questa aggregazione descrittiva non aggiunge automaticamente i pagamenti agli
   expenses del P&L.
 
-## 10. Vincoli di riconciliazione
+## 11. Vincoli di riconciliazione
 
 - Una `Transaction` può essere associata al massimo a un `Payment` tramite
   `Payment.transaction_id`, nullable e UNIQUE.

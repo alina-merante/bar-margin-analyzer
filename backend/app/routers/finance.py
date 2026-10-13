@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
 from app.services.ai_invoice_parser import parse_invoice_with_llm
+from app.services.invoice_status import get_invoice_payment_status
 
 from pillow_heif import register_heif_opener
 register_heif_opener()
@@ -150,6 +151,11 @@ def invoice_remaining_amount(invoice: Invoice, linked_amount: Decimal) -> Decima
 def invoice_to_dict(invoice: Invoice, db: Session) -> dict:
     linked_amount = invoice_linked_amount(db, invoice.id)
     remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+    payment_status = get_invoice_payment_status(
+        invoice.status,
+        Decimal(invoice.total),
+        linked_amount,
+    )
     return {
         "id": invoice.id,
         "supplier": invoice.supplier,
@@ -161,7 +167,7 @@ def invoice_to_dict(invoice: Invoice, db: Session) -> dict:
         "linked_amount": float(linked_amount),
         "remaining_amount": float(remaining_amount),
         "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
-        "status": invoice.status.value,
+        "status": payment_status.value,
         "file_url": invoice.file_url,
     }
 
