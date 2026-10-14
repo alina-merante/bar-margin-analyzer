@@ -1242,3 +1242,37 @@ def test_candidate_ranking_prioritizes_supplier_over_exact_amount(db):
     candidate_ids = [item["id"] for item in result["candidates"]]
 
     assert candidate_ids == [correct_supplier.id, wrong_supplier.id]
+
+def test_transaction_candidates_confidence_levels(db):
+    invoice = add_invoice(db, total="420.00")
+
+    reliable = add_transaction(
+        db,
+        amount="-420.00",
+        description="Bonifico Torrefazione Italiana",
+    )
+
+    possible = add_transaction(
+        db,
+        amount="-200.00",
+        description="Acconto Torrefazione Italiana",
+    )
+
+    manual_review = add_transaction(
+        db,
+        amount="-420.00",
+        description="Pagamento Pulizie Splendore",
+    )
+    manual_review.counterparty = "Pulizie Splendore"
+    db.commit()
+
+    result = get_transaction_candidates(invoice.id, db)
+
+    confidence_by_id = {
+        candidate["id"]: candidate["confidence"]
+        for candidate in result["candidates"]
+    }
+
+    assert confidence_by_id[reliable.id] == "reliable"
+    assert confidence_by_id[possible.id] == "possible"
+    assert confidence_by_id[manual_review.id] == "manual_review"

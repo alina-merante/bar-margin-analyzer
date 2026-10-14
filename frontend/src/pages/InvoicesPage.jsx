@@ -1087,7 +1087,13 @@ useEffect(() => {
                     <div className="invoice-reconciliation-candidate-main">
                       <div className="invoice-reconciliation-candidate-meta">
                         <time dateTime={candidate.date}>{formatDate(candidate.date)}</time>
-                        {index === 0 ? <span className="invoice-suggested-badge">Suggerito</span> : null}
+                        {candidate.confidence === "reliable" ? (
+                          <span className="invoice-suggested-badge">Affidabile</span>
+                        ) : candidate.confidence === "possible" ? (
+                          <span className="invoice-suggested-badge">Possibile · pagamento parziale</span>
+                        ) : (
+                          <span className="invoice-suggested-badge">Da verificare · fornitore non confermato</span>
+                        )}
                       </div>
                       <strong>{candidate.counterparty}</strong>
                       <p>{candidate.description}</p>
@@ -1122,6 +1128,18 @@ useEffect(() => {
                   alla fattura <strong>{getInvoiceNumberDisplay(reconciliationInvoice.invoice_number)}</strong> di{" "}
                   <strong> {reconciliationInvoice.supplier}</strong> ({formatEuro(reconciliationInvoice.total)}).
                 </p>
+                {candidateToConfirm.confidence === "manual_review" ? (
+  <p role="alert" className="invoice-reconciliation-error">
+    Attenzione: il fornitore del movimento bancario non
+    corrisponde chiaramente a quello della fattura.
+    Verifica i dati prima di confermare l'abbinamento.
+  </p>
+) : candidateToConfirm.confidence === "possible" ? (
+  <p role="status" className="invoice-reconciliation-state">
+    Attenzione: l'importo del movimento è inferiore al residuo
+    della fattura. Verrà registrato un pagamento parziale.
+  </p>
+) : null}
                 <div className="invoice-reconciliation-confirm-actions">
                   <button
                     type="button"

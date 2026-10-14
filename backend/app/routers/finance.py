@@ -1207,6 +1207,48 @@ def list_invoices(
     invoices = db.scalars(stmt.order_by(Invoice.issue_date.desc(), Invoice.id.desc())).all()
     return [invoice_to_dict(row, db) for row in invoices]
 
+def transaction_candidate_confidence(
+    invoice: Invoice,
+    transaction: Transaction,
+    remaining_amount: Decimal,
+) -> str:
+    legal_words = {"srl", "spa", "snc", "sas", "societa"}
+
+    supplier_tokens = {
+        token
+        for token in normalize_lookup_text(invoice.supplier).split()
+        if len(token) >= 4 and token not in legal_words
+    }
+
+    transaction_tokens = set(
+        normalize_lookup_text(
+            f"{transaction.counterparty} {transaction.description}"
+        ).split()
+    )
+
+    matched_tokens = supplier_tokens & transaction_tokens
+
+    # Un solo termine generico non basta per considerare
+    # affidabile un abbinamento.
+    supplier_matches = (
+        bool(supplier_tokens)
+        and (
+            len(matched_tokens) >= 2
+            or (
+                len(supplier_tokens) == 1
+                and len(matched_tokens) == 1
+            )
+        )
+    )
+
+    if not supplier_matches:
+        return "manual_review"
+
+    exact_amount = (
+        abs(Decimal(transaction.amount)) == remaining_amount
+    )
+
+    return "reliable" if exact_amount else "possible"
 
 def transaction_candidate_rank(invoice: Invoice, transaction: Transaction, remaining_amount: Decimal) -> tuple:
     exact_amount_rank = 0 if abs(Decimal(transaction.amount)) == remaining_amount else 1
@@ -1272,6 +1314,9 @@ def get_transaction_candidates(invoice_id: int, db: Session = Depends(get_db)) -
                 "payment_amount": float(abs(Decimal(transaction.amount))),
                 "counterparty": transaction.counterparty,
                 "category_id": transaction.category_id,
+                "confidence": transaction_candidate_confidence(
+                    invoice, transaction, remaining_amount
+                ),
             }
             for transaction in transactions
         ],
