@@ -1220,3 +1220,25 @@ def test_pnl_counts_invoice_only_in_month_final_payment_completes_balance(db):
 
     assert july["expenses"] == Decimal("0.00")
     assert august["expenses"] == Decimal("420.00")
+
+def test_candidate_ranking_prioritizes_supplier_over_exact_amount(db):
+    invoice = add_invoice(db, total="420.00")
+
+    wrong_supplier = add_transaction(
+        db,
+        amount="-420.00",
+        description="Pagamento Pulizie Splendore",
+    )
+    wrong_supplier.counterparty = "Pulizie Splendore"
+    db.commit()
+
+    correct_supplier = add_transaction(
+        db,
+        amount="-200.00",
+        description="Bonifico Torrefazione Italiana",
+    )
+
+    result = get_transaction_candidates(invoice.id, db)
+    candidate_ids = [item["id"] for item in result["candidates"]]
+
+    assert candidate_ids == [correct_supplier.id, wrong_supplier.id]

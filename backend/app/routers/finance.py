@@ -1221,8 +1221,7 @@ def transaction_candidate_rank(invoice: Invoice, transaction: Transaction, remai
     matched_tokens = len(supplier_tokens.intersection(transaction_tokens))
     supplier_rank = 0 if matched_tokens >= 2 else 1 if matched_tokens else 2
     date_distance = abs((transaction.date - invoice.due_date).days)
-    return exact_amount_rank, supplier_rank, date_distance, transaction.date, transaction.id
-
+    return supplier_rank, exact_amount_rank, date_distance, transaction.date, transaction.id
 
 def payment_method_from_transaction(transaction: Transaction) -> PaymentMethod:
     """Classify explicit card/transfer descriptions; unknown bank movements default to bank_transfer."""
