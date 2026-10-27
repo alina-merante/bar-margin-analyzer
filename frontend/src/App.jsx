@@ -1256,6 +1256,11 @@ export default function App() {
     return responseJsonOrThrow(response);
   }
 
+  async function handleLoadInvoicePayments(invoiceId) {
+    const response = await fetch(`/api/invoices/${invoiceId}/payments`);
+    return responseJsonOrThrow(response);
+  }
+
   async function handleReconcileTransaction(invoiceId, transactionId) {
     setInvoiceReconciliationMessage("");
     const response = await fetch(`/api/invoices/${invoiceId}/reconcile-transaction`, {
@@ -1561,6 +1566,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 invoiceReconciliationMessage={invoiceReconciliationMessage}
                 handleLoadTransactionCandidates={handleLoadTransactionCandidates}
                 handleReconcileTransaction={handleReconcileTransaction}
+                handleLoadInvoicePayments={handleLoadInvoicePayments}
                 invoiceUploadMessage={invoiceUploadMessage}
                 invoiceUploadError={invoiceUploadError}
                 dismissUploadFeedback={dismissUploadFeedback}

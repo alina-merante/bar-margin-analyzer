@@ -1507,3 +1507,39 @@ def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Dep
     except Exception:
         db.rollback()
         raise
+
+@router.get("/invoices/{invoice_id}/payments")
+def list_invoice_payments(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="invoice not found")
+
+    rows = db.execute(
+        select(InvoicePaymentLink, Payment)
+        .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
+        .where(InvoicePaymentLink.invoice_id == invoice_id)
+        .order_by(Payment.date.asc(), Payment.id.asc())
+    ).all()
+
+    payments = [
+        {
+            "link_id": link.id,
+            "payment_id": payment.id,
+            "date": payment.date.isoformat(),
+            "amount": float(payment.amount),
+            "method": payment.method.value,
+            "counterparty": payment.counterparty,
+            "reference": payment.reference,
+            "transaction_id": payment.transaction_id,
+            "source": "bank" if payment.transaction_id is not None else "manual",
+        }
+        for link, payment in rows
+    ]
+    linked_amount = invoice_linked_amount(db, invoice_id)
+    return {
+        "invoice_id": invoice.id,
+        "invoice_total": float(invoice.total),
+        "linked_amount": float(linked_amount),
+        "remaining_amount": float(invoice_remaining_amount(invoice, linked_amount)),
+        "payments": payments,
+    }

@@ -4437,6 +4437,30 @@ body {
   border-color: #945319;
 }
 
+.invoice-manage-payments-btn {
+  margin-top: 6px;
+  background: #fff;
+}
+
+.invoice-payment-source {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.invoice-payment-source.bank {
+  border: 1px solid #b4cbbf;
+  background: #edf6f1;
+  color: #24523f;
+}
+
+.invoice-payment-source.manual {
+  border: 1px solid #d7c4ad;
+  background: #f8f3eb;
+  color: #6d5e4c;
+}
+
 @media (max-width: 700px) {
   .invoice-reconciliation-backdrop {
     padding: 10px;

@@ -200,6 +200,13 @@ const EMPTY_MANUAL_FORM = {
   vat: "",
 };
 
+const PAYMENT_METHOD_LABELS = {
+  bank_transfer: "Bonifico",
+  check: "Assegno",
+  cash: "Contanti",
+  card: "Carta",
+};
+
 export default function InvoicesPage({
   month,
   setMonth,
@@ -208,6 +215,7 @@ export default function InvoicesPage({
   invoiceReconciliationMessage,
   handleLoadTransactionCandidates,
   handleReconcileTransaction,
+  handleLoadInvoicePayments,
   invoiceUploadMessage,
   invoiceUploadError,
   dismissUploadFeedback,
@@ -229,6 +237,11 @@ export default function InvoicesPage({
   const [candidateToConfirm, setCandidateToConfirm] = useState(null);
   const [reconciliationSaving, setReconciliationSaving] = useState(false);
   const reconciliationRequestRef = useRef(0);
+  const [paymentsInvoice, setPaymentsInvoice] = useState(null);
+  const [paymentsData, setPaymentsData] = useState(null);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [paymentsError, setPaymentsError] = useState("");
+  const paymentsRequestRef = useRef(0);
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
   const [draftCategoryFilter, setDraftCategoryFilter] = useState("");
@@ -345,6 +358,45 @@ useEffect(() => {
       }
     }
   }
+
+  async function openPaymentsManager(invoice) {
+    const requestId = paymentsRequestRef.current + 1;
+    paymentsRequestRef.current = requestId;
+    setPaymentsInvoice(invoice);
+    setPaymentsData(null);
+    setPaymentsError("");
+    setPaymentsLoading(true);
+
+    try {
+      const result = await handleLoadInvoicePayments(invoice.id);
+      if (paymentsRequestRef.current === requestId) setPaymentsData(result);
+    } catch (error) {
+      if (paymentsRequestRef.current === requestId) {
+        setPaymentsError(error.message || "Impossibile caricare i pagamenti.");
+      }
+    } finally {
+      if (paymentsRequestRef.current === requestId) setPaymentsLoading(false);
+    }
+  }
+
+  function closePaymentsManager() {
+    paymentsRequestRef.current += 1;
+    setPaymentsInvoice(null);
+    setPaymentsData(null);
+    setPaymentsError("");
+    setPaymentsLoading(false);
+  }
+
+  useEffect(() => {
+    if (!paymentsInvoice) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") closePaymentsManager();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [paymentsInvoice]);
 
   function closeReconciliation() {
     if (reconciliationSaving) return;
@@ -963,6 +1015,15 @@ useEffect(() => {
                       ) : null}
                     </>
                   )}
+                  {linkedAmount > 0 ? (
+                    <button
+                      type="button"
+                      className="invoice-reconcile-btn invoice-manage-payments-btn"
+                      onClick={() => openPaymentsManager(invoice)}
+                    >
+                      Gestisci pagamenti
+                    </button>
+                  ) : null}
                 </div>
 
                 <div className="invoice-action-cell">
@@ -1009,6 +1070,96 @@ useEffect(() => {
           </div>
         ) : null}
       </section>
+
+      {paymentsInvoice ? (
+        <div
+          className="invoice-reconciliation-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePaymentsManager();
+          }}
+        >
+          <section
+            className="invoice-reconciliation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invoice-payments-title"
+          >
+            <header className="invoice-reconciliation-head">
+              <div>
+                <p className="invoice-reconciliation-eyebrow">PAGAMENTI COLLEGATI</p>
+                <h2 id="invoice-payments-title">Gestisci pagamenti</h2>
+                <p>
+                  {paymentsInvoice.supplier || "Fornitore"} · Fattura{" "}
+                  {getInvoiceNumberDisplay(paymentsInvoice.invoice_number)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="invoice-reconciliation-close"
+                onClick={closePaymentsManager}
+                aria-label="Chiudi"
+              >
+                ✕
+              </button>
+            </header>
+
+            <div className="invoice-reconciliation-summary">
+              <div>
+                <span>Totale</span>
+                <strong>{formatEuro(paymentsInvoice.total)}</strong>
+              </div>
+              <div>
+                <span>Già pagato</span>
+                <strong>{formatEuro(paymentsData?.linked_amount ?? paymentsInvoice.linked_amount ?? 0)}</strong>
+              </div>
+              <div>
+                <span>Residuo</span>
+                <strong className="invoice-reconciliation-residual">
+                  {formatEuro(paymentsData?.remaining_amount ?? paymentsInvoice.remaining_amount ?? 0)}
+                </strong>
+              </div>
+            </div>
+
+            {paymentsLoading ? (
+              <p className="invoice-reconciliation-state" role="status">Caricamento pagamenti...</p>
+            ) : null}
+
+            {paymentsError ? (
+              <p className="invoice-reconciliation-error" role="alert">{paymentsError}</p>
+            ) : null}
+
+            {!paymentsLoading && !paymentsError && paymentsData?.payments?.length === 0 ? (
+              <p className="invoice-reconciliation-state">Nessun pagamento collegato a questa fattura.</p>
+            ) : null}
+
+            {paymentsData?.payments?.length > 0 ? (
+              <div className="invoice-reconciliation-candidates">
+                {paymentsData.payments.map((payment) => (
+                  <article className="invoice-reconciliation-candidate invoice-payment-row" key={payment.link_id}>
+                    <div className="invoice-reconciliation-candidate-main">
+                      <strong>{payment.counterparty || "Controparte non indicata"}</strong>
+                      <p>
+                        {payment.date ? new Date(`${payment.date}T00:00:00`).toLocaleDateString("it-IT") : "—"}
+                        {" · "}
+                        {PAYMENT_METHOD_LABELS[payment.method] || payment.method}
+                        {" · "}
+                        <span className={`invoice-payment-source ${payment.source}`}>
+                          {payment.source === "bank" ? "Bancario" : "Manuale"}
+                        </span>
+                      </p>
+                      <p>Rif.: {payment.reference || "—"}</p>
+                    </div>
+                    <div className="invoice-reconciliation-candidate-action">
+                      <strong>{formatEuro(payment.amount)}</strong>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
       {reconciliationInvoice ? (
         <div
