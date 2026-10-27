@@ -1261,6 +1261,15 @@ export default function App() {
     return responseJsonOrThrow(response);
   }
 
+  async function handleUnlinkInvoicePayment(invoiceId, linkId) {
+    const response = await fetch(`/api/invoices/${invoiceId}/payments/${linkId}`, {
+      method: "DELETE",
+    });
+    const result = await responseJsonOrThrow(response);
+    await loadDashboardData(month);
+    return result;
+  }
+
   async function handleReconcileTransaction(invoiceId, transactionId) {
     setInvoiceReconciliationMessage("");
     const response = await fetch(`/api/invoices/${invoiceId}/reconcile-transaction`, {
@@ -1567,6 +1576,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 handleLoadTransactionCandidates={handleLoadTransactionCandidates}
                 handleReconcileTransaction={handleReconcileTransaction}
                 handleLoadInvoicePayments={handleLoadInvoicePayments}
+                handleUnlinkInvoicePayment={handleUnlinkInvoicePayment}
                 invoiceUploadMessage={invoiceUploadMessage}
                 invoiceUploadError={invoiceUploadError}
                 dismissUploadFeedback={dismissUploadFeedback}

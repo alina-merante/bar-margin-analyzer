@@ -1543,3 +1543,61 @@ def list_invoice_payments(invoice_id: int, db: Session = Depends(get_db)) -> dic
         "remaining_amount": float(invoice_remaining_amount(invoice, linked_amount)),
         "payments": payments,
     }
+
+
+@router.delete("/invoices/{invoice_id}/payments/{link_id}")
+def unlink_invoice_payment(invoice_id: int, link_id: int, db: Session = Depends(get_db)) -> dict:
+    try:
+        invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id).with_for_update())
+        if not invoice:
+            raise HTTPException(status_code=404, detail="invoice not found")
+
+        link = db.scalar(
+            select(InvoicePaymentLink)
+            .where(InvoicePaymentLink.id == link_id, InvoicePaymentLink.invoice_id == invoice_id)
+            .with_for_update()
+        )
+        if not link:
+            raise HTTPException(status_code=404, detail="payment link not found")
+
+        payment = db.scalar(select(Payment).where(Payment.id == link.payment_id).with_for_update())
+        payment_id = link.payment_id
+        transaction_id = payment.transaction_id if payment else None
+
+        db.delete(link)
+        db.flush()
+        # Un pagamento bancario nasce dalla riconciliazione: lo rimuoviamo, il Transaction resta intatto.
+        # Un pagamento manuale mantiene il proprio record Payment.
+        payment_deleted = False
+        if (
+            payment is not None
+            and transaction_id is not None
+            and not db.scalar(select(InvoicePaymentLink.id).where(InvoicePaymentLink.payment_id == payment_id))
+        ):
+            db.delete(payment)
+            payment_deleted = True
+        db.flush()
+
+        linked_amount = invoice_linked_amount(db, invoice.id)
+        remaining_amount = invoice_remaining_amount(invoice, linked_amount)
+        invoice.status = (
+            InvoiceStatus.paid if linked_amount > 0 and remaining_amount == 0 else InvoiceStatus.pending
+        )
+        db.commit()
+
+        return {
+            "invoice_id": invoice.id,
+            "link_id": link_id,
+            "payment_id": payment_id,
+            "payment_deleted": payment_deleted,
+            "transaction_id": transaction_id,
+            "invoice_status": invoice.status.value,
+            "linked_amount": float(linked_amount),
+            "remaining_amount": float(remaining_amount),
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="payment unlink failed") from exc

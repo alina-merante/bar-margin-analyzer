@@ -216,6 +216,7 @@ export default function InvoicesPage({
   handleLoadTransactionCandidates,
   handleReconcileTransaction,
   handleLoadInvoicePayments,
+  handleUnlinkInvoicePayment,
   invoiceUploadMessage,
   invoiceUploadError,
   dismissUploadFeedback,
@@ -242,6 +243,10 @@ export default function InvoicesPage({
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState("");
   const paymentsRequestRef = useRef(0);
+  const [paymentToUnlink, setPaymentToUnlink] = useState(null);
+  const [unlinkSaving, setUnlinkSaving] = useState(false);
+  const [unlinkError, setUnlinkError] = useState("");
+  const [unlinkSuccess, setUnlinkSuccess] = useState("");
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const [categorySearch, setCategorySearch] = useState("");
   const [draftCategoryFilter, setDraftCategoryFilter] = useState("");
@@ -365,6 +370,9 @@ useEffect(() => {
     setPaymentsInvoice(invoice);
     setPaymentsData(null);
     setPaymentsError("");
+    setPaymentToUnlink(null);
+    setUnlinkError("");
+    setUnlinkSuccess("");
     setPaymentsLoading(true);
 
     try {
@@ -379,8 +387,39 @@ useEffect(() => {
     }
   }
 
+  async function confirmUnlinkPayment() {
+    if (!paymentsInvoice || !paymentToUnlink || unlinkSaving) return;
+
+    const invoiceId = paymentsInvoice.id;
+    const requestId = paymentsRequestRef.current;
+    setUnlinkSaving(true);
+    setUnlinkError("");
+    setUnlinkSuccess("");
+    try {
+      await handleUnlinkInvoicePayment(invoiceId, paymentToUnlink.link_id);
+      if (paymentsRequestRef.current !== requestId) return;
+      setPaymentToUnlink(null);
+      setUnlinkSuccess("Pagamento scollegato dalla fattura.");
+      try {
+        setPaymentsData(await handleLoadInvoicePayments(invoiceId));
+      } catch (error) {
+        setPaymentsError(error.message || "Impossibile aggiornare i pagamenti.");
+      }
+    } catch (error) {
+      if (paymentsRequestRef.current === requestId) {
+        setUnlinkError(error.message || "Scollegamento non riuscito.");
+      }
+    } finally {
+      setUnlinkSaving(false);
+    }
+  }
+
   function closePaymentsManager() {
+    if (unlinkSaving) return;
     paymentsRequestRef.current += 1;
+    setPaymentToUnlink(null);
+    setUnlinkError("");
+    setUnlinkSuccess("");
     setPaymentsInvoice(null);
     setPaymentsData(null);
     setPaymentsError("");
@@ -391,12 +430,18 @@ useEffect(() => {
     if (!paymentsInvoice) return undefined;
 
     function handleKeyDown(event) {
-      if (event.key === "Escape") closePaymentsManager();
+      if (event.key !== "Escape" || unlinkSaving) return;
+      if (paymentToUnlink) {
+        setPaymentToUnlink(null);
+        setUnlinkError("");
+      } else {
+        closePaymentsManager();
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [paymentsInvoice]);
+  }, [paymentsInvoice, paymentToUnlink, unlinkSaving]);
 
   function closeReconciliation() {
     if (reconciliationSaving) return;
@@ -1098,6 +1143,7 @@ useEffect(() => {
                 type="button"
                 className="invoice-reconciliation-close"
                 onClick={closePaymentsManager}
+                disabled={unlinkSaving}
                 aria-label="Chiudi"
               >
                 ✕
@@ -1129,6 +1175,10 @@ useEffect(() => {
               <p className="invoice-reconciliation-error" role="alert">{paymentsError}</p>
             ) : null}
 
+            {unlinkSuccess ? (
+              <p className="upload-feedback success" role="status">{unlinkSuccess}</p>
+            ) : null}
+
             {!paymentsLoading && !paymentsError && paymentsData?.payments?.length === 0 ? (
               <p className="invoice-reconciliation-state">Nessun pagamento collegato a questa fattura.</p>
             ) : null}
@@ -1152,9 +1202,60 @@ useEffect(() => {
                     </div>
                     <div className="invoice-reconciliation-candidate-action">
                       <strong>{formatEuro(payment.amount)}</strong>
+                      <button
+                        type="button"
+                        className="invoice-reconciliation-cancel"
+                        disabled={unlinkSaving}
+                        onClick={() => {
+                          setUnlinkError("");
+                          setUnlinkSuccess("");
+                          setPaymentToUnlink(payment);
+                        }}
+                      >
+                        Scollega
+                      </button>
                     </div>
                   </article>
                 ))}
+              </div>
+            ) : null}
+
+            {paymentToUnlink ? (
+              <div className="invoice-reconciliation-confirm" role="group" aria-labelledby="invoice-unlink-confirm-title">
+                <h3 id="invoice-unlink-confirm-title">Conferma scollegamento</h3>
+                <p>
+                  Scollegare il pagamento di <strong>{paymentToUnlink.counterparty || "controparte non indicata"}</strong>
+                  {" "}del{" "}
+                  {paymentToUnlink.date ? new Date(`${paymentToUnlink.date}T00:00:00`).toLocaleDateString("it-IT") : "—"}
+                  {" "}di <strong>{formatEuro(paymentToUnlink.amount)}</strong>? La fattura potrebbe tornare da pagare.
+                  {paymentToUnlink.source === "bank"
+                    ? " Il movimento bancario resterà registrato e potrà essere abbinato di nuovo."
+                    : " Il pagamento manuale resterà registrato."}
+                </p>
+                {unlinkError ? (
+                  <p className="invoice-reconciliation-error" role="alert">{unlinkError}</p>
+                ) : null}
+                <div className="invoice-reconciliation-confirm-actions">
+                  <button
+                    type="button"
+                    className="invoice-reconciliation-cancel"
+                    onClick={() => {
+                      setPaymentToUnlink(null);
+                      setUnlinkError("");
+                    }}
+                    disabled={unlinkSaving}
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="button"
+                    className="invoice-reconcile-btn primary warning"
+                    onClick={confirmUnlinkPayment}
+                    disabled={unlinkSaving}
+                  >
+                    {unlinkSaving ? "Scollegamento..." : "Conferma scollegamento"}
+                  </button>
+                </div>
               </div>
             ) : null}
           </section>
