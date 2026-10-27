@@ -4189,16 +4189,23 @@ body {
   inset: 0;
   z-index: 1000;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(24, 18, 12, 0.62);
 }
 
 .invoice-reconciliation-modal {
+  box-sizing: border-box;
   width: min(760px, 100%);
   max-height: min(88vh, 820px);
+  max-height: min(calc(100dvh - 48px), 820px);
+  margin: auto;
+  flex-shrink: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 26px;
   border: 1px solid #d7c4ad;
   border-radius: 12px;
@@ -4314,6 +4321,24 @@ body {
   font-weight: 800;
 }
 
+.invoice-suggested-badge.reliable {
+  background: #edf5ef;
+  border-color: #b4cbbf;
+  color: #285d42;
+}
+
+.invoice-suggested-badge.possible {
+  background: #fff4df;
+  border-color: #e8c68d;
+  color: #94600c;
+}
+
+.invoice-suggested-badge.manual-review {
+  background: #fff0ee;
+  border-color: #e8aaa2;
+  color: #a52f28;
+}
+
 .invoice-reconciliation-candidate-main > strong {
   display: block;
   font-size: 15px;
@@ -4401,14 +4426,25 @@ body {
   background: #174c39;
 }
 
+.invoice-reconcile-btn.primary.warning {
+  background: #b66a22;
+  border-color: #b66a22;
+  color: #fff;
+}
+
+.invoice-reconcile-btn.primary.warning:hover:not(:disabled) {
+  background: #945319;
+  border-color: #945319;
+}
+
 @media (max-width: 700px) {
   .invoice-reconciliation-backdrop {
-    align-items: flex-end;
     padding: 10px;
   }
 
   .invoice-reconciliation-modal {
-    max-height: 92dvh;
+    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
     padding: 18px;
     border-radius: 12px;
   }

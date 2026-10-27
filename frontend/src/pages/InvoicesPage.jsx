@@ -1088,12 +1088,18 @@ useEffect(() => {
                       <div className="invoice-reconciliation-candidate-meta">
                         <time dateTime={candidate.date}>{formatDate(candidate.date)}</time>
                         {candidate.confidence === "reliable" ? (
-                          <span className="invoice-suggested-badge">Affidabile</span>
-                        ) : candidate.confidence === "possible" ? (
-                          <span className="invoice-suggested-badge">Possibile · pagamento parziale</span>
-                        ) : (
-                          <span className="invoice-suggested-badge">Da verificare · fornitore non confermato</span>
-                        )}
+  <span className="invoice-suggested-badge reliable">
+    Affidabile
+  </span>
+) : candidate.confidence === "possible" ? (
+  <span className="invoice-suggested-badge possible">
+    Possibile · pagamento parziale
+  </span>
+) : (
+  <span className="invoice-suggested-badge manual-review">
+    Da verificare · fornitore non confermato
+  </span>
+)}
                       </div>
                       <strong>{candidate.counterparty}</strong>
                       <p>{candidate.description}</p>
@@ -1150,13 +1156,15 @@ useEffect(() => {
                     Annulla
                   </button>
                   <button
-                    type="button"
-                    className="invoice-reconcile-btn primary"
-                    onClick={confirmReconciliation}
-                    disabled={reconciliationSaving}
-                  >
-                    {reconciliationSaving ? "Abbinamento..." : "Conferma abbinamento"}
-                  </button>
+  type="button"
+  className={`invoice-reconcile-btn primary${
+    candidateToConfirm.confidence === "manual_review" ? " warning" : ""
+  }`}
+  onClick={confirmReconciliation}
+  disabled={reconciliationSaving}
+>
+  {reconciliationSaving ? "Abbinamento..." : "Conferma abbinamento"}
+</button>
                 </div>
               </div>
             ) : null}
