@@ -1,5 +1,6 @@
 import csv
 import glob
+import logging
 import os
 import uuid
 from io import BytesIO, StringIO
@@ -7,7 +8,7 @@ from io import BytesIO, StringIO
 from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pdf2image import convert_from_bytes
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,13 +16,15 @@ from app.database import get_db
 from app.models.document import Document
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.transaction import Transaction
+from app.services import cash_closure_parser, document_ocr
 from app.time_utils import to_utc_iso
 
 import datetime as dt
-import re
 from decimal import Decimal
 
 import pytesseract
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -213,11 +216,6 @@ def create_pdf_preview_images(
         print(f"Errore creazione preview PDF: {exc}")
         return None
 
-def parse_amount(value: str) -> Decimal:
-    cleaned = value.strip().replace(".", "").replace(",", ".")
-    return Decimal(cleaned)
-
-
 def single_month_from_bank_csv(content: bytes) -> str | None:
     try:
         reader = csv.DictReader(StringIO(content.decode("utf-8-sig")))
@@ -281,50 +279,49 @@ def create_bank_document(
                 os.remove(path)
         raise
 
-def ocr_image(image: Image.Image) -> str:
-    image = image.convert("L")
-
-    width, height = image.size
-
-    left_margin = int(width * 0.18)
-    right_margin = int(width * 0.92)
-    top_margin = int(height * 0.02)
-    bottom_margin = int(height * 0.98)
-
-    image = image.crop((left_margin, top_margin, right_margin, bottom_margin))
-
-    width, height = image.size
-    image = image.resize((width * 2, height * 2))
-
-    config = "--psm 4"
-
-    return pytesseract.image_to_string(
-        image,
-        lang="ita",
-        config=config,
-    )
-
-
 def extract_text_from_document(content: bytes, extension: str) -> str:
-    if extension == "pdf":
-        pages = convert_from_bytes(content, dpi=250)
-        text_parts = []
-
-        for page in pages:
-            text_parts.append(ocr_image(page))
-
-        return "\n".join(text_parts)
-
-    if extension in {"jpg", "jpeg", "png", "webp"}:
-        image = Image.open(BytesIO(content))
-        return ocr_image(image)
+    """Lettura principale: pagina intera, nessun ritaglio."""
+    if extension == "pdf" or extension in document_ocr.IMAGE_EXTENSIONS:
+        _, text = next(
+            document_ocr.iter_attempt_texts(
+                content,
+                extension,
+                (document_ocr.PRIMARY_ATTEMPT,),
+                renderer=convert_from_bytes,
+            )
+        )
+        return text
 
     return content.decode("utf-8-sig", errors="replace")
+
+
+def extract_alternate_texts(content: bytes, extension: str):
+    """Letture alternative (lazy). Se il documento non è rileggibile non produce nulla."""
+    if extension != "pdf" and extension not in document_ocr.IMAGE_EXTENSIONS:
+        return
+    try:
+        yield from document_ocr.iter_attempt_texts(
+            content,
+            extension,
+            document_ocr.ALTERNATE_ATTEMPTS,
+            renderer=convert_from_bytes,
+        )
+    except (document_ocr.DocumentReadError, pytesseract.TesseractError, RuntimeError):
+        return
+
+
+GENERIC_TOTAL_WARNING = (
+    "Il totale è stato letto da un'etichetta generica (es. TOTALE) e non è confermato "
+    "da contanti ed elettronici: verifica l'importo sul documento originale."
+)
+
 
 def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
     warnings = []
     cash_amount = extracted_data["cash_amount"]
     card_amount = extracted_data["card_amount"]
+    diagnostics = extracted_data.get("diagnostics") or {}
+    other_payments_total = diagnostics.get("other_payments_total") or Decimal("0.00")
 
     if cash_amount is None:
         warnings.append(
@@ -334,95 +331,67 @@ def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
         warnings.append(
             "Pagamenti elettronici non rilevati: verifica l'importo sul documento originale."
         )
+    # Il totale può comprendere altre modalità (buoni pasto, ticket...): la
+    # differenza è solo segnalata, mai considerata un errore certo.
     if (
         cash_amount is not None
         and card_amount is not None
-        and extracted_data["total_amount"] != cash_amount + card_amount
+        and extracted_data["total_amount"] != cash_amount + card_amount + other_payments_total
     ):
         warnings.append(
             "Il totale non coincide con la somma di contanti e pagamenti elettronici. "
             "Verifica eventuali altri metodi di pagamento."
         )
+    if diagnostics.get("total_label") == "generic" and not diagnostics.get("total_corroborated"):
+        warnings.append(GENERIC_TOTAL_WARNING)
 
     return warnings
 
 
-def extract_closure_date(text: str) -> dt.date | None:
-    # Date con anno a 2 o 4 cifre, non incollate ad altre cifre. Se il documento
-    # contiene più date diverse si usa solo quella con etichetta; se resta
-    # ambiguo si restituisce None per richiedere una verifica.
-    pattern = re.compile(
-        r"(?P<label>DEL\s+GIORNO:|DATA)?\s*(?<!\d)(\d{2})[-/](\d{2})[-/](\d{4}|\d{2})(?!\d)",
-        re.IGNORECASE,
+def find_possible_duplicate_cash_closures(
+    db: Session, extracted_data: dict
+) -> list[DailyCashClosure]:
+    """Chiusure con lo stesso totale ma data o numero diversi (non è un duplicato certo)."""
+    return list(
+        db.scalars(
+            select(DailyCashClosure).where(
+                DailyCashClosure.total_amount == extracted_data["total_amount"],
+                or_(
+                    (DailyCashClosure.date == extracted_data["date"])
+                    & (DailyCashClosure.closure_number != extracted_data["closure_number"]),
+                    (DailyCashClosure.closure_number == extracted_data["closure_number"])
+                    & (DailyCashClosure.date != extracted_data["date"]),
+                ),
+            )
+        ).all()
     )
-    found: list[tuple[dt.date, bool]] = []
-    for match in pattern.finditer(text):
-        day, month, year = int(match.group(2)), int(match.group(3)), int(match.group(4))
-        if year < 100:
-            year += 2000
-        try:
-            found.append((dt.date(year, month, day), match.group("label") is not None))
-        except ValueError:
-            continue
-
-    distinct = {value for value, _ in found}
-    if len(distinct) <= 1:
-        return next(iter(distinct), None)
-    labeled = {value for value, is_labeled in found if is_labeled}
-    return next(iter(labeled)) if len(labeled) == 1 else None
 
 
-def find_amount_after_label(text: str, label: str) -> Decimal | None:
-    pattern = rf"{label}\s+(\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}|\d+,\d{{2}})(?![\d\w])"
-    match = re.search(pattern, text, re.IGNORECASE)
-
-    if not match:
-        return None
-
-    return parse_amount(match.group(1))
-
-
-def find_int_after_label(text: str, label: str) -> int | None:
-    pattern = rf"{label}\s+(\d+)"
-    match = re.search(pattern, text, re.IGNORECASE)
-
-    if not match:
-        return None
-
-    return int(match.group(1))
+def possible_duplicate_warnings(closures: list[DailyCashClosure]) -> list[str]:
+    return [
+        "Esiste già una chiusura con lo stesso totale "
+        f"({closure.date.strftime('%d/%m/%Y')} – chiusura n. {closure.closure_number}): "
+        "verifica che non sia un duplicato letto con data o numero diversi."
+        for closure in closures
+    ]
 
 
 def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     text = extract_text_from_document(content, extension)
+    logger.debug("Testo OCR chiusura cassa:\n%s", text)
 
-    print("TESTO OCR CHIUSURA CASSA:")
-    print(text)
+    extraction = cash_closure_parser.ClosureExtraction(text)
 
-    date = extract_closure_date(text)
+    # La seconda lettura parte solo se la prima lascia anomalie o campi incerti.
+    if extraction.needs_second_read():
+        for attempt_name, alternate_text in extract_alternate_texts(content, extension):
+            extraction.merge_text(alternate_text, attempt_name)
+            if not extraction.needs_second_read():
+                break
+        extraction.mark_second_read_unavailable()
 
-    closure_number_match = re.search(
-        r"(?:NUM\.\s*CHIUSURA|CHIUSURA\s*N\.?)\s*[:\-]?\s*(\d+)(?!\w)",
-        text,
-        re.IGNORECASE,
-    )
+    return extraction.to_result()
 
-    total_amount = find_amount_after_label(text, r"AMMONTARE\s+GIORNO")
-    if total_amount is None:
-        total_amount = find_amount_after_label(text, r"CORRISP[.,]?\s+GIORNALIERO")
-
-    card_amount = find_amount_after_label(text, r"PAGAM[.,]?\s+ELETTRONICI")
-    cash_amount = find_amount_after_label(text, r"AMMONTARE")
-
-    receipts_count = find_int_after_label(text, r"DOCUM\.\s+DI\s+VENDITA")
-
-    return {
-        "date": date,
-        "closure_number": closure_number_match.group(1) if closure_number_match else None,
-        "total_amount": total_amount,
-        "cash_amount": cash_amount,
-        "card_amount": card_amount,
-        "receipts_count": receipts_count,
-    }
 
 @router.post("/upload")
 async def upload_document(
@@ -452,7 +421,16 @@ async def upload_document(
         document_month = single_month_from_bank_csv(content) or month
 
     if section in {"cash", "cash_closure"}:
-        extracted_data = extract_daily_cash_closure(content, extension)
+        try:
+            extracted_data = extract_daily_cash_closure(content, extension)
+        except document_ocr.DocumentReadError:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Il documento non è leggibile. "
+                    "Carica un'immagine o un PDF valido e più leggibile."
+                ),
+            )
         if extracted_data["date"] is None:
             raise HTTPException(
                 status_code=422,
@@ -481,6 +459,11 @@ async def upload_document(
         if existing_closure:
             raise cash_closure_conflict(extracted_data, existing_closure)
         cash_warnings = build_cash_closure_warnings(extracted_data)
+        cash_warnings.extend(
+            possible_duplicate_warnings(
+                find_possible_duplicate_cash_closures(db, extracted_data)
+            )
+        )
 
     os.makedirs("uploads/documents", exist_ok=True)
 
@@ -579,6 +562,10 @@ async def upload_document(
     response = document_to_dict(document, cash_date=cash_date)
     if extracted_data:
         response["warnings"] = cash_warnings
+        if extracted_data.get("diagnostics"):
+            response["extraction"] = cash_closure_parser.public_summary(
+                extracted_data["diagnostics"]
+            )
     return response
 
 

@@ -114,8 +114,10 @@ Validazione, prima di scrivere file o record:
   valida (ad esempio `31/02/2026`) l'API risponde HTTP 422. Non esiste un
   fallback a `date.today()`;
 - il numero di chiusura è obbligatorio; se manca l'API risponde HTTP 422;
-- l'importo totale mancante viene salvato come `0.00`: l'assenza dell'importo
-  non è ancora segnalata come errore.
+- il totale è obbligatorio; se manca o è ambiguo l'API risponde HTTP 422;
+- contanti ed elettronici non riconosciuti vengono salvati come `0.00` (le
+  colonne sono NOT NULL) con un avviso e con i campi irrisolti elencati in
+  `extraction.unresolved_fields` della risposta.
 
 Prevenzione dei duplicati:
 
@@ -142,11 +144,20 @@ Atomicità dell'import:
   `Document` senza chiusura né file orfani;
 - il cleanup non riguarda upload già completati con successo.
 
-Limiti noti dell'estrazione OCR: la ricerca della data accetta qualunque
-sequenza `GG/MM/AA` o `GG-MM-AAAA` presente nel testo, quindi può scegliere una
-data diversa da quella della chiusura; altri formati di data non sono
-riconosciuti e producono HTTP 422. L'audit degli importi estratti non è ancora
-completato.
+Pipeline OCR (`app/services/document_ocr.py`, `cash_closure_parser.py`):
+lettura della pagina intera (nessun ritaglio), correzione dell'orientamento,
+PDF multipagina. Il parser raccoglie i candidati per ogni campo (etichetta,
+vicinanza) e non sceglie mai il primo valore. Se restano campi ambigui,
+malformati, mancanti o incoerenze aritmetiche parte una seconda lettura
+(ritaglio storico, immagine binarizzata) confrontata campo per campo; i valori
+in conflitto restano irrisolti. Altri metodi di pagamento (buoni pasto, ticket)
+sono rilevati ma non contabilizzati.
+
+Limiti noti: accuratezza non verificata su documenti reali di registratori
+diversi (i test OCR usano immagini sintetiche); nessun raddrizzamento di
+inclinazioni piccole; HEIC, CSV e XLSX non supportati per le chiusure; PDF con
+più chiusure rifiutati come ambigui; contanti/elettronici non rilevati non
+sono distinguibili da zero nel database.
 
 ### Storico documenti
 
