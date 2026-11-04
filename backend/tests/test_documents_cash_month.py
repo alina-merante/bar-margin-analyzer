@@ -1246,3 +1246,107 @@ def test_non_cash_upload_response_has_no_warnings_key(cash_upload_env):
             )
         )
     assert "warnings" not in payload
+
+
+# --- Affidabilità OCR: date, numero chiusura, importi, duplicati ---
+
+
+@pytest.mark.parametrize(
+    "date_text",
+    ["DATA 112/07/2026", "DATA 14/07/202", "DATA 14/07/20266", "DATA 14/13/2026"],
+)
+def test_extractor_rejects_malformed_dates(monkeypatch, date_text):
+    data = _extract_with_text(monkeypatch, f"NUM. CHIUSURA 201\n{date_text}")
+    assert data["date"] is None
+
+
+def test_extractor_conflicting_unlabeled_dates_are_ambiguous(monkeypatch):
+    data = _extract_with_text(monkeypatch, "STAMPA 01/01/26\nNUM. CHIUSURA 201\n14/07/26 23:45")
+    assert data["date"] is None
+
+
+def test_extractor_prefers_single_labeled_date_over_other_dates(monkeypatch):
+    data = _extract_with_text(monkeypatch, "STAMPA 01/01/26\nNUM. CHIUSURA 201\nDATA 14-07-26")
+    assert data["date"] == dt.date(2026, 7, 14)
+
+
+def test_extractor_repeated_identical_date_is_not_ambiguous(monkeypatch):
+    data = _extract_with_text(monkeypatch, "DATA 14-07-26\nNUM. CHIUSURA 201\nDEL GIORNO: 14/07/2026")
+    assert data["date"] == dt.date(2026, 7, 14)
+
+
+@pytest.mark.parametrize("number_text", ["2O1", "20l", "201A"])
+def test_extractor_does_not_truncate_closure_number_with_ocr_letters(monkeypatch, number_text):
+    data = _extract_with_text(monkeypatch, f"NUM. CHIUSURA {number_text}\nDATA 14-07-26")
+    assert data["closure_number"] is None
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("1.250,50", Decimal("1250.50")),
+        ("1250,50", Decimal("1250.50")),
+        ("0,50", Decimal("0.50")),
+        ("12.345,00", Decimal("12345.00")),
+    ],
+)
+def test_extractor_reads_italian_amounts_exactly(monkeypatch, text, expected):
+    data = _extract_with_text(monkeypatch, f"AMMONTARE GIORNO {text}")
+    assert data["total_amount"] == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["945,805", "945,8", "1.25,50", "1.2504,50", "1250.50", "1 250,50", "-10,00", "945,8O", "n/d"],
+)
+def test_extractor_rejects_unreadable_or_ambiguous_amounts(monkeypatch, text):
+    data = _extract_with_text(monkeypatch, f"AMMONTARE GIORNO {text}")
+    assert data["total_amount"] is None
+
+
+def test_cash_upload_with_ambiguous_date_is_rejected_before_any_write(cash_upload_env, monkeypatch):
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+    monkeypatch.setattr(
+        documents_router,
+        "extract_text_from_document",
+        lambda c, e: "01/01/26\nNUM. CHIUSURA 301\n14/07/26\nAMMONTARE GIORNO 10,00",
+    )
+
+    with Session(cash_upload_env) as session:
+        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+
+
+def test_cash_upload_with_unreadable_total_is_not_saved(cash_upload_env, monkeypatch):
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+    monkeypatch.setattr(
+        documents_router,
+        "extract_text_from_document",
+        lambda c, e: "NUM. CHIUSURA 301\nDATA 14-07-26\nAMMONTARE GIORNO 945,805",
+    )
+
+    with Session(cash_upload_env) as session:
+        with pytest.raises(HTTPException) as exc_info:
+            _upload_cash_pdf(session)
+        assert exc_info.value.status_code == 422
+        assert session.scalars(select(DailyCashClosure)).all() == []
+        assert session.scalars(select(Document)).all() == []
+
+
+def test_two_closures_same_day_are_saved_and_exact_duplicate_is_rejected(cash_upload_env, monkeypatch):
+    monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+
+    def upload(number):
+        text = f"NUM. CHIUSURA {number}\nDATA 14-07-26\nAMMONTARE GIORNO 100,00"
+        with Session(cash_upload_env) as session:
+            return _upload_with_ocr_text(session, monkeypatch, text)
+
+    upload("501")
+    upload("502")
+    with pytest.raises(HTTPException) as exc_info:
+        upload("501")
+
+    assert exc_info.value.status_code == 409
+    with Session(cash_upload_env) as session:
+        closures = session.scalars(select(DailyCashClosure)).all()
+        assert sorted(c.closure_number for c in closures) == ["501", "502"]
+        assert len(session.scalars(select(Document)).all()) == 2

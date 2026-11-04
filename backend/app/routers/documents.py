@@ -347,8 +347,33 @@ def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
     return warnings
 
 
+def extract_closure_date(text: str) -> dt.date | None:
+    # Date con anno a 2 o 4 cifre, non incollate ad altre cifre. Se il documento
+    # contiene più date diverse si usa solo quella con etichetta; se resta
+    # ambiguo si restituisce None per richiedere una verifica.
+    pattern = re.compile(
+        r"(?P<label>DEL\s+GIORNO:|DATA)?\s*(?<!\d)(\d{2})[-/](\d{2})[-/](\d{4}|\d{2})(?!\d)",
+        re.IGNORECASE,
+    )
+    found: list[tuple[dt.date, bool]] = []
+    for match in pattern.finditer(text):
+        day, month, year = int(match.group(2)), int(match.group(3)), int(match.group(4))
+        if year < 100:
+            year += 2000
+        try:
+            found.append((dt.date(year, month, day), match.group("label") is not None))
+        except ValueError:
+            continue
+
+    distinct = {value for value, _ in found}
+    if len(distinct) <= 1:
+        return next(iter(distinct), None)
+    labeled = {value for value, is_labeled in found if is_labeled}
+    return next(iter(labeled)) if len(labeled) == 1 else None
+
+
 def find_amount_after_label(text: str, label: str) -> Decimal | None:
-    pattern = rf"{label}\s+(\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}|\d+,\d{{2}})"
+    pattern = rf"{label}\s+(\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}|\d+,\d{{2}})(?![\d\w])"
     match = re.search(pattern, text, re.IGNORECASE)
 
     if not match:
@@ -373,29 +398,10 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     print("TESTO OCR CHIUSURA CASSA:")
     print(text)
 
-    date = None
-
-    date_match = re.search(
-        r"(?:DEL GIORNO:|DATA)?\s*(\d{2})[-/](\d{2})[-/](\d{2,4})",
-        text,
-        re.IGNORECASE,
-    )
-
-    if date_match:
-        day = int(date_match.group(1))
-        month = int(date_match.group(2))
-        year = int(date_match.group(3))
-
-        if year < 100:
-            year += 2000
-
-        try:
-            date = dt.date(year, month, day)
-        except ValueError:
-            date = None
+    date = extract_closure_date(text)
 
     closure_number_match = re.search(
-        r"(?:NUM\.\s*CHIUSURA|CHIUSURA\s*N\.?)\s*[:\-]?\s*(\d+)",
+        r"(?:NUM\.\s*CHIUSURA|CHIUSURA\s*N\.?)\s*[:\-]?\s*(\d+)(?!\w)",
         text,
         re.IGNORECASE,
     )
