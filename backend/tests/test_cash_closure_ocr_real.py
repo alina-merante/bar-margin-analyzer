@@ -90,8 +90,8 @@ def test_multipage_pdf_reads_all_pages():
 
 def test_alternate_reads_produce_text():
     texts = dict(documents_router.extract_alternate_texts(_png(_render()), "png"))
-    assert set(texts) == {"legacy_crop", "flattened_binary"}
-    assert "945" in texts["flattened_binary"]
+    assert set(texts) == {"legacy_crop", "flattened_denoised"}
+    assert "945" in texts["flattened_denoised"]
 
 
 def test_unreadable_file_yields_no_alternates():

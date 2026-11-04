@@ -152,6 +152,12 @@ CLOSURE_LABELS = (
         ),
     ),
     LabelSpec(
+        "z_numero",
+        WEAK_TIER,
+        # Una "Z" isolata vale come etichetta solo se seguita da un marcatore di numero.
+        _c(rf"(?<![A-Z0-9])Z[ \t]*{_N_MARK}{_NUMBER_SEP_SAME_LINE}{_NUM_TOKEN}"),
+    ),
+    LabelSpec(
         "chiusura",
         WEAK_TIER,
         _c(
@@ -381,6 +387,9 @@ class FieldResolution:
     provenance: str = ""  # first_read | second_read | confirmed | arithmetic
     tier: int | None = None
     seen: list = field(default_factory=list)
+    # Valori del solo livello di etichetta migliore: i dettagli di livello inferiore
+    # (es. righe POS accanto a un aggregato) non sono candidati concorrenti.
+    competing: list = field(default_factory=list)
 
     @property
     def value(self):
@@ -395,29 +404,30 @@ def _resolution_from_reading(reading: FieldReading, provenance: str) -> FieldRes
     tier, values = reading.best_tier_values()
     if values:
         status = "ok" if len(values) == 1 else "ambiguous"
-        return FieldResolution(status, values, provenance, tier, reading.all_values())
+        return FieldResolution(status, values, provenance, tier, reading.all_values(), list(values))
     return FieldResolution("malformed" if reading.malformed else "missing", seen=[])
 
 
 def _merge_resolutions(current: FieldResolution, new: FieldResolution) -> FieldResolution:
     seen = _union(current.seen, new.seen)
+    competing = _union(current.competing, new.competing)
     if current.status == "conflict":
-        return replace(current, seen=seen)
+        return replace(current, seen=seen, competing=competing)
     if not current.values and not new.values:
         malformed = "malformed" in (current.status, new.status)
         return FieldResolution("malformed" if malformed else "missing", seen=seen)
     if not new.values:
-        return replace(current, seen=seen)
+        return replace(current, seen=seen, competing=competing)
     if not current.values:
-        return FieldResolution(new.status, new.values, "second_read", new.tier, seen)
+        return FieldResolution(new.status, new.values, "second_read", new.tier, seen, competing)
     agreed = [value for value in current.values if value in new.values]
     tier = min(t for t in (current.tier, new.tier) if t is not None)
     if len(agreed) == 1:
-        return FieldResolution("ok", agreed, "confirmed", tier, seen)
+        return FieldResolution("ok", agreed, "confirmed", tier, seen, competing)
     if len(agreed) > 1:
-        return FieldResolution("ambiguous", agreed, "confirmed", tier, seen)
+        return FieldResolution("ambiguous", agreed, "confirmed", tier, seen, competing)
     # Letture che non hanno alcun valore in comune: nessuna delle due è affidabile.
-    return FieldResolution("conflict", [], "", None, seen)
+    return FieldResolution("conflict", [], "", None, seen, competing)
 
 
 class ClosureExtraction:
@@ -505,6 +515,10 @@ class ClosureExtraction:
                 problems.append(f"{name}:{resolution.status}")
             elif resolution.status == "missing" and name in REQUIRED_FIELDS:
                 problems.append(f"{name}:missing")
+            if resolution.status == "ok" and len(resolution.competing) > 1:
+                # Risolto per aritmetica o per intersezione tra letture, ma altri valori
+                # sono stati letti: una lettura che non vede un candidato non lo smentisce.
+                problems.append(f"{name}:resolved_among_alternatives")
         date_value = self.fields["date"].value
         if date_value is not None and date_value > today + dt.timedelta(days=1):
             problems.append("date:in_future")
@@ -534,6 +548,7 @@ class ClosureExtraction:
                     "status": self.fields[name].status,
                     "provenance": self.fields[name].provenance,
                     "alternatives": [str(v) for v in self.fields[name].seen],
+                    "competing": [str(v) for v in self.fields[name].competing],
                 }
                 for name in FIELD_NAMES
             },

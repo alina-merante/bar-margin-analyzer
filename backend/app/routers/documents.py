@@ -344,6 +344,14 @@ def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
         )
     if diagnostics.get("total_label") == "generic" and not diagnostics.get("total_corroborated"):
         warnings.append(GENERIC_TOTAL_WARNING)
+    for field_name, details in (diagnostics.get("fields") or {}).items():
+        competing = details.get("competing", [])
+        if details.get("status") == "ok" and len(competing) > 1:
+            warnings.append(
+                f"Il campo «{field_name}» aveva più valori possibili "
+                f"({', '.join(competing)}): è stato scelto quello confermato o "
+                "coerente con gli altri importi. Verifica sul documento originale."
+            )
 
     return warnings
 

@@ -64,19 +64,20 @@ def _prepare_legacy_crop(gray: Image.Image) -> Image.Image:
     return cropped.resize((cropped.width * 2, cropped.height * 2))
 
 
-def _prepare_flattened_binary(gray: Image.Image) -> Image.Image:
-    # Compensa ombre e illuminazione non uniforme (tipiche delle fotografie).
-    scaled = _upscale(gray)
+def _prepare_flattened_denoised(gray: Image.Image) -> Image.Image:
+    # Per fotografie con ombre e rumore: il filtro mediano elimina i puntini
+    # isolati, poi si sottrae lo sfondo stimato. Nessuna soglia rigida, che su
+    # immagini sporche spezza i caratteri.
+    scaled = _upscale(gray).filter(ImageFilter.MedianFilter(5))
     background = scaled.filter(ImageFilter.GaussianBlur(radius=max(scaled.size) / 40))
     flattened = ImageOps.invert(ImageChops.subtract(background, scaled, scale=1.0, offset=0))
-    flattened = ImageOps.autocontrast(flattened, cutoff=1)
-    return flattened.point(lambda value: 255 if value > 140 else 0)
+    return ImageOps.autocontrast(flattened, cutoff=1)
 
 
 PRIMARY_ATTEMPT = OcrAttempt("full_page", _prepare_full_page, 4)
 ALTERNATE_ATTEMPTS = (
     OcrAttempt("legacy_crop", _prepare_legacy_crop, 4),
-    OcrAttempt("flattened_binary", _prepare_flattened_binary, 6),
+    OcrAttempt("flattened_denoised", _prepare_flattened_denoised, 6),
 )
 
 
