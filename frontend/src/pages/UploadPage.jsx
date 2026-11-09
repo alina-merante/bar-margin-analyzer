@@ -168,6 +168,188 @@ function getDocumentPreviewUrl(document) {
   return `/api${rawUrl}`;
 }
 
+function getDocumentFileUrl(document) {
+  const rawUrl = document?.file_url || "";
+
+  if (!rawUrl) return "";
+  if (rawUrl.startsWith("http")) return rawUrl;
+
+  return `/api${rawUrl}`;
+}
+
+// Componente React per gestire il caricamento e gli errori delle immagini
+function DocumentPreview({ document }) {
+  const [imageErrors, setImageErrors] = useState(new Set());
+
+  // Azzera gli errori quando il documento cambia
+  useEffect(() => {
+    setImageErrors(new Set());
+  }, [document?.id]);
+
+  if (!document) return null;
+
+  const documentType = (document.document_type || "").toUpperCase();
+  const previewUrl = getDocumentPreviewUrl(document);
+  const fileUrl = getDocumentFileUrl(document);
+  
+  // Split preview URLs solo se esiste e non è vuota
+  const previewUrls = previewUrl 
+    ? previewUrl.split(",").map(u => u.trim()).filter(u => u.length > 0)
+    : [];
+
+  // Handler per errore di caricamento immagine
+  const handleImageError = (url) => {
+    setImageErrors(prev => new Set([...prev, url]));
+  };
+
+  // Handler per caricamento riuscito
+  const handleImageLoad = (url) => {
+    setImageErrors(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(url);
+      return newSet;
+    });
+  };
+
+  // Immagini direttamente visualizzabili (PNG, JPG, JPEG, WebP)
+  if (["PNG", "JPG", "JPEG", "WEBP"].includes(documentType)) {
+    // Usa preview_url se disponibile, altrimenti file_url
+    const imagesToShow = previewUrls.length > 0 ? previewUrls : (fileUrl ? [fileUrl] : []);
+    
+    if (imagesToShow.length > 0) {
+      // Se TUTTE le immagini hanno errore, mostra fallback
+      const allImagesHaveErrors = imagesToShow.length > 0 && 
+                                  imagesToShow.every(url => imageErrors.has(url));
+
+      if (allImagesHaveErrors) {
+        return (
+          <div className="document-preview-unavailable">
+            <div>📎</div>
+            <h3>Anteprima non disponibile</h3>
+            <p>Il file originale non è stato trovato. Contatta l'amministratore.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="document-preview-scroll">
+          {imagesToShow.map((url, index) => (
+            !imageErrors.has(url) && (
+              <img
+                key={url}
+                src={url}
+                alt={`${document.original_filename || "Documento"} ${imagesToShow.length > 1 ? `- Pagina ${index + 1}` : ""}`}
+                className="document-preview-image"
+                onLoad={(e) => {
+                  handleImageLoad(url);
+                  e.target.style.opacity = "1";
+                }}
+                onError={() => handleImageError(url)}
+                style={{ opacity: "0.5", transition: "opacity 0.3s ease" }}
+              />
+            )
+          ))}
+        </div>
+      );
+    }
+    // Se no preview_url e no file_url, mostra unavailable
+    return (
+      <div className="document-preview-unavailable">
+        <div>📎</div>
+        <h3>Anteprima non disponibile</h3>
+        <p>Il documento è stato salvato, ma non è disponibile un'anteprima.</p>
+      </div>
+    );
+  }
+
+  // PDF - mostra immagini preview (già convertite dal backend)
+  if (documentType === "PDF") {
+    if (previewUrls.length > 0) {
+      // Se TUTTE le immagini PDF hanno errore
+      const allImagesHaveErrors = previewUrls.length > 0 && 
+                                  previewUrls.every(url => imageErrors.has(url));
+
+      if (allImagesHaveErrors) {
+        return (
+          <div className="document-preview-unavailable">
+            <div>📎</div>
+            <h3>Anteprima non disponibile</h3>
+            <p>Il file PDF è stato salvato, ma l'anteprima non è disponibile.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="document-preview-scroll">
+          {previewUrls.map((url, index) => (
+            !imageErrors.has(url) && (
+              <img
+                key={url}
+                src={url}
+                alt={`PDF - Pagina ${index + 1}`}
+                className="document-preview-image"
+                onLoad={(e) => {
+                  handleImageLoad(url);
+                  e.target.style.opacity = "1";
+                }}
+                onError={() => handleImageError(url)}
+                style={{ opacity: "0.5", transition: "opacity 0.3s ease" }}
+              />
+            )
+          ))}
+        </div>
+      );
+    }
+    // Fallback per PDF senza preview
+    return (
+      <div className="document-preview-unavailable">
+        <div>📎</div>
+        <h3>Anteprima non disponibile</h3>
+        <p>Il file PDF è stato salvato, ma l'anteprima non è disponibile.</p>
+      </div>
+    );
+  }
+
+  // TXT/CSV - mostra come link al file originale
+  if (documentType === "TXT" || documentType === "CSV") {
+    if (fileUrl) {
+      return (
+        <div className="document-preview-text-link">
+          <div>📄</div>
+          <h3>Documento testuale</h3>
+          <p>Questo è un file di testo. Scaricalo per visualizzarne il contenuto.</p>
+          <a href={fileUrl} target="_blank" rel="noreferrer" className="document-download-link">
+            Scarica {documentType}
+          </a>
+        </div>
+      );
+    }
+    // Fallback se no file_url per TXT
+    return (
+      <div className="document-preview-unavailable">
+        <div>📄</div>
+        <h3>Anteprima non disponibile</h3>
+        <p>Il file di testo è stato salvato, ma non è più accessibile.</p>
+      </div>
+    );
+  }
+
+  // Fallback per formati non supportati
+  return (
+    <div className="document-preview-unavailable">
+      <div>📎</div>
+      <h3>Anteprima non disponibile</h3>
+      <p>Il documento è stato salvato, ma non è disponibile un'anteprima per il formato {documentType || "sconosciuto"}.</p>
+      {fileUrl && (
+        <a href={fileUrl} target="_blank" rel="noreferrer" className="document-download-link">
+          Scarica documento
+        </a>
+      )}
+    </div>
+  );
+}
+
+
 function CashClosureReviewCard({
   review,
   onCorrect,
@@ -405,8 +587,6 @@ export default function UploadPage({
     setSelectedInvoiceWithoutDocument(null);
   }, [activeHistoryTab]);
 
-  const selectedOtherDocumentUrl = getDocumentPreviewUrl(selectedOtherDocument);
-
   const [cashUploadError, setCashUploadError] = useState("");
   const [otherUploadError, setOtherUploadError] = useState("");
 
@@ -417,14 +597,6 @@ export default function UploadPage({
   function dismiss(kind) {
     dismissUploadFeedback?.(kind);
   }
-
-  const selectedOtherDocumentUrls = selectedOtherDocument?.preview_url
-  ? selectedOtherDocument.preview_url
-      .split(",")
-      .map((url) => (url.startsWith("http") ? url : `/api${url}`))
-  : selectedOtherDocumentUrl
-  ? [selectedOtherDocumentUrl]
-  : [];
 
   const currentMonthInvoices = useMemo(() => {
     return invoices.filter((invoice) => invoice.due_date?.slice(0, 7) === month);
@@ -447,12 +619,12 @@ export default function UploadPage({
       return {
         id: `document-${document.id}`,
         kind: "document",
-        tab: document.section === "cash" ? "cash" : document.section === "bank" ? "bank" : "other",
+        tab: ["cash", "cash_closure"].includes(document.section) ? "cash" : document.section === "bank" ? "bank" : "other",
         title: document.original_filename,
         subtitle:
           document.section === "bank"
             ? "Movimenti bancari"
-            : document.section === "cash"
+            : ["cash", "cash_closure"].includes(document.section)
               ? "Chiusura di cassa"
               : document.category,
         typeLabel: document.document_type,
@@ -701,7 +873,7 @@ if (uploaded) setActiveHistoryTab("other");
 
         <div className="upload-feedback-area">
           {uploading || documentUploading ? (
-            <p className="upload-feedback">Import in corso...</p>
+            <p className="upload-feedback">Caricamento in corso...</p>
           ) : null}
 
           {uploadMessage ? (
@@ -1043,26 +1215,7 @@ if (uploaded) setActiveHistoryTab("other");
 
             <div className="invoice-preview-body invoice-preview-body-only-document">
               <div className="invoice-preview-document full">
-                {selectedOtherDocumentUrls.length ? (
-                <div className="document-preview-scroll">
-                  {selectedOtherDocumentUrls.map((url, index) => (
-                    <img
-                      key={url}
-                      src={url}
-                      alt={`Pagina ${index + 1}`}
-                      className="document-preview-image"
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="invoice-preview-empty">
-                  <div>📎</div>
-                  <h3>Documento non disponibile</h3>
-                  <p>
-                    Il documento è stato salvato, ma non è disponibile un file di anteprima.
-                  </p>
-                </div>
-                )}
+                <DocumentPreview document={selectedOtherDocument} />
               </div>
             </div>
           </div>

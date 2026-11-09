@@ -212,7 +212,7 @@ export default function DashboardPage({
     <main className="main dashboard-page">
       <div className="dashboard-header">
         <div>
-          <h1 className="dashboard-title">Business Overview</h1>
+          <h1 className="dashboard-title">Panoramica attività</h1>
           <p className="dashboard-subtitle">
             Panoramica {monthLabel}
           </p>
@@ -225,7 +225,7 @@ export default function DashboardPage({
             onClick={onExportPdf}
             disabled={!onExportPdf}
           >
-            📄 Export PDF
+            📄 Esporta PDF
           </button>
 
           <Link to="/upload" className="dashboard-upload-btn">

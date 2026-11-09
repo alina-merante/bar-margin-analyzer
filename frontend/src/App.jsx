@@ -1558,7 +1558,7 @@ const overdueInvoicesAmount = useMemo(
   const latestPosUploadDate =
     overview?.latest_cash_closure_date ??
     documents
-      .filter((document) => document.section === "cash")
+      .filter((document) => ["cash", "cash_closure"].includes(document.section))
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.created_at ??
     null;
   const latestPosUploadDateIsCivil = Boolean(overview?.latest_cash_closure_date);
