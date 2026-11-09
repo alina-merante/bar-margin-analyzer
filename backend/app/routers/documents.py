@@ -1,5 +1,6 @@
 import csv
 import glob
+import hashlib
 import logging
 import os
 import uuid
@@ -13,10 +14,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import (
+    UPLOAD_DOCUMENTS_DIR, UPLOAD_PREVIEWS_DIR,
+    get_document_path, get_preview_path,
+    get_document_url, get_preview_url,
+    ensure_upload_dirs
+)
 from app.models.document import Document
+from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.transaction import Transaction
-from app.services import cash_closure_parser, document_ocr
+from app.services import cash_closure_parser, cash_closure_policy, document_ocr
 from app.time_utils import to_utc_iso
 
 import datetime as dt
@@ -104,12 +112,50 @@ def cash_closure_conflict(
 
 
 def find_existing_cash_closure(db: Session, extracted_data: dict) -> DailyCashClosure | None:
+    if extracted_data.get("date") is None or not extracted_data.get("closure_number"):
+        return None
     return db.scalar(
         select(DailyCashClosure).where(
             DailyCashClosure.date == extracted_data["date"],
             DailyCashClosure.closure_number == extracted_data["closure_number"],
         )
     )
+
+
+def find_duplicate_cash_intake(
+    db: Session,
+    source_sha256: str,
+    extracted_data: dict,
+) -> CashClosureIntake | None:
+    duplicate = db.scalar(
+        select(CashClosureIntake).where(CashClosureIntake.source_sha256 == source_sha256)
+    )
+    if duplicate is not None:
+        return duplicate
+
+    closure_date = extracted_data.get("date")
+    closure_number = extracted_data.get("closure_number")
+    if closure_date is None or not closure_number:
+        return None
+    return db.scalar(
+        select(CashClosureIntake).where(
+            CashClosureIntake.date == closure_date,
+            CashClosureIntake.closure_number == closure_number,
+            CashClosureIntake.status != "rejected",
+        )
+    )
+
+
+def json_safe(value):
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
 
 
 def is_cash_closure_unique_violation(exc: IntegrityError) -> bool | None:
@@ -124,8 +170,8 @@ def is_cash_closure_unique_violation(exc: IntegrityError) -> bool | None:
 def remove_created_upload_files(created_paths: list[str], stored_stem: str) -> None:
     # stored_stem is a fresh uuid, so these globs only match files of this attempt.
     paths = set(created_paths)
-    paths.update(glob.glob(os.path.join("uploads", "previews", f"{stored_stem}.*")))
-    paths.update(glob.glob(os.path.join("uploads", "previews", f"{stored_stem}_*.png")))
+    paths.update(glob.glob(os.path.join(UPLOAD_PREVIEWS_DIR, f"{stored_stem}.*")))
+    paths.update(glob.glob(os.path.join(UPLOAD_PREVIEWS_DIR, f"{stored_stem}_*.png")))
 
     for path in paths:
         try:
@@ -141,10 +187,10 @@ def create_text_preview_image(
     extension: str,
     stored_stem: str,
 ) -> str | None:
-    os.makedirs("uploads/previews", exist_ok=True)
+    ensure_upload_dirs()
 
     preview_filename = f"{stored_stem}.png"
-    preview_path = os.path.join("uploads", "previews", preview_filename)
+    preview_path = get_preview_path(preview_filename)
 
     text = content.decode("utf-8-sig", errors="replace")
 
@@ -184,7 +230,7 @@ def create_text_preview_image(
 
     image.save(preview_path, "PNG")
 
-    return f"/uploads/previews/{preview_filename}"
+    return get_preview_url(preview_filename)
 
 
 def create_pdf_preview_images(
@@ -192,7 +238,7 @@ def create_pdf_preview_images(
     stored_stem: str,
 ) -> str | None:
     try:
-        os.makedirs("uploads/previews", exist_ok=True)
+        ensure_upload_dirs()
 
         pages = convert_from_bytes(content, dpi=130)
 
@@ -200,12 +246,12 @@ def create_pdf_preview_images(
 
         for index, page in enumerate(pages):
             preview_filename = f"{stored_stem}_{index + 1}.png"
-            preview_path = os.path.join("uploads", "previews", preview_filename)
+            preview_path = get_preview_path(preview_filename)
 
             page.thumbnail((1200, 1600))
             page.save(preview_path, "PNG")
 
-            preview_urls.append(f"/uploads/previews/{preview_filename}")
+            preview_urls.append(get_preview_url(preview_filename))
 
         if not preview_urls:
             return None
@@ -241,13 +287,12 @@ def create_bank_document(
     document_month = single_month_from_bank_csv(content) or month
     stored_filename = f"{uuid.uuid4()}.csv"
     stored_stem = stored_filename.rsplit(".", 1)[0]
-    file_path = os.path.join("uploads", "documents", stored_filename)
-    preview_path = os.path.join("uploads", "previews", f"{stored_stem}.png")
+    file_path = get_document_path(stored_filename)
+    preview_path = get_preview_path(f"{stored_stem}.png")
     created_paths = [file_path, preview_path]
 
     try:
-        os.makedirs("uploads/documents", exist_ok=True)
-        os.makedirs("uploads/previews", exist_ok=True)
+        ensure_upload_dirs()
         with open(file_path, "wb") as output:
             output.write(content)
 
@@ -265,8 +310,8 @@ def create_bank_document(
             document_type="CSV",
             category=category,
             result=result,
-            file_url=f"/uploads/documents/{stored_filename}",
-            preview_url=preview_url or f"/uploads/documents/{stored_filename}",
+            file_url=get_document_url(stored_filename),
+            preview_url=preview_url or get_document_url(stored_filename),
             status="Elaborato",
             section="bank",
         )
@@ -423,12 +468,15 @@ async def upload_document(
     extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     document_month = month
     extracted_data = None
+    cash_classification = None
+    source_sha256 = None
     cash_warnings: list[str] = []
 
     if section == "bank" and extension == "csv":
         document_month = single_month_from_bank_csv(content) or month
 
     if section in {"cash", "cash_closure"}:
+        source_sha256 = hashlib.sha256(content).hexdigest()
         try:
             extracted_data = extract_daily_cash_closure(content, extension)
         except document_ocr.DocumentReadError:
@@ -439,53 +487,45 @@ async def upload_document(
                     "Carica un'immagine o un PDF valido e più leggibile."
                 ),
             )
-        if extracted_data["date"] is None:
+        cash_classification = cash_closure_policy.classify_closure(extracted_data)
+        if cash_classification == cash_closure_policy.REJECT:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Data della chiusura non rilevata o non valida. "
-                    "Carica un'immagine o un PDF più leggibile."
-                ),
-            )
-        if not extracted_data["closure_number"]:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Numero di chiusura non rilevato. "
-                    "Carica un'immagine o un PDF più leggibile."
-                ),
-            )
-        if extracted_data["total_amount"] is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Totale della chiusura non rilevato. "
-                    "Carica un'immagine o un PDF più leggibile."
+                    "Il documento non contiene evidenze sufficienti per riconoscere "
+                    "una chiusura di cassa."
                 ),
             )
         existing_closure = find_existing_cash_closure(db, extracted_data)
         if existing_closure:
             raise cash_closure_conflict(extracted_data, existing_closure)
-        cash_warnings = build_cash_closure_warnings(extracted_data)
-        cash_warnings.extend(
-            possible_duplicate_warnings(
-                find_possible_duplicate_cash_closures(db, extracted_data)
+        duplicate_intake = find_duplicate_cash_intake(db, source_sha256, extracted_data)
+        if duplicate_intake:
+            raise HTTPException(
+                status_code=409,
+                detail="Questo documento o questa chiusura è già stata importata.",
             )
-        )
+        cash_warnings = build_cash_closure_warnings(extracted_data)
+        if extracted_data.get("date") is not None and extracted_data.get("total_amount") is not None:
+            cash_warnings.extend(
+                possible_duplicate_warnings(
+                    find_possible_duplicate_cash_closures(db, extracted_data)
+                )
+            )
 
-    os.makedirs("uploads/documents", exist_ok=True)
+    ensure_upload_dirs()
 
     stored_filename = f"{uuid.uuid4()}.{extension}"
     stored_stem = stored_filename.rsplit(".", 1)[0]
 
-    file_path = os.path.join("uploads", "documents", stored_filename)
+    file_path = get_document_path(stored_filename)
     created_paths = [file_path]
 
     try:
         with open(file_path, "wb") as output:
             output.write(content)
 
-        file_url = f"/uploads/documents/{stored_filename}"
+        file_url = get_document_url(stored_filename)
         preview_url = file_url
         generated_preview_url = None
 
@@ -508,7 +548,7 @@ async def upload_document(
 
         category, result = classify_document(file.filename)
 
-        if extracted_data:
+        if extracted_data and extracted_data.get("date") is not None:
             document_month = extracted_data["date"].strftime("%Y-%m")
 
         document = Document(
@@ -520,7 +560,11 @@ async def upload_document(
             result=result,
             file_url=file_url,
             preview_url=preview_url,
-            status="Elaborato",
+            status=(
+                "Da verificare"
+                if cash_classification == cash_closure_policy.SAVE_FOR_REVIEW
+                else "Elaborato"
+            ),
             section=section,
         )
 
@@ -528,23 +572,36 @@ async def upload_document(
         db.flush()
 
         if extracted_data:
-            db.add(
-                DailyCashClosure(
+            closure = None
+            intake_status = "pending"
+            if cash_classification == cash_closure_policy.AUTO_SAVE:
+                closure = DailyCashClosure(
                     date=extracted_data["date"],
                     closure_number=extracted_data["closure_number"],
                     total_amount=extracted_data["total_amount"],
-                    cash_amount=(
-                        extracted_data["cash_amount"]
-                        if extracted_data["cash_amount"] is not None
-                        else Decimal("0.00")
-                    ),
-                    card_amount=(
-                        extracted_data["card_amount"]
-                        if extracted_data["card_amount"] is not None
-                        else Decimal("0.00")
-                    ),
+                    cash_amount=extracted_data["cash_amount"],
+                    card_amount=extracted_data["card_amount"],
                     receipts_count=extracted_data["receipts_count"],
                     document_id=document.id,
+                )
+                db.add(closure)
+                intake_status = "approved"
+
+            diagnostics = extracted_data.get("diagnostics") or {}
+            db.add(
+                CashClosureIntake(
+                    document_id=document.id,
+                    closure=closure,
+                    source_sha256=source_sha256,
+                    classification=cash_classification,
+                    status=intake_status,
+                    date=extracted_data.get("date"),
+                    closure_number=extracted_data.get("closure_number"),
+                    total_amount=extracted_data.get("total_amount"),
+                    cash_amount=extracted_data.get("cash_amount"),
+                    card_amount=extracted_data.get("card_amount"),
+                    ocr_values=json_safe(extracted_data),
+                    anomalies=list(diagnostics.get("anomalies") or []),
                 )
             )
 
@@ -555,9 +612,19 @@ async def upload_document(
 
         if extracted_data and isinstance(exc, IntegrityError):
             is_unique_violation = is_cash_closure_unique_violation(exc)
+            duplicate_intake = find_duplicate_cash_intake(
+                db,
+                source_sha256 or "",
+                extracted_data,
+            )
             existing_closure = find_existing_cash_closure(db, extracted_data)
             # Without a constraint name (non-PostgreSQL), fall back to checking
             # that the competing closure now exists.
+            if duplicate_intake is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Questo documento o questa chiusura è già stata importata.",
+                ) from exc
             if is_unique_violation or (
                 is_unique_violation is None and existing_closure is not None
             ):
@@ -566,10 +633,11 @@ async def upload_document(
 
     db.refresh(document)
 
-    cash_date = extracted_data["date"] if extracted_data else None
+    cash_date = extracted_data.get("date") if extracted_data else None
     response = document_to_dict(document, cash_date=cash_date)
     if extracted_data:
         response["warnings"] = cash_warnings
+        response["cash_closure_classification"] = cash_classification
         if extracted_data.get("diagnostics"):
             response["extraction"] = cash_closure_parser.public_summary(
                 extracted_data["diagnostics"]
@@ -650,6 +718,12 @@ def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
     cash_closures = db.scalars(
         select(DailyCashClosure).where(DailyCashClosure.document_id == document.id)
     ).all()
+
+    intakes = db.scalars(
+        select(CashClosureIntake).where(CashClosureIntake.document_id == document.id)
+    ).all()
+    for intake in intakes:
+        db.delete(intake)
 
     for cash_closure in cash_closures:
         db.delete(cash_closure)

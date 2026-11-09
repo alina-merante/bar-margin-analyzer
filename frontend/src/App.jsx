@@ -199,6 +199,7 @@ export default function App() {
   const [invoiceReconciliationMessage, setInvoiceReconciliationMessage] = useState("");
 
   const [documents, setDocuments] = useState([]);
+  const [cashClosureReviews, setCashClosureReviews] = useState([]);
 
   const [documentUploadMessage, setDocumentUploadMessage] = useState("");
   const [documentUploadError, setDocumentUploadError] = useState(null);
@@ -1340,11 +1341,44 @@ export default function App() {
   }
 
   async function loadDocuments(selectedMonth = month) {
-  const documentsData = await fetchJsonOrThrow(
-    `/api/documents?month=${selectedMonth}`
-  );
+  const [documentsData, reviewsData] = await Promise.all([
+    fetchJsonOrThrow(`/api/documents?month=${selectedMonth}`),
+    fetchJsonOrThrow("/api/cash-closures/review"),
+  ]);
 
   setDocuments(safeArray(documentsData));
+  setCashClosureReviews(safeArray(reviewsData));
+}
+
+async function updateCashClosureReview(intakeId, action, payload) {
+  const isCorrection = action === "corrections";
+  const response = await fetch(
+    `/api/cash-closures/review/${intakeId}${isCorrection ? "" : `/${action}`}`,
+    {
+      method: isCorrection ? "PATCH" : "POST",
+      ...(isCorrection
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        : {}),
+    }
+  );
+  const result = await responseJsonOrThrow(response);
+  await Promise.all([loadDocuments(), loadDashboardData(month)]);
+  return result;
+}
+
+function handleCorrectCashClosure(intakeId, corrections) {
+  return updateCashClosureReview(intakeId, "corrections", corrections);
+}
+
+function handleApproveCashClosure(intakeId) {
+  return updateCashClosureReview(intakeId, "approve");
+}
+
+function handleRejectCashClosure(intakeId) {
+  return updateCashClosureReview(intakeId, "reject");
 }
 
 async function handleGenericDocumentUpload(file, section = "other") {
@@ -1607,6 +1641,10 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 invoiceCategories={invoiceCategories}
                 invoices={invoices}
                 documents={documents}
+                cashClosureReviews={cashClosureReviews}
+                handleCorrectCashClosure={handleCorrectCashClosure}
+                handleApproveCashClosure={handleApproveCashClosure}
+                handleRejectCashClosure={handleRejectCashClosure}
                 handleGenericDocumentUpload={handleGenericDocumentUpload}
                 handleDeleteDocument={handleDeleteDocument}
                 handleDeleteInvoice={handleDeleteInvoice}

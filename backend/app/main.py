@@ -8,6 +8,8 @@ from app.routers.health import router as health_router
 from app.routers.imports import router as imports_router
 from fastapi.staticfiles import StaticFiles
 from app.routers.documents import router as documents_router
+from app.routers.cash_closures import router as cash_closures_router
+from app.config import UPLOAD_BASE_PATH, ensure_upload_dirs
 
 from dotenv import load_dotenv
 import os
@@ -16,9 +18,8 @@ load_dotenv()
 
 app = FastAPI(title="Bar Margin Analyzer API")
 
-os.makedirs("uploads/invoices", exist_ok=True)
-os.makedirs("uploads/documents", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+ensure_upload_dirs()
+app.mount("/uploads", StaticFiles(directory=UPLOAD_BASE_PATH), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -36,6 +37,7 @@ app.include_router(categories_router)
 app.include_router(finance_router)
 app.include_router(analytics_router)
 app.include_router(documents_router)
+app.include_router(cash_closures_router)
 
 
 @app.get("/")

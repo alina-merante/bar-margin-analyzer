@@ -1,14 +1,4 @@
-"""Scenari della FUTURA politica AUTO_SAVE / SAVE_FOR_REVIEW / REJECT (Fase 3).
-
-Nessuna di queste regole è implementata: non esiste `classify_closure`, né lo stato
-"Da verificare", né colonne nullable. I test sono saltati e descrivono SOLO il
-comportamento desiderato, in attesa di decisione. Non fanno parte del comportamento
-attuale, documentato in test_cash_closure_parser.py.
-"""
-
-import pytest
-
-pytestmark = pytest.mark.skip(reason="Fase 3 non implementata: politica in attesa di decisione")
+"""Deterministic cash-closure classification scenarios."""
 
 HEAD = "DATA 03/11/2026\nNUM. CHIUSURA 5\n"
 
@@ -43,3 +33,36 @@ def test_save_for_review_when_total_chosen_only_by_arithmetic():
 
 def test_reject_when_required_fields_missing_or_unresolved():
     assert _classify("TOTALE GIORNALIERO 200,00") == "REJECT"
+
+
+def test_save_for_review_when_core_values_are_missing_but_closure_evidence_exists():
+    assert _classify("NUM. CHIUSURA 5\nTOTALE GIORNALIERO 200,00") == "SAVE_FOR_REVIEW"
+
+
+def test_save_for_review_when_total_uses_generic_label():
+    assert _classify(HEAD + "TOTALE 200,00") == "SAVE_FOR_REVIEW"
+
+
+def test_explicit_zeros_are_reliable_values():
+    assert (
+        _classify(
+            HEAD
+            + "TOTALE GIORNALIERO 0,00\nCONTANTI 0,00\nPOS 0,00"
+        )
+        == "AUTO_SAVE"
+    )
+
+
+def test_missing_diagnostics_never_certify_an_automatic_save():
+    import datetime as dt
+    from decimal import Decimal
+
+    from app.services.cash_closure_policy import classify_closure
+
+    assert classify_closure(
+        {
+            "date": dt.date(2026, 11, 3),
+            "closure_number": "5",
+            "total_amount": Decimal("200.00"),
+        }
+    ) == "SAVE_FOR_REVIEW"

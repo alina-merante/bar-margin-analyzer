@@ -23,8 +23,8 @@ class DailyCashClosure(Base):
     closure_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    cash_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
-    card_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    cash_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    card_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
 
     receipts_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

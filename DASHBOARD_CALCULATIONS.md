@@ -7,19 +7,22 @@ applicativo del P&L.
 
 I ricavi sono la somma delle chiusure di cassa comprese nel periodo selezionato.
 
-- Fonte: `DailyCashClosure.total_amount`.
+- Fonte: `DailyCashClosure.total_amount` (estratta via OCR dal documento di
+  chiusura).
 - Filtro temporale: `DailyCashClosure.date` compresa nel periodo.
 - Formula: `Revenue = somma(DailyCashClosure.total_amount)`.
 
-Le righe `SaleLine` sono usate per le analisi dei prodotti, ma non determinano
-il revenue del P&L.
+Le righe `SaleLine` sono usate per le analisi dei prodotti (top products,
+quantità vendute), ma non determinano il revenue del P&L. Il KPI revenue usa
+esclusivamente i dati estratti dalle fotografie di chiusura di cassa.
 
 Le chiusure importate dal normale endpoint `POST /documents/upload` hanno data e
 numero di chiusura validi e hanno superato il controllo duplicati
 (`UNIQUE(date, closure_number)`), quindi la stessa chiusura non viene sommata
-due volte. Il database non impedisce però un inserimento diretto con
-`closure_number` NULL. Se l'importo non viene estratto dal documento, la
-chiusura è salvata con totale `0.00` e contribuisce zero ai ricavi.
+due volte. Se l'OCR non riesce a estrarre l'importo totale, la chiusura entra in
+revisione e l'operatore deve correggere manualmente il dato prima dell'approva-
+zione. Il database non impedisce un inserimento diretto con `closure_number` NULL
+o `total_amount = 0.00`, ma questo non avviene tramite l'interfaccia di upload.
 
 ## 2. Costi
 

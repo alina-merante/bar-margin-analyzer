@@ -159,6 +159,26 @@ inclinazioni piccole; HEIC, CSV e XLSX non supportati per le chiusure; PDF con
 più chiusure rifiutati come ambigui; contanti/elettronici non rilevati non
 sono distinguibili da zero nel database.
 
+### Revisione e correzione chiusure (SAVE_FOR_REVIEW)
+
+Se l'OCR non riesce a estrarre con sicurezza tutti i campi, l'API salva la
+chiusura con lo stato `SAVE_FOR_REVIEW` nella tabella `cash_closure_intakes`:
+
+- Data ambigua (non è una data di calendario valida)
+- Campi obbligatori mancanti (numero, totale)
+- Importi incoerenti (totale ≠ contanti + carta)
+- Campi irrisolti (testo ambiguo, multipli candidati)
+
+L'interfaccia visualizza:
+
+- Anteprima dell'immagine originale
+- Sei campi editabili (data, numero, totale, contanti, carta, scontrini)
+- Pulsanti per approvare (collegare a `DailyCashClosure`) o rifiutare
+
+Dopo l'approvazione, i dati corretti vengono salvati in `DailyCashClosure` e
+la riga di revisione è marcata come processata. Le correzioni rimangono
+tracciate e non cancellabili.
+
 ### Storico documenti
 
 La colonna DATA usa date in formato italiano `GG/MM/AAAA` e rappresenta la data

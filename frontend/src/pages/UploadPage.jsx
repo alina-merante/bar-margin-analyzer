@@ -10,6 +10,10 @@ import {
   formatCivilDate,
   formatHistoryDate,
 } from "../historyDates.js";
+import {
+  buildCashClosureCorrections,
+  createCashClosureReviewForm,
+} from "../cashClosureReview.js";
 
 function formatHistoryEntryDate(value, kind) {
   if (!value) return "Nessun file caricato";
@@ -164,6 +168,172 @@ function getDocumentPreviewUrl(document) {
   return `/api${rawUrl}`;
 }
 
+function CashClosureReviewCard({
+  review,
+  onCorrect,
+  onApprove,
+  onReject,
+}) {
+  const [form, setForm] = useState(() => createCashClosureReviewForm(review));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setForm(createCashClosureReviewForm(review));
+  }, [review]);
+
+  const corrections = buildCashClosureCorrections(review, form);
+  const hasChanges = Object.keys(corrections).length > 0;
+  const diagnostics = review.ocr_values?.diagnostics?.fields || {};
+  const uncertainFields = Object.entries(diagnostics).filter(
+    ([, details]) =>
+      details.status !== "ok" ||
+      (Array.isArray(details.competing) && details.competing.length > 1)
+  );
+  const previewUrl = getDocumentPreviewUrl({ file_url: review.document.file_url });
+
+  async function submit(action) {
+    setBusy(true);
+    setError("");
+    try {
+      if (action === "correct") {
+        await onCorrect(review.id, corrections);
+      } else if (action === "approve") {
+        await onApprove(review.id);
+      } else {
+        await onReject(review.id);
+      }
+    } catch (requestError) {
+      setError(requestError.message || "Operazione non riuscita.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  return (
+    <article className="cash-review-card">
+      <header className="cash-review-heading">
+        <div>
+          <h3>{review.document.original_filename}</h3>
+          <p>Caricata il {new Date(review.created_at).toLocaleString("it-IT")}</p>
+        </div>
+        <a href={previewUrl} target="_blank" rel="noreferrer">
+          Apri documento originale
+        </a>
+      </header>
+
+      {uncertainFields.length > 0 ? (
+        <div className="cash-review-anomalies">
+          <strong>Campi da controllare</strong>
+          <ul>
+            {uncertainFields.map(([field, details]) => (
+              <li key={field}>
+                {field.replaceAll("_", " ")}: {details.status}
+                {details.alternatives?.length
+                  ? ` (${details.alternatives.join(" · ")})`
+                  : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {review.anomalies?.length ? (
+        <div className="cash-review-anomalies">
+          {review.anomalies.map((anomaly) => (
+            <div key={anomaly}>{anomaly}</div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="cash-review-fields">
+        <label>
+          Data
+          <input
+            type="date"
+            value={form.date}
+            onChange={(event) => updateField("date", event.target.value)}
+          />
+        </label>
+        <label>
+          Numero chiusura
+          <input
+            value={form.closure_number}
+            onChange={(event) => updateField("closure_number", event.target.value)}
+          />
+        </label>
+        <label>
+          Totale
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.total_amount}
+            onChange={(event) => updateField("total_amount", event.target.value)}
+          />
+        </label>
+        <label>
+          Contanti
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.cash_amount}
+            onChange={(event) => updateField("cash_amount", event.target.value)}
+          />
+        </label>
+        <label>
+          POS
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.card_amount}
+            onChange={(event) => updateField("card_amount", event.target.value)}
+          />
+        </label>
+      </div>
+      <p className="cash-review-hint">
+        Un campo vuoto significa importo non noto; inserisci 0,00 solo se il documento riporta zero.
+      </p>
+      {error ? <p className="cash-review-error" role="alert">{error}</p> : null}
+      <div className="cash-review-actions">
+        <button
+          type="button"
+          disabled={busy || !hasChanges}
+          onClick={() => submit("correct")}
+        >
+          Salva correzioni
+        </button>
+        <button
+          type="button"
+          disabled={
+            busy ||
+            hasChanges ||
+            !form.date ||
+            !form.closure_number.trim() ||
+            form.total_amount === ""
+          }
+          onClick={() => submit("approve")}
+        >
+          Approva
+        </button>
+        <button
+          type="button"
+          className="cash-review-reject"
+          disabled={busy}
+          onClick={() => submit("reject")}
+        >
+          Rifiuta
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export default function UploadPage({
   month,
   handleUpload,
@@ -178,6 +348,10 @@ export default function UploadPage({
   dismissUploadFeedback,
 
   documents = [],
+  cashClosureReviews = [],
+  handleCorrectCashClosure,
+  handleApproveCashClosure,
+  handleRejectCashClosure,
   handleGenericDocumentUpload,
   handleDeleteDocument,
   documentUploading,
@@ -710,6 +884,27 @@ if (uploaded) setActiveHistoryTab("other");
               </AlertBanner>
             ) : null}
           </article>
+        </div>
+      </section>
+
+      <section className="upload-section">
+        <div className="upload-history-card">
+          <h2>Chiusure da verificare</h2>
+          {cashClosureReviews.length ? (
+            <div className="cash-review-list">
+              {cashClosureReviews.map((review) => (
+                <CashClosureReviewCard
+                  key={review.id}
+                  review={review}
+                  onCorrect={handleCorrectCashClosure}
+                  onApprove={handleApproveCashClosure}
+                  onReject={handleRejectCashClosure}
+                />
+              ))}
+            </div>
+          ) : (
+            <p>Nessuna chiusura in attesa di verifica.</p>
+          )}
         </div>
       </section>
 

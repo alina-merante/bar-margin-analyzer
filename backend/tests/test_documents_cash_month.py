@@ -15,6 +15,7 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
 from app.models import (
+    CashClosureIntake,
     DailyCashClosure,
     Document,
     Invoice,
@@ -523,6 +524,15 @@ def test_cash_upload_uses_extracted_closure_month_for_document_history():
                 "cash_amount": Decimal("300.00"),
                 "card_amount": Decimal("645.80"),
                 "receipts_count": 42,
+                "diagnostics": {
+                    "anomalies": [],
+                    "total_label": "explicit",
+                    "fields": {
+                        "date": {"status": "ok"},
+                        "closure_number": {"status": "ok"},
+                        "total_amount": {"status": "ok"},
+                    },
+                },
             }
 
         documents_router.extract_daily_cash_closure = fake_extract_daily_cash_closure
@@ -570,6 +580,15 @@ def test_duplicate_cash_upload_returns_conflict_without_duplicating_revenue():
                 "cash_amount": Decimal("300.00"),
                 "card_amount": Decimal("645.80"),
                 "receipts_count": 42,
+                "diagnostics": {
+                    "anomalies": [],
+                    "total_label": "explicit",
+                    "fields": {
+                        "date": {"status": "ok"},
+                        "closure_number": {"status": "ok"},
+                        "total_amount": {"status": "ok"},
+                    },
+                },
             }
 
         documents_router.extract_daily_cash_closure = fake_extract_daily_cash_closure
@@ -620,6 +639,15 @@ def _fake_cash_data(content: bytes, extension: str) -> dict:
         "cash_amount": Decimal("40.00"),
         "card_amount": Decimal("60.00"),
         "receipts_count": 5,
+        "diagnostics": {
+            "anomalies": [],
+            "total_label": "explicit",
+            "fields": {
+                "date": {"status": "ok"},
+                "closure_number": {"status": "ok"},
+                "total_amount": {"status": "ok"},
+            },
+        },
     }
 
 
@@ -742,7 +770,7 @@ def test_cash_upload_refresh_failure_after_commit_keeps_records_and_files(
     assert len(_list_files("uploads")) == 3
 
 
-def test_cash_upload_without_closure_number_is_rejected_before_any_write(
+def test_cash_upload_without_closure_number_is_staged_for_review(
     cash_upload_env, monkeypatch
 ):
     monkeypatch.setattr(
@@ -752,24 +780,12 @@ def test_cash_upload_without_closure_number_is_rejected_before_any_write(
     )
 
     with Session(cash_upload_env) as session:
-        commits = []
-        flushes = []
-        monkeypatch.setattr(session, "commit", lambda: commits.append(1))
-        monkeypatch.setattr(session, "flush", lambda *a, **k: flushes.append(1))
-
-        with pytest.raises(HTTPException) as exc_info:
-            _upload_cash_pdf(session)
-
-        assert exc_info.value.status_code == 422
-        assert exc_info.value.detail == (
-            "Numero di chiusura non rilevato. "
-            "Carica un'immagine o un PDF più leggibile."
-        )
-        assert commits == [] and flushes == []
-        assert session.scalars(select(Document)).all() == []
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.status == "pending"
+        assert intake.closure_number is None
         assert session.scalars(select(DailyCashClosure)).all() == []
-
-    assert not os.path.exists("uploads") or _list_files("uploads") == []
 
 
 from sqlalchemy.exc import IntegrityError
@@ -917,12 +933,6 @@ def test_other_integrity_errors_are_not_reported_as_duplicate_closure(
     assert _list_files("uploads") == []
 
 
-DATE_ERROR_DETAIL = (
-    "Data della chiusura non rilevata o non valida. "
-    "Carica un'immagine o un PDF più leggibile."
-)
-
-
 def _extract_with_text(monkeypatch, text):
     monkeypatch.setattr(documents_router, "extract_text_from_document", lambda c, e: text)
     return documents_router.extract_daily_cash_closure(b"x", "png")
@@ -949,23 +959,7 @@ def test_extractor_returns_none_for_impossible_date_without_raising(monkeypatch)
     assert data["date"] is None
 
 
-def _assert_rejected_without_writes(session, monkeypatch, expected_detail):
-    commits, flushes = [], []
-    monkeypatch.setattr(session, "commit", lambda: commits.append(1))
-    monkeypatch.setattr(session, "flush", lambda *a, **k: flushes.append(1))
-
-    with pytest.raises(HTTPException) as exc_info:
-        _upload_cash_pdf(session)
-
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == expected_detail
-    assert commits == [] and flushes == []
-    assert session.scalars(select(Document)).all() == []
-    assert session.scalars(select(DailyCashClosure)).all() == []
-    assert not os.path.exists("uploads") or _list_files("uploads") == []
-
-
-def test_cash_upload_with_missing_date_is_rejected_before_any_write(
+def test_cash_upload_with_missing_date_is_staged_for_review(
     cash_upload_env, monkeypatch
 ):
     monkeypatch.setattr(
@@ -975,10 +969,15 @@ def test_cash_upload_with_missing_date_is_rejected_before_any_write(
     )
 
     with Session(cash_upload_env) as session:
-        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.status == "pending"
+        assert intake.date is None
+        assert session.scalars(select(DailyCashClosure)).all() == []
 
 
-def test_cash_upload_with_impossible_ocr_date_returns_422_not_500(
+def test_cash_upload_with_impossible_ocr_date_is_staged_for_review(
     cash_upload_env, monkeypatch
 ):
     # Real extractor, only the OCR text is controlled.
@@ -990,7 +989,12 @@ def test_cash_upload_with_impossible_ocr_date_returns_422_not_500(
     )
 
     with Session(cash_upload_env) as session:
-        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.status == "pending"
+        assert intake.date is None
+        assert session.scalars(select(DailyCashClosure)).all() == []
 
 
 _real_extractor = documents_router.extract_daily_cash_closure
@@ -1079,10 +1083,7 @@ def test_extractor_reads_real_closure_documents(
     assert data["receipts_count"] == receipts
 
 
-TOTAL_ERROR_DETAIL = (
-    "Totale della chiusura non rilevato. "
-    "Carica un'immagine o un PDF più leggibile."
-)
+
 
 
 def _upload_with_ocr_text(session, monkeypatch, text):
@@ -1091,7 +1092,7 @@ def _upload_with_ocr_text(session, monkeypatch, text):
     return _upload_cash_pdf(session)
 
 
-def test_cash_upload_with_missing_total_is_rejected_before_any_write(
+def test_cash_upload_with_missing_total_is_staged_for_review(
     cash_upload_env, monkeypatch
 ):
     monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
@@ -1102,10 +1103,15 @@ def test_cash_upload_with_missing_total_is_rejected_before_any_write(
     )
 
     with Session(cash_upload_env) as session:
-        _assert_rejected_without_writes(session, monkeypatch, TOTAL_ERROR_DETAIL)
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.status == "pending"
+        assert intake.total_amount is None
+        assert session.scalars(select(DailyCashClosure)).all() == []
 
 
-def test_cash_upload_missing_total_is_rejected_before_duplicate_check(
+def test_cash_upload_missing_total_still_checks_known_duplicate_key(
     cash_upload_env, monkeypatch
 ):
     with Session(cash_upload_env) as session:
@@ -1119,8 +1125,7 @@ def test_cash_upload_missing_total_is_rejected_before_duplicate_check(
         with pytest.raises(HTTPException) as exc_info:
             _upload_cash_pdf(session)
 
-    assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == TOTAL_ERROR_DETAIL
+    assert exc_info.value.status_code == 409
 
 
 def test_cash_upload_with_explicit_zero_total_is_saved_as_zero(
@@ -1135,8 +1140,8 @@ def test_cash_upload_with_explicit_zero_total_is_saved_as_zero(
         closure = session.scalars(select(DailyCashClosure)).one()
 
     assert closure.total_amount == Decimal("0.00")
-    assert closure.cash_amount == Decimal("0.00")
-    assert closure.card_amount == Decimal("0.00")
+    assert closure.cash_amount is None
+    assert closure.card_amount is None
 
 
 def test_cash_upload_total_from_corrisp_fallback_with_missing_cash_and_card(
@@ -1151,8 +1156,8 @@ def test_cash_upload_total_from_corrisp_fallback_with_missing_cash_and_card(
         closure = session.scalars(select(DailyCashClosure)).one()
 
     assert closure.total_amount == Decimal("1124.20")
-    assert closure.cash_amount == Decimal("0.00")
-    assert closure.card_amount == Decimal("0.00")
+    assert closure.cash_amount is None
+    assert closure.card_amount is None
 
 
 NO_CASH_WARNING = "Contanti non rilevati: verifica l'importo sul documento originale."
@@ -1170,7 +1175,9 @@ def _upload_with_amounts(cash_upload_env, monkeypatch, amounts, closure_number="
     lines += amounts
     payload = _upload_with_ocr_text_session(cash_upload_env, monkeypatch, "\n".join(lines))
     with Session(cash_upload_env) as session:
-        closure = session.scalars(select(DailyCashClosure)).one()
+        closure = session.scalar(select(DailyCashClosure))
+        if closure is None:
+            return payload, None
         return payload, (closure.total_amount, closure.cash_amount, closure.card_amount)
 
 
@@ -1186,7 +1193,7 @@ def test_warning_when_cash_missing(cash_upload_env, monkeypatch):
         ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 100,00"],
     )
     assert payload["warnings"] == [NO_CASH_WARNING]
-    assert saved == (Decimal("100.00"), Decimal("0.00"), Decimal("100.00"))
+    assert saved == (Decimal("100.00"), None, Decimal("100.00"))
 
 
 def test_warning_when_card_missing(cash_upload_env, monkeypatch):
@@ -1194,7 +1201,7 @@ def test_warning_when_card_missing(cash_upload_env, monkeypatch):
         cash_upload_env, monkeypatch, ["AMMONTARE GIORNO 100,00", "AMMONTARE 100,00"]
     )
     assert payload["warnings"] == [NO_CARD_WARNING]
-    assert saved == (Decimal("100.00"), Decimal("100.00"), Decimal("0.00"))
+    assert saved == (Decimal("100.00"), Decimal("100.00"), None)
 
 
 def test_two_warnings_when_cash_and_card_missing_and_no_mismatch_warning(
@@ -1204,7 +1211,7 @@ def test_two_warnings_when_cash_and_card_missing_and_no_mismatch_warning(
         cash_upload_env, monkeypatch, ["AMMONTARE GIORNO 100,00"]
     )
     assert payload["warnings"] == [NO_CASH_WARNING, NO_CARD_WARNING]
-    assert saved == (Decimal("100.00"), Decimal("0.00"), Decimal("0.00"))
+    assert saved == (Decimal("100.00"), None, None)
 
 
 def test_explicit_zero_amounts_do_not_warn_as_not_detected(cash_upload_env, monkeypatch):
@@ -1218,12 +1225,14 @@ def test_explicit_zero_amounts_do_not_warn_as_not_detected(cash_upload_env, monk
 
 
 def test_warning_when_total_differs_from_payments_sum(cash_upload_env, monkeypatch):
-    payload, _ = _upload_with_amounts(
+    payload, saved = _upload_with_amounts(
         cash_upload_env,
         monkeypatch,
         ["AMMONTARE GIORNO 100,00", "PAGAM, ELETTRONICI 60,00", "AMMONTARE 30,00"],
     )
     assert payload["warnings"] == [MISMATCH_WARNING]
+    assert payload["cash_closure_classification"] == "SAVE_FOR_REVIEW"
+    assert saved is None
 
 
 def test_no_warning_when_total_matches_payments_sum(cash_upload_env, monkeypatch):
@@ -1304,7 +1313,7 @@ def test_extractor_rejects_unreadable_or_ambiguous_amounts(monkeypatch, text):
     assert data["total_amount"] is None
 
 
-def test_cash_upload_with_ambiguous_date_is_rejected_before_any_write(cash_upload_env, monkeypatch):
+def test_cash_upload_with_ambiguous_date_is_staged_for_review(cash_upload_env, monkeypatch):
     monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
     monkeypatch.setattr(
         documents_router,
@@ -1313,10 +1322,14 @@ def test_cash_upload_with_ambiguous_date_is_rejected_before_any_write(cash_uploa
     )
 
     with Session(cash_upload_env) as session:
-        _assert_rejected_without_writes(session, monkeypatch, DATE_ERROR_DETAIL)
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.date is None
+        assert session.scalars(select(DailyCashClosure)).all() == []
 
 
-def test_cash_upload_with_unreadable_total_is_not_saved(cash_upload_env, monkeypatch):
+def test_cash_upload_with_unreadable_total_is_staged(cash_upload_env, monkeypatch):
     monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
     monkeypatch.setattr(
         documents_router,
@@ -1325,11 +1338,12 @@ def test_cash_upload_with_unreadable_total_is_not_saved(cash_upload_env, monkeyp
     )
 
     with Session(cash_upload_env) as session:
-        with pytest.raises(HTTPException) as exc_info:
-            _upload_cash_pdf(session)
-        assert exc_info.value.status_code == 422
+        result = _upload_cash_pdf(session)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert result["status"] == "Da verificare"
+        assert intake.total_amount is None
+        assert intake.status == "pending"
         assert session.scalars(select(DailyCashClosure)).all() == []
-        assert session.scalars(select(Document)).all() == []
 
 
 def test_two_closures_same_day_are_saved_and_exact_duplicate_is_rejected(cash_upload_env, monkeypatch):
@@ -1338,7 +1352,20 @@ def test_two_closures_same_day_are_saved_and_exact_duplicate_is_rejected(cash_up
     def upload(number):
         text = f"NUM. CHIUSURA {number}\nDATA 14-07-26\nAMMONTARE GIORNO 100,00"
         with Session(cash_upload_env) as session:
-            return _upload_with_ocr_text(session, monkeypatch, text)
+            monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _real_extractor)
+            monkeypatch.setattr(
+                documents_router,
+                "extract_text_from_document",
+                lambda content, extension: content.decode("utf-8"),
+            )
+            return __import__("asyncio").run(
+                documents_router.upload_document(
+                    file=UploadFile(file=BytesIO(text.encode("utf-8")), filename="closure.txt"),
+                    month="2026-09",
+                    section="cash",
+                    db=session,
+                )
+            )
 
     upload("501")
     upload("502")

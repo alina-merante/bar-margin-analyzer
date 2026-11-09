@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import UPLOAD_INVOICES_DIR, ensure_upload_dirs
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
 from app.services.ai_invoice_parser import parse_invoice_with_llm
 from app.services.invoice_status import get_invoice_payment_status
@@ -1133,9 +1134,9 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             ):
                 raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
 
-            os.makedirs("uploads/invoices", exist_ok=True)
+            ensure_upload_dirs()
             safe_filename = f"{uuid.uuid4()}.{extension}"
-            file_path = os.path.join("uploads", "invoices", safe_filename)
+            file_path = os.path.join(UPLOAD_INVOICES_DIR, safe_filename)
             with open(file_path, "wb") as output:
                 output.write(content)
             file_url = f"/uploads/invoices/{safe_filename}"

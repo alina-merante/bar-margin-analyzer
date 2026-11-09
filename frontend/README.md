@@ -62,6 +62,32 @@ La variante `warning` (arancione) è prevista per avvisi non bloccanti.
 
 I test frontend si eseguono con `npm --prefix frontend test`.
 
+## Flusso OCR e revisione chiusure di cassa
+
+L'applicazione supporta il caricamento di fotografie di chiusure di cassa in PDF
+o PNG. Il backend estrae automaticamente sei campi mediante OCR:
+
+- Data chiusura (GG/MM/YYYY)
+- Numero chiusura
+- Importo totale (in €)
+- Importo contanti (in €)
+- Importo carta/POS (in €)
+- Numero scontrini emessi
+
+**Flusso AUTO_SAVE:** Se tutti i campi sono estratti correttamente e coerenti
+(importo totale = contanti + carta), il record viene salvato automaticamente.
+
+**Flusso SAVE_FOR_REVIEW:** Se mancano campi, ci sono incoerenze negli importi,
+o la data è ambigua, il record viene messo in revisione. L'operatore può:
+
+1. Visualizzare l'anteprima dell'immagine
+2. Correggere manualmente i campi non estratti o errati
+3. Approvare e collegare la chiusura ai dati effettivi del registratore
+4. Rifiutare e marcare come non applicabile
+
+I dati estratti e corretti vengono salvati nel database con timestamp e
+tracciamento delle modifiche.
+
 ## Build e lint
 
 ```bash

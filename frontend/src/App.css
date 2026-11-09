@@ -4654,6 +4654,114 @@ body {
   border-radius: 14px;
   background: white;
 }
+
+.cash-review-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.cash-review-card {
+  padding: 20px;
+  border: 1px solid #e8c99e;
+  border-left: 5px solid #d18a3d;
+  border-radius: 16px;
+  background: #fffaf3;
+}
+
+.cash-review-heading,
+.cash-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cash-review-heading h3 {
+  margin: 0 0 4px;
+  color: var(--espresso);
+}
+
+.cash-review-heading p,
+.cash-review-hint {
+  margin: 0;
+  color: var(--text-mid);
+  font-size: 13px;
+}
+
+.cash-review-anomalies {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fff0d9;
+  color: #694516;
+  font-size: 14px;
+}
+
+.cash-review-anomalies ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.cash-review-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.cash-review-fields label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cash-review-fields input {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  color: var(--text-dark);
+}
+
+.cash-review-hint {
+  margin-top: 10px;
+}
+
+.cash-review-actions {
+  justify-content: flex-start;
+  margin-top: 14px;
+}
+
+.cash-review-actions button {
+  padding: 9px 14px;
+  border: 1px solid #b66b27;
+  border-radius: 8px;
+  background: #b66b27;
+  color: white;
+  cursor: pointer;
+}
+
+.cash-review-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cash-review-actions .cash-review-reject {
+  border-color: #b34a42;
+  background: white;
+  color: #9c342e;
+}
+
+.cash-review-error {
+  margin: 10px 0 0;
+  color: #9c342e;
+}
+
 .sidebar,
 .sidebar-bottom,
 .month-selector {

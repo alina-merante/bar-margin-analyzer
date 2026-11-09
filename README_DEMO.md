@@ -86,6 +86,30 @@ Nella pagina Upload, sezione chiusura di cassa:
 4. Caricare un documento in cui la data non è leggibile: compare il banner
    "Dati non validi" con il motivo del rifiuto (HTTP 422).
 
+### Test del flusso OCR e revisione
+
+Per testare l'estrazione OCR:
+
+1. Preparare una fotografia di una chiusura di cassa (PDF o PNG). I test
+   forniti in `data/` contengono esempi sintetici.
+2. Dalla pagina Upload, caricare il file nella sezione "Chiusura di cassa".
+3. Se l'OCR estrae con sicurezza tutti i campi (data, numero, importi coerenti),
+   la chiusura viene salvata automaticamente con un banner di successo.
+4. Se mancano campi o gli importi sono incoerenti, il file entra in revisione:
+   - Comparirà una riga nella sezione di revisione con l'anteprima
+   - I campi estratti (o vuoti) sono editabili
+   - Correggere i dati se necessario
+   - Cliccare "Approva" per salvare, oppure "Rifiuta" per scartare
+5. Dopo l'approvazione, la chiusura viene collegata ai dati finali e appare nel
+   dashboard nella sezione KPI con la data e gli importi confermati.
+
+Limiti noti del test:
+
+- L'OCR è stato verificato su immagini sintetiche; la precisione su documenti
+  reali da registratori diversi non è garantita.
+- Il parser concentra l'estrazione su sei campi: data, numero, totale, contanti,
+  carta e numero scontrini. Campi aggiuntivi non sono estratti.
+
 ## Clean bootstrap
 
 Per verificare schema, endpoint e build frontend usando risorse temporanee:

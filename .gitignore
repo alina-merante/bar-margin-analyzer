@@ -19,3 +19,5 @@ dist/
 .venv/
 .uvicorn.log
 .uvicorn.pid
+# Local database backups
+backups/

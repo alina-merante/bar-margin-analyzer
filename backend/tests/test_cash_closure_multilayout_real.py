@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
-from app.models import DailyCashClosure
+from app.models import CashClosureIntake, DailyCashClosure, Document
 from app.routers import documents as documents_router
 
 pytesseract = pytest.importorskip("pytesseract")
@@ -330,7 +330,7 @@ def _upload_png(session, image):
     )
 
 
-def test_upload_missing_cash_is_flagged_and_current_limit_is_documented(upload_env):
+def test_upload_missing_cash_is_flagged_and_saved_as_null(upload_env):
     image = render(["NUM. CHIUSURA 88", "DATA 03/11/2026", "TOTALE GIORNALIERO 200,00", "POS 200,00"])
     with Session(upload_env) as session:
         payload = _upload_png(session, image)
@@ -338,20 +338,21 @@ def test_upload_missing_cash_is_flagged_and_current_limit_is_documented(upload_e
     assert "cash_amount" in payload["extraction"]["unresolved_fields"]
     assert any("Contanti non rilevati" in w for w in payload["warnings"])
     assert closure.total_amount == Decimal("200.00")
-    # LIMITE NOTO: colonna NOT NULL, il valore mancante viene persistito come 0.00.
-    # Questo test documenta lo stato attuale; la decisione è rinviata (alternative A/B).
-    assert closure.cash_amount == Decimal("0.00")
+    assert closure.cash_amount is None
 
 
-def test_upload_conflicting_total_is_rejected_and_nothing_is_saved(upload_env):
+def test_upload_conflicting_total_is_staged_for_review(upload_env):
     image = render(
         ["NUM. CHIUSURA 91", "DATA 03/11/2026", "TOTALE GIORNALIERO 200,00", "TOTALE INCASSI 230,00", "POS 100,00"]
     )
     with Session(upload_env) as session:
-        with pytest.raises(HTTPException) as error:
-            _upload_png(session, image)
-        assert error.value.status_code == 422
+        payload = _upload_png(session, image)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert payload["status"] == "Da verificare"
+        assert intake.status == "pending"
+        assert intake.total_amount is None
         assert session.scalars(select(DailyCashClosure)).all() == []
+        assert len(session.scalars(select(Document)).all()) == 1
 
 
 def test_upload_same_closure_twice_is_conflict(upload_env):
@@ -434,12 +435,12 @@ def test_real_case_f_explicit_zero_cash_is_zero_not_missing():
     assert "cash_amount" not in result["diagnostics"]["unresolved_fields"]
 
 
-def test_upload_total_only_is_saved_with_current_limit_and_exposes_missing_breakdown(upload_env):
+def test_upload_total_only_is_saved_with_null_breakdown(upload_env):
     image = render(H51 + ["TOTALE GIORNALIERO 200,00"])
     with Session(upload_env) as session:
         payload = _upload_png(session, image)
         closure = session.scalars(select(DailyCashClosure)).one()
     assert closure.total_amount == Decimal("200.00")
     assert {"cash_amount", "card_amount"} <= set(payload["extraction"]["unresolved_fields"])
-    # LIMITE ATTUALE (colonne NOT NULL): il mancante è persistito come 0.00.
-    assert (closure.cash_amount, closure.card_amount) == (Decimal("0.00"), Decimal("0.00"))
+    assert closure.cash_amount is None
+    assert closure.card_amount is None

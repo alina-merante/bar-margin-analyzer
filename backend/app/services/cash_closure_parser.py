@@ -565,11 +565,11 @@ class ClosureExtraction:
 def public_summary(diagnostics: dict) -> dict:
     """Parte serializzabile della diagnostica, restituita dall'API."""
     return {
-        "second_read": diagnostics["second_read"],
-        "unresolved_fields": diagnostics["unresolved_fields"],
-        "anomalies": diagnostics["anomalies"],
+        "second_read": diagnostics.get("second_read", "unavailable"),
+        "unresolved_fields": diagnostics.get("unresolved_fields", []),
+        "anomalies": diagnostics.get("anomalies", []),
         "other_payments": [
             {"label": item["label"], "amount": str(item["amount"])}
-            for item in diagnostics["other_payments"]
+            for item in diagnostics.get("other_payments", [])
         ],
     }
