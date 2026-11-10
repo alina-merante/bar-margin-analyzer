@@ -76,7 +76,12 @@ def test_pending_review_is_excluded_until_approved_and_repeated_approval_counts_
     review_session,
 ):
     document = create_document(review_session)
-    intake = create_intake(review_session, document, cash_amount=Decimal("0.00"))
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=Decimal("0.00"),
+        card_amount=Decimal("200.00"),
+    )
 
     before = monthly_pnl(review_session, dt.date(2026, 11, 1), dt.date(2026, 12, 1))
     assert before["revenue"] == Decimal("0.00")
@@ -89,8 +94,99 @@ def test_pending_review_is_excluded_until_approved_and_repeated_approval_counts_
     assert approved["closure_id"] == again["closure_id"]
     assert len(closures) == 1
     assert closures[0].cash_amount == Decimal("0.00")
-    assert closures[0].card_amount is None
+    assert closures[0].card_amount == Decimal("200.00")
+    assert approved["unallocated_amount"] is None
     assert after["revenue"] == Decimal("200.00")
+
+
+def test_approval_allows_exact_payment_breakdown(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=Decimal("80.00"),
+        card_amount=Decimal("120.00"),
+    )
+
+    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert approved["status"] == "approved"
+    assert approved["unallocated_amount"] is None
+
+
+def test_approval_allows_explicit_zero_total_and_payments(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        total_amount=Decimal("0.00"),
+        cash_amount=Decimal("0.00"),
+        card_amount=Decimal("0.00"),
+    )
+
+    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert approved["status"] == "approved"
+    assert approved["unallocated_amount"] is None
+
+
+def test_approval_rejects_payment_breakdown_above_total(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=Decimal("100.01"),
+        card_amount=Decimal("100.00"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert error.value.status_code == 422
+    assert "contanti e POS" in error.value.detail
+    assert review_session.scalars(select(DailyCashClosure)).all() == []
+    review_session.refresh(intake)
+    assert intake.status == "pending"
+
+
+def test_approval_reports_amount_below_total_as_unallocated(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=Decimal("75.00"),
+        card_amount=Decimal("100.00"),
+    )
+
+    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert approved["status"] == "approved"
+    assert approved["unallocated_amount"] == "25.00"
+
+
+@pytest.mark.parametrize(
+    ("cash_amount", "card_amount"),
+    [
+        (None, Decimal("200.00")),
+        (Decimal("200.00"), None),
+        (None, None),
+    ],
+)
+def test_approval_allows_unknown_payment_amounts(
+    review_session, cash_amount, card_amount
+):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=cash_amount,
+        card_amount=card_amount,
+    )
+
+    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert approved["status"] == "approved"
+    assert approved["unallocated_amount"] is None
 
 
 def test_approval_requires_date_number_and_total(review_session):
@@ -169,6 +265,38 @@ def test_correction_and_manual_rejection(review_session):
     rejected = cash_closures.reject_cash_closure_review(intake.id, review_session)
     assert rejected == {"id": intake.id, "status": "rejected"}
     assert review_session.scalars(select(DailyCashClosure)).all() == []
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [Decimal("-0.01"), Decimal("1.001")],
+)
+def test_correction_rejects_invalid_payment_amount(review_session, amount):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+
+    with pytest.raises(HTTPException) as error:
+        cash_closures.correct_cash_closure_review(
+            intake.id,
+            cash_closures.CashClosureCorrection(cash_amount=amount),
+            review_session,
+        )
+
+    assert error.value.status_code == 422
+
+
+def test_approval_with_explicit_zero_payments_reports_total_unallocated(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session,
+        document,
+        cash_amount=Decimal("0.00"),
+        card_amount=Decimal("0.00"),
+    )
+
+    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+
+    assert approved["unallocated_amount"] == "200.00"
 
 
 def test_review_api_exposes_original_document_and_ocr_anomalies(review_session):

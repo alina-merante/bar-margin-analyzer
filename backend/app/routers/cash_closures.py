@@ -25,6 +25,11 @@ class CashClosureCorrection(BaseModel):
 
 def intake_to_dict(intake: CashClosureIntake) -> dict:
     document = intake.document
+    unallocated_amount = unallocated_payment_amount(
+        intake.total_amount,
+        intake.cash_amount,
+        intake.card_amount,
+    )
     return {
         "id": intake.id,
         "status": intake.status,
@@ -34,6 +39,9 @@ def intake_to_dict(intake: CashClosureIntake) -> dict:
         "total_amount": str(intake.total_amount) if intake.total_amount is not None else None,
         "cash_amount": str(intake.cash_amount) if intake.cash_amount is not None else None,
         "card_amount": str(intake.card_amount) if intake.card_amount is not None else None,
+        "unallocated_amount": (
+            str(unallocated_amount) if unallocated_amount is not None else None
+        ),
         "anomalies": intake.anomalies,
         "ocr_values": intake.ocr_values,
         "created_at": intake.created_at.isoformat(),
@@ -65,6 +73,33 @@ def validate_money(name: str, amount: Decimal | None) -> None:
         raise HTTPException(
             status_code=422,
             detail=f"{name} must be a non-negative amount with at most two decimal places",
+        )
+
+
+def unallocated_payment_amount(
+    total_amount: Decimal | None,
+    cash_amount: Decimal | None,
+    card_amount: Decimal | None,
+) -> Decimal | None:
+    if total_amount is None or cash_amount is None or card_amount is None:
+        return None
+    difference = total_amount - cash_amount - card_amount
+    return difference if difference > 0 else None
+
+
+def validate_payment_breakdown(
+    total_amount: Decimal,
+    cash_amount: Decimal | None,
+    card_amount: Decimal | None,
+) -> None:
+    if (
+        cash_amount is not None
+        and card_amount is not None
+        and cash_amount + card_amount > total_amount
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="La somma di contanti e POS non può superare il totale della chiusura.",
         )
 
 
@@ -147,6 +182,11 @@ def approve_cash_closure_review(
     validate_money("total_amount", intake.total_amount)
     validate_money("cash_amount", intake.cash_amount)
     validate_money("card_amount", intake.card_amount)
+    validate_payment_breakdown(
+        intake.total_amount,
+        intake.cash_amount,
+        intake.card_amount,
+    )
 
     duplicate_closure = db.scalar(
         select(DailyCashClosure).where(

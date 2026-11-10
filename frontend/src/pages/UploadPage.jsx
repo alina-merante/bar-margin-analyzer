@@ -13,6 +13,7 @@ import {
 import {
   buildCashClosureCorrections,
   createCashClosureReviewForm,
+  validateCashClosurePayments,
 } from "../cashClosureReview.js";
 
 function formatHistoryEntryDate(value, kind) {
@@ -372,6 +373,11 @@ function CashClosureReviewCard({
       details.status !== "ok" ||
       (Array.isArray(details.competing) && details.competing.length > 1)
   );
+  const paymentValidation = validateCashClosurePayments(
+    form.total_amount,
+    form.cash_amount,
+    form.card_amount
+  );
   const previewUrl = getDocumentPreviewUrl({ file_url: review.document.file_url });
 
   async function submit(action) {
@@ -481,6 +487,23 @@ function CashClosureReviewCard({
       <p className="cash-review-hint">
         Un campo vuoto significa importo non noto; inserisci 0,00 solo se il documento riporta zero.
       </p>
+      {paymentValidation.exceedsTotal ? (
+        <p className="cash-review-error" role="alert">
+          La somma di contanti e POS supera il totale della chiusura. Correggi gli importi prima di approvare.
+        </p>
+      ) : paymentValidation.incomplete && form.total_amount !== "" ? (
+        <div className="cash-review-anomalies" role="status">
+          Ripartizione incompleta: uno o più importi non sono noti e non vengono considerati pari a zero.
+        </div>
+      ) : paymentValidation.unallocatedCents !== null ? (
+        <div className="cash-review-anomalies" role="status">
+          Importo non attribuito:{" "}
+          {new Intl.NumberFormat("it-IT", {
+            style: "currency",
+            currency: "EUR",
+          }).format(paymentValidation.unallocatedCents / 100)}.
+        </div>
+      ) : null}
       {error ? <p className="cash-review-error" role="alert">{error}</p> : null}
       <div className="cash-review-actions">
         <button
@@ -494,6 +517,7 @@ function CashClosureReviewCard({
           type="button"
           disabled={
             busy ||
+            paymentValidation.exceedsTotal ||
             hasChanges ||
             !form.date ||
             !form.closure_number.trim() ||
