@@ -52,6 +52,32 @@ Le migrazioni vengono applicate automaticamente prima dell'avvio dell'API:
 
 Non è necessario eseguire una migrazione manuale durante l'avvio normale.
 
+## Fondamenta autenticazione backend
+
+La revisione `20261111_0011` aggiunge le tabelle per sessioni server-side e
+limitazione dei tentativi di login. Prima di avviare l'API in produzione,
+configurare:
+
+- `APP_ENV=production`;
+- `AUTH_SECRET_KEY` con almeno 32 byte casuali;
+- `AUTH_ALLOWED_ORIGINS` con le origini frontend autorizzate, separate da
+  virgole. Non usare wildcard.
+
+In produzione il cookie di sessione è sempre `Secure`, `HttpOnly` e
+`SameSite=Lax`. In sviluppo il secret viene generato per il processo e le
+sessioni non sopravvivono al riavvio.
+
+Il primo owner può essere creato con
+`cd backend && .venv/bin/python -m app.bootstrap_owner`, dopo aver applicato
+le migrazioni al database scelto. Il comando chiede le credenziali senza
+mostrare la password e si rifiuta di procedere se esistono già utenti o bar
+non riconducibili al bar legacy.
+
+Questa fase fornisce solo le fondamenta auth: le API operative e i file sotto
+`/uploads` non sono ancora protetti né isolati per bar. Non considerare il
+sistema multi-tenant sicuro fino al completamento delle successive fasi di
+autorizzazione e protezione degli upload.
+
 ## Clean bootstrap
 
 Per verificare database vuoto, schema, endpoint API e build frontend usando

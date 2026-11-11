@@ -56,6 +56,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    auth_sessions = relationship(
+        "AuthSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     @validates("email")
     def normalize_email(self, _key: str, value: str) -> str:

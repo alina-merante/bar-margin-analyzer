@@ -9,3 +9,4 @@ pdf2image
 Pillow
 pillow-heif
 openai
+argon2-cffi>=23.1.0,<26
