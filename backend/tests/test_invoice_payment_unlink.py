@@ -3,40 +3,27 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from app.database import Base
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
 from app.routers.analytics import overview
-from app.routers.finance import (
-    ReconcileTransactionPayload,
-    get_transaction_candidates,
-    list_invoice_payments,
-    list_invoices,
-    reconcile_invoice_transaction,
-    unlink_invoice_payment,
-)
+from finance_test_support import finance_request, finance_response
 
 
 @pytest.fixture
-def db(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'unlink.db'}")
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(connection, _):
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
+def db(finance_http_env):
+    with finance_http_env["sessionmaker"]() as session:
+        session.info.update(
+            finance_client=finance_http_env["client"],
+            csrf_token=finance_http_env["csrf_token"],
+            bar_id=finance_http_env["bar_id"],
+        )
         yield session
-    engine.dispose()
 
 
 def add_invoice(db, total="120.00", number="12"):
     invoice = Invoice(
+        bar_id=db.info["bar_id"],
         supplier="aaaaa",
         invoice_number=number,
         issue_date=dt.date(2026, 7, 2),
@@ -52,6 +39,7 @@ def add_invoice(db, total="120.00", number="12"):
 
 def add_transaction(db, amount="-120.00", day=12):
     transaction = Transaction(
+        bar_id=db.info["bar_id"],
         date=dt.date(2026, 7, day),
         description="Pagamento carta Pulizie Splendore",
         amount=Decimal(amount),
@@ -63,7 +51,14 @@ def add_transaction(db, amount="-120.00", day=12):
 
 
 def reconcile(db, invoice, transaction):
-    reconcile_invoice_transaction(invoice.id, ReconcileTransactionPayload(transaction_id=transaction.id), db)
+    finance_response(
+        finance_request(
+            db,
+            "POST",
+            f"/invoices/{invoice.id}/reconcile-transaction",
+            payload={"transaction_id": transaction.id},
+        )
+    )
     return db.scalar(select(Payment).where(Payment.transaction_id == transaction.id))
 
 
@@ -73,6 +68,7 @@ def link_of(db, payment):
 
 def add_manual(db, invoice, amount="50.00"):
     payment = Payment(
+        bar_id=db.info["bar_id"],
         date=dt.date(2026, 7, 5),
         amount=Decimal(amount),
         method=PaymentMethod.cash,
@@ -81,7 +77,11 @@ def add_manual(db, invoice, amount="50.00"):
     )
     db.add(payment)
     db.flush()
-    link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
+    link = InvoicePaymentLink(
+        bar_id=db.info["bar_id"],
+        invoice_id=invoice.id,
+        payment_id=payment.id,
+    )
     db.add(link)
     db.commit()
     return payment, link
@@ -91,10 +91,42 @@ def invoice_row(db, invoice):
     return next(r for r in list_invoices(status=None, supplier=None, month=None, db=db) if r["id"] == invoice.id)
 
 
+def get_transaction_candidates(invoice_id, db):
+    return finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice_id}/transaction-candidates")
+    )
+
+
+def list_invoice_payments(invoice_id, db):
+    return finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice_id}/payments")
+    )
+
+
+def list_invoices(*, status=None, supplier=None, month=None, db):
+    params = {
+        key: value
+        for key, value in {"status": status, "supplier": supplier, "month": month}.items()
+        if value is not None
+    }
+    return finance_response(finance_request(db, "GET", "/invoices", params=params))
+
+
+def unlink_invoice_payment(invoice_id, link_id, db):
+    return finance_response(
+        finance_request(
+            db,
+            "DELETE",
+            f"/invoices/{invoice_id}/payments/{link_id}",
+        )
+    )
+
+
 def test_unlink_bank_payment_from_paid_invoice_keeps_transaction_and_frees_it(db):
     invoice = add_invoice(db)
     transaction = add_transaction(db)
     payment = reconcile(db, invoice, transaction)
+    payment_id = payment.id
     link = link_of(db, payment)
     assert invoice.status == InvoiceStatus.paid
 
@@ -106,7 +138,7 @@ def test_unlink_bank_payment_from_paid_invoice_keeps_transaction_and_frees_it(db
     assert result["remaining_amount"] == 120.0
     db.expire_all()
     assert db.get(Invoice, invoice.id).status == InvoiceStatus.pending
-    assert db.get(Payment, payment.id) is None
+    assert db.get(Payment, payment_id) is None
     assert db.scalars(select(InvoicePaymentLink)).all() == []
     kept = db.get(Transaction, transaction.id)
     assert kept is not None and kept.amount == Decimal("-120.00")

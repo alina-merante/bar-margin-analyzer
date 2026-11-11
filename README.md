@@ -80,12 +80,16 @@ richiedono sessione autenticata, bar attivo e i permessi previsti. Gli import
 assegnano `bar_id` lato server; gli ID di documenti e categorie vengono
 verificati contro il bar selezionato.
 
-Le API generali di upload/OCR, documenti, fatture, pagamenti e analytics non
-sono ancora tenant-aware; i documenti statici sotto `/uploads` restano
-pubblici. Gli intake o documenti senza un bar valido non sono mostrati né
-approvabili dalla revisione delle chiusure. Non considerare il sistema
-multi-tenant sicuro né esporlo pubblicamente fino al completamento delle fasi
-successive.
+Le API finanziarie di fatture, pagamenti e riconciliazioni richiedono ora una
+sessione autenticata e un bar attivo. Owner e manager possono operare; lo staff
+può consultare i dati finanziari del bar selezionato ma non crearli, modificarli,
+cancellarli o riconciliarli. Le API verificano il tenant anche nei collegamenti
+tra fatture, pagamenti e transazioni. Le API generali di upload/OCR, documenti e
+analytics restano fuori da questo isolamento; i documenti statici sotto
+`/uploads`, incluse le fatture caricate, restano pubblici. Gli intake o
+documenti senza un bar valido non sono mostrati né approvabili dalla revisione
+delle chiusure. Non considerare il sistema multi-tenant sicuro né esporlo
+pubblicamente fino al completamento delle fasi successive.
 
 ## Clean bootstrap
 

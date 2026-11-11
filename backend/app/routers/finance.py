@@ -13,13 +13,28 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import require_session_csrf
+from app.bar_context import (
+    BarContext,
+    BarPermission,
+    get_active_bar_context,
+    require_bar_permission,
+)
 from app.database import get_db
 from app.config import UPLOAD_INVOICES_DIR, ensure_upload_dirs
-from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
+from app.models import (
+    AuthSession,
+    Invoice,
+    InvoicePaymentLink,
+    InvoiceStatus,
+    Payment,
+    PaymentMethod,
+    Transaction,
+)
 from app.services.ai_invoice_parser import parse_invoice_with_llm
 from app.services.invoice_status import get_invoice_payment_status
 
@@ -28,6 +43,9 @@ register_heif_opener()
 
 router = APIRouter(tags=["invoices", "payments"])
 DUPLICATE_INVOICE_DETAIL = "Esiste già una fattura con questo numero per il fornitore indicato"
+operate_context = require_bar_permission(BarPermission.OPERATE)
+manage_payments_context = require_bar_permission(BarPermission.MANAGE_PAYMENTS)
+delete_records_context = require_bar_permission(BarPermission.DELETE_RECORDS)
 
 
 class InvoiceCreate(BaseModel):
@@ -70,9 +88,15 @@ def normalize_invoice_number(value: str) -> str:
     return "".join(unicodedata.normalize("NFKC", value).split()).casefold()
 
 
-def invoice_identity_lock_key(supplier: str, invoice_number: str, year: int) -> int:
+def invoice_identity_lock_key(
+    supplier: str,
+    invoice_number: str,
+    year: int,
+    bar_id: int | None = None,
+) -> int:
     identity = "\0".join(
         (
+            str(bar_id),
             str(year),
             normalize_invoice_supplier(supplier),
             normalize_invoice_number(invoice_number),
@@ -83,12 +107,20 @@ def invoice_identity_lock_key(supplier: str, invoice_number: str, year: int) -> 
 
 
 @contextmanager
-def invoice_identity_lock(db: Session, supplier: str, invoice_number: str, issue_date: dt.date):
+def invoice_identity_lock(
+    db: Session,
+    supplier: str,
+    invoice_number: str,
+    issue_date: dt.date,
+    bar_id: int | None = None,
+):
     if db.bind is not None and db.bind.dialect.name == "postgresql":
         db.execute(
             select(
                 func.pg_advisory_xact_lock(
-                    invoice_identity_lock_key(supplier, invoice_number, issue_date.year)
+                    invoice_identity_lock_key(
+                        supplier, invoice_number, issue_date.year, bar_id
+                    )
                 )
             )
         )
@@ -100,10 +132,17 @@ def invoice_identity_lock(db: Session, supplier: str, invoice_number: str, issue
 
 
 def find_duplicate_invoice(
-    db: Session, supplier: str, invoice_number: str, issue_date: dt.date
+    db: Session,
+    supplier: str,
+    invoice_number: str,
+    issue_date: dt.date,
+    bar_id: int | None = None,
 ) -> Invoice | None:
     year_start = dt.date(issue_date.year, 1, 1)
-    stmt = select(Invoice).where(Invoice.issue_date >= year_start)
+    stmt = select(Invoice).where(
+        Invoice.issue_date >= year_start,
+        Invoice.bar_id == bar_id,
+    )
     if issue_date.year < dt.date.max.year:
         stmt = stmt.where(Invoice.issue_date < dt.date(issue_date.year + 1, 1, 1))
 
@@ -136,11 +175,26 @@ class ReconcileTransactionPayload(BaseModel):
     transaction_id: int
 
 
-def invoice_linked_amount(db: Session, invoice_id: int) -> Decimal:
+def invoice_linked_amount(
+    db: Session,
+    invoice_id: int,
+    bar_id: int | None = None,
+) -> Decimal:
+    if bar_id is None:
+        bar_id = db.scalar(select(Invoice.bar_id).where(Invoice.id == invoice_id))
     amount = db.scalar(
         select(func.coalesce(func.sum(Payment.amount), 0))
         .join(InvoicePaymentLink, InvoicePaymentLink.payment_id == Payment.id)
-        .where(InvoicePaymentLink.invoice_id == invoice_id)
+        .outerjoin(Transaction, Transaction.id == Payment.transaction_id)
+        .where(
+            InvoicePaymentLink.invoice_id == invoice_id,
+            InvoicePaymentLink.bar_id == bar_id,
+            Payment.bar_id == bar_id,
+            or_(
+                Payment.transaction_id.is_(None),
+                Transaction.bar_id == bar_id,
+            ),
+        )
     )
     return Decimal(amount or 0)
 
@@ -149,8 +203,13 @@ def invoice_remaining_amount(invoice: Invoice, linked_amount: Decimal) -> Decima
     return max(Decimal(invoice.total) - linked_amount, Decimal("0.00"))
 
 
-def invoice_to_dict(invoice: Invoice, db: Session) -> dict:
-    linked_amount = invoice_linked_amount(db, invoice.id)
+def invoice_to_dict(
+    invoice: Invoice,
+    db: Session,
+    bar_id: int | None = None,
+) -> dict:
+    tenant_id = invoice.bar_id if bar_id is None else bar_id
+    linked_amount = invoice_linked_amount(db, invoice.id, tenant_id)
     remaining_amount = invoice_remaining_amount(invoice, linked_amount)
     payment_status = get_invoice_payment_status(
         invoice.status,
@@ -1035,16 +1094,30 @@ def extract_invoice_from_text(text: str) -> dict:
     }
 
 @router.post("/invoices")
-def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dict:
+def create_invoice(
+    payload: InvoiceCreate,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(operate_context),
+    db: Session = Depends(get_db),
+) -> dict:
     with invoice_identity_lock(
-        db, payload.supplier, payload.invoice_number, payload.issue_date
+        db,
+        payload.supplier,
+        payload.invoice_number,
+        payload.issue_date,
+        context.bar.id,
     ):
         if find_duplicate_invoice(
-            db, payload.supplier, payload.invoice_number, payload.issue_date
+            db,
+            payload.supplier,
+            payload.invoice_number,
+            payload.issue_date,
+            context.bar.id,
         ):
             raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
 
         invoice = Invoice(
+            bar_id=context.bar.id,
             supplier=payload.supplier.strip(),
             invoice_number=payload.invoice_number.strip(),
             issue_date=payload.issue_date,
@@ -1056,10 +1129,15 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dic
         db.add(invoice)
         db.commit()
         db.refresh(invoice)
-        return invoice_to_dict(invoice, db)
+        return invoice_to_dict(invoice, db, context.bar.id)
 
 @router.post("/invoices/extract")
-async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
+async def extract_invoice(
+    file: UploadFile = File(...),
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(operate_context),
+    db: Session = Depends(get_db),
+) -> dict:
     if not file.filename:
         raise HTTPException(status_code=400, detail="file is required")
 
@@ -1125,12 +1203,14 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             normalized["supplier"],
             normalized["invoice_number"],
             normalized["issue_date"],
+            context.bar.id,
         ):
             if find_duplicate_invoice(
                 db,
                 normalized["supplier"],
                 normalized["invoice_number"],
                 normalized["issue_date"],
+                context.bar.id,
             ):
                 raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
 
@@ -1142,6 +1222,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             file_url = f"/uploads/invoices/{safe_filename}"
 
             invoice = Invoice(
+                bar_id=context.bar.id,
                 supplier=normalized["supplier"],
                 invoice_number=normalized["invoice_number"],
                 issue_date=normalized["issue_date"],
@@ -1156,7 +1237,7 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
             db.commit()
             db.refresh(invoice)
 
-            response = invoice_to_dict(invoice, db)
+            response = invoice_to_dict(invoice, db, context.bar.id)
             response["already_exists"] = False
             return response
 
@@ -1166,9 +1247,16 @@ async def extract_invoice(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=f"invoice extraction failed: {exc}") from exc
 
 @router.delete("/invoices/delete/{invoice_id}")
-def delete_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_invoice(
+    invoice_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(delete_records_context),
+    db: Session = Depends(get_db),
+) -> dict:
     invoice = db.scalar(
-        select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+        select(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.bar_id == context.bar.id)
+        .with_for_update()
     )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
@@ -1193,9 +1281,10 @@ def list_invoices(
     status: InvoiceStatus | None = Query(default=None),
     supplier: str | None = Query(default=None),
     month: str | None = Query(default=None, description="Month in YYYY-MM format"),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    stmt = select(Invoice)
+    stmt = select(Invoice).where(Invoice.bar_id == context.bar.id)
 
     if status is not None:
         stmt = stmt.where(Invoice.status == status)
@@ -1206,7 +1295,7 @@ def list_invoices(
         stmt = stmt.where(Invoice.issue_date >= start, Invoice.issue_date < end)
 
     invoices = db.scalars(stmt.order_by(Invoice.issue_date.desc(), Invoice.id.desc())).all()
-    return [invoice_to_dict(row, db) for row in invoices]
+    return [invoice_to_dict(row, db, context.bar.id) for row in invoices]
 
 def transaction_candidate_confidence(
     invoice: Invoice,
@@ -1280,14 +1369,23 @@ def payment_method_from_transaction(transaction: Transaction) -> PaymentMethod:
 
 
 @router.get("/invoices/{invoice_id}/transaction-candidates")
-def get_transaction_candidates(invoice_id: int, db: Session = Depends(get_db)) -> dict:
-    invoice = db.get(Invoice, invoice_id)
+def get_transaction_candidates(
+    invoice_id: int,
+    context: BarContext = Depends(get_active_bar_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    invoice = db.scalar(
+        select(Invoice).where(
+            Invoice.id == invoice_id,
+            Invoice.bar_id == context.bar.id,
+        )
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
     if invoice.status != InvoiceStatus.pending:
         raise HTTPException(status_code=409, detail="invoice is not pending")
 
-    linked_amount = invoice_linked_amount(db, invoice.id)
+    linked_amount = invoice_linked_amount(db, invoice.id, context.bar.id)
     remaining_amount = invoice_remaining_amount(invoice, linked_amount)
     if remaining_amount <= 0:
         raise HTTPException(status_code=409, detail="invoice has no remaining balance")
@@ -1295,6 +1393,7 @@ def get_transaction_candidates(invoice_id: int, db: Session = Depends(get_db)) -
     used_transactions = select(Payment.transaction_id).where(Payment.transaction_id.is_not(None))
     transactions = db.scalars(
         select(Transaction).where(
+            Transaction.bar_id == context.bar.id,
             Transaction.amount < 0,
             func.abs(Transaction.amount) <= remaining_amount,
             ~Transaction.id.in_(used_transactions),
@@ -1328,18 +1427,25 @@ def get_transaction_candidates(invoice_id: int, db: Session = Depends(get_db)) -
 def reconcile_invoice_transaction(
     invoice_id: int,
     payload: ReconcileTransactionPayload,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(manage_payments_context),
     db: Session = Depends(get_db),
 ) -> dict:
     try:
         invoice = db.scalar(
-            select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+            select(Invoice)
+            .where(Invoice.id == invoice_id, Invoice.bar_id == context.bar.id)
+            .with_for_update()
         )
         if not invoice:
             raise HTTPException(status_code=404, detail="invoice not found")
 
         transaction = db.scalar(
             select(Transaction)
-            .where(Transaction.id == payload.transaction_id)
+            .where(
+                Transaction.id == payload.transaction_id,
+                Transaction.bar_id == context.bar.id,
+            )
             .with_for_update()
         )
         if not transaction:
@@ -1355,7 +1461,7 @@ def reconcile_invoice_transaction(
         ):
             raise HTTPException(status_code=409, detail="transaction is already used by a payment")
 
-        linked_amount = invoice_linked_amount(db, invoice.id)
+        linked_amount = invoice_linked_amount(db, invoice.id, context.bar.id)
         remaining_amount = invoice_remaining_amount(invoice, linked_amount)
         if remaining_amount <= 0:
             raise HTTPException(status_code=409, detail="invoice has no remaining balance")
@@ -1365,6 +1471,7 @@ def reconcile_invoice_transaction(
             raise HTTPException(status_code=409, detail="transaction exceeds invoice remaining balance")
 
         payment = Payment(
+            bar_id=context.bar.id,
             date=transaction.date,
             amount=payment_amount,
             method=payment_method_from_transaction(transaction),
@@ -1375,7 +1482,11 @@ def reconcile_invoice_transaction(
         db.add(payment)
         db.flush()
 
-        link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
+        link = InvoicePaymentLink(
+            bar_id=context.bar.id,
+            invoice_id=invoice.id,
+            payment_id=payment.id,
+        )
         db.add(link)
         db.flush()
 
@@ -1404,8 +1515,14 @@ def reconcile_invoice_transaction(
 
 
 @router.post("/payments")
-def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)) -> dict:
+def create_payment(
+    payload: PaymentCreate,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(manage_payments_context),
+    db: Session = Depends(get_db),
+) -> dict:
     payment = Payment(
+        bar_id=context.bar.id,
         date=payload.date,
         amount=payload.amount,
         method=payload.method,
@@ -1431,9 +1548,20 @@ def list_payments(
     method: PaymentMethod | None = Query(default=None),
     counterparty: str | None = Query(default=None),
     month: str | None = Query(default=None, description="Month in YYYY-MM format"),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    stmt = select(Payment)
+    stmt = (
+        select(Payment)
+        .outerjoin(Transaction, Transaction.id == Payment.transaction_id)
+        .where(
+            Payment.bar_id == context.bar.id,
+            or_(
+                Payment.transaction_id.is_(None),
+                Transaction.bar_id == context.bar.id,
+            ),
+        )
+    )
 
     if method is not None:
         stmt = stmt.where(Payment.method == method)
@@ -1459,14 +1587,38 @@ def list_payments(
 
 
 @router.post("/invoices/{invoice_id}/link-payment")
-def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Depends(get_db)) -> dict:
+def link_payment(
+    invoice_id: int,
+    payload: LinkPaymentPayload,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(manage_payments_context),
+    db: Session = Depends(get_db),
+) -> dict:
     try:
-        invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id).with_for_update())
+        invoice = db.scalar(
+            select(Invoice)
+            .where(Invoice.id == invoice_id, Invoice.bar_id == context.bar.id)
+            .with_for_update()
+        )
         if not invoice:
             raise HTTPException(status_code=404, detail="invoice not found")
-        payment = db.scalar(select(Payment).where(Payment.id == payload.payment_id).with_for_update())
+        payment = db.scalar(
+            select(Payment)
+            .where(
+                Payment.id == payload.payment_id,
+                Payment.bar_id == context.bar.id,
+            )
+            .with_for_update()
+        )
         if not payment:
             raise HTTPException(status_code=404, detail="payment not found")
+        if payment.transaction_id is not None and db.scalar(
+            select(Transaction.id).where(
+                Transaction.id == payment.transaction_id,
+                Transaction.bar_id == context.bar.id,
+            )
+        ) is None:
+            raise HTTPException(status_code=409, detail="payment has an invalid bank transaction")
         if invoice.status != InvoiceStatus.pending:
             raise HTTPException(status_code=409, detail="invoice is not pending")
         if db.scalar(select(InvoicePaymentLink.id).where(InvoicePaymentLink.payment_id == payment.id)):
@@ -1474,14 +1626,18 @@ def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Dep
         if payment.amount <= 0:
             raise HTTPException(status_code=400, detail="payment amount must be positive")
 
-        linked_amount = invoice_linked_amount(db, invoice.id)
+        linked_amount = invoice_linked_amount(db, invoice.id, context.bar.id)
         remaining_amount = invoice_remaining_amount(invoice, linked_amount)
         if remaining_amount <= 0:
             raise HTTPException(status_code=409, detail="invoice has no remaining balance")
         if Decimal(payment.amount) > remaining_amount:
             raise HTTPException(status_code=409, detail="payment exceeds invoice remaining balance")
 
-        link = InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id)
+        link = InvoicePaymentLink(
+            bar_id=context.bar.id,
+            invoice_id=invoice.id,
+            payment_id=payment.id,
+        )
         db.add(link)
         db.flush()
         linked_amount += Decimal(payment.amount)
@@ -1510,15 +1666,33 @@ def link_payment(invoice_id: int, payload: LinkPaymentPayload, db: Session = Dep
         raise
 
 @router.get("/invoices/{invoice_id}/payments")
-def list_invoice_payments(invoice_id: int, db: Session = Depends(get_db)) -> dict:
-    invoice = db.get(Invoice, invoice_id)
+def list_invoice_payments(
+    invoice_id: int,
+    context: BarContext = Depends(get_active_bar_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    invoice = db.scalar(
+        select(Invoice).where(
+            Invoice.id == invoice_id,
+            Invoice.bar_id == context.bar.id,
+        )
+    )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
 
     rows = db.execute(
         select(InvoicePaymentLink, Payment)
         .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
-        .where(InvoicePaymentLink.invoice_id == invoice_id)
+        .outerjoin(Transaction, Transaction.id == Payment.transaction_id)
+        .where(
+            InvoicePaymentLink.invoice_id == invoice_id,
+            InvoicePaymentLink.bar_id == context.bar.id,
+            Payment.bar_id == context.bar.id,
+            or_(
+                Payment.transaction_id.is_(None),
+                Transaction.bar_id == context.bar.id,
+            ),
+        )
         .order_by(Payment.date.asc(), Payment.id.asc())
     ).all()
 
@@ -1536,7 +1710,7 @@ def list_invoice_payments(invoice_id: int, db: Session = Depends(get_db)) -> dic
         }
         for link, payment in rows
     ]
-    linked_amount = invoice_linked_amount(db, invoice_id)
+    linked_amount = invoice_linked_amount(db, invoice_id, context.bar.id)
     return {
         "invoice_id": invoice.id,
         "invoice_total": float(invoice.total),
@@ -1547,23 +1721,53 @@ def list_invoice_payments(invoice_id: int, db: Session = Depends(get_db)) -> dic
 
 
 @router.delete("/invoices/{invoice_id}/payments/{link_id}")
-def unlink_invoice_payment(invoice_id: int, link_id: int, db: Session = Depends(get_db)) -> dict:
+def unlink_invoice_payment(
+    invoice_id: int,
+    link_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(manage_payments_context),
+    db: Session = Depends(get_db),
+) -> dict:
     try:
-        invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id).with_for_update())
+        invoice = db.scalar(
+            select(Invoice)
+            .where(Invoice.id == invoice_id, Invoice.bar_id == context.bar.id)
+            .with_for_update()
+        )
         if not invoice:
             raise HTTPException(status_code=404, detail="invoice not found")
 
         link = db.scalar(
             select(InvoicePaymentLink)
-            .where(InvoicePaymentLink.id == link_id, InvoicePaymentLink.invoice_id == invoice_id)
+            .where(
+                InvoicePaymentLink.id == link_id,
+                InvoicePaymentLink.invoice_id == invoice_id,
+                InvoicePaymentLink.bar_id == context.bar.id,
+            )
             .with_for_update()
         )
         if not link:
             raise HTTPException(status_code=404, detail="payment link not found")
 
-        payment = db.scalar(select(Payment).where(Payment.id == link.payment_id).with_for_update())
+        payment = db.scalar(
+            select(Payment)
+            .where(
+                Payment.id == link.payment_id,
+                Payment.bar_id == context.bar.id,
+            )
+            .with_for_update()
+        )
+        if payment is None:
+            raise HTTPException(status_code=409, detail="payment link has invalid tenant data")
         payment_id = link.payment_id
         transaction_id = payment.transaction_id if payment else None
+        if transaction_id is not None and db.scalar(
+            select(Transaction.id).where(
+                Transaction.id == transaction_id,
+                Transaction.bar_id == context.bar.id,
+            )
+        ) is None:
+            raise HTTPException(status_code=409, detail="payment link has invalid tenant data")
 
         db.delete(link)
         db.flush()
@@ -1573,13 +1777,17 @@ def unlink_invoice_payment(invoice_id: int, link_id: int, db: Session = Depends(
         if (
             payment is not None
             and transaction_id is not None
-            and not db.scalar(select(InvoicePaymentLink.id).where(InvoicePaymentLink.payment_id == payment_id))
+            and not db.scalar(
+                select(InvoicePaymentLink.id).where(
+                    InvoicePaymentLink.payment_id == payment_id
+                )
+            )
         ):
             db.delete(payment)
             payment_deleted = True
         db.flush()
 
-        linked_amount = invoice_linked_amount(db, invoice.id)
+        linked_amount = invoice_linked_amount(db, invoice.id, context.bar.id)
         remaining_amount = invoice_remaining_amount(invoice, linked_amount)
         invoice.status = (
             InvoiceStatus.paid if linked_amount > 0 and remaining_amount == 0 else InvoiceStatus.pending

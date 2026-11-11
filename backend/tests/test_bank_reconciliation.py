@@ -1,19 +1,14 @@
-import asyncio
 from contextlib import contextmanager
 import datetime as dt
-import json
-from io import BytesIO
 from decimal import Decimal
 from threading import Barrier, Lock
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from fastapi import FastAPI, HTTPException, UploadFile
-from sqlalchemy import create_engine, event, select
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
-from app.database import Base, get_db
 from app.models import (
     Invoice,
     InvoicePaymentLink,
@@ -27,36 +22,24 @@ from app.routers import finance as finance_router
 from app.routers.finance import (
     LinkPaymentPayload,
     PaymentCreate,
-    ReconcileTransactionPayload,
-    create_payment,
-    create_invoice,
-    delete_invoice,
-    get_transaction_candidates,
-    link_payment,
-    list_invoices,
-    reconcile_invoice_transaction,
 )
+from finance_test_support import finance_request, finance_response
 
 
 @pytest.fixture
-
-def db(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'reconciliation.db'}")
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(connection, _):
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
+def db(finance_http_env):
+    with finance_http_env["sessionmaker"]() as session:
+        session.info.update(
+            finance_client=finance_http_env["client"],
+            csrf_token=finance_http_env["csrf_token"],
+            bar_id=finance_http_env["bar_id"],
+        )
         yield session
-    engine.dispose()
 
 
 def add_invoice(db, total="420.00", status=InvoiceStatus.pending):
     invoice = Invoice(
+        bar_id=db.info["bar_id"],
         supplier="TORREFAZIONE ITALIANA S.p.A.",
         invoice_number="TC-2026-071",
         issue_date=dt.date(2026, 7, 2),
@@ -72,6 +55,7 @@ def add_invoice(db, total="420.00", status=InvoiceStatus.pending):
 
 def add_transaction(db, amount="-420.00", date=dt.date(2026, 7, 3), description=None):
     transaction = Transaction(
+        bar_id=db.info["bar_id"],
         date=date,
         description=description or "SEPA transfer - Torrefazione Italiana S.p.A.",
         amount=Decimal(amount),
@@ -83,10 +67,13 @@ def add_transaction(db, amount="-420.00", date=dt.date(2026, 7, 3), description=
 
 
 def reconcile(db, invoice, transaction):
-    return reconcile_invoice_transaction(
-        invoice.id,
-        ReconcileTransactionPayload(transaction_id=transaction.id),
-        db,
+    return finance_response(
+        finance_request(
+            db,
+            "POST",
+            f"/invoices/{invoice.id}/reconcile-transaction",
+            payload={"transaction_id": transaction.id},
+        )
     )
 
 
@@ -102,60 +89,81 @@ def reupload_invoice(db, tmp_path, monkeypatch, *, total="525.00"):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(finance_router, "extract_invoice_from_xml", lambda _: {})
     monkeypatch.setattr(finance_router, "normalize_extracted_invoice", lambda _: extracted)
-    upload = UploadFile(filename="invoice.xml", file=BytesIO(b"<invoice />"))
-    return asyncio.run(finance_router.extract_invoice(upload, db))
+    return finance_response(
+        finance_request(
+            db,
+            "POST",
+            "/invoices/extract",
+            files={"file": ("invoice.xml", b"<invoice />", "application/xml")},
+        )
+    )
 
 
 def extract_invoice_with_data(db, tmp_path, monkeypatch, extracted):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(finance_router, "extract_invoice_from_xml", lambda _: extracted)
-    upload = UploadFile(filename="invoice.xml", file=BytesIO(b"<invoice />"))
-    return asyncio.run(finance_router.extract_invoice(upload, db))
-
-
-async def post_json(app, path, payload):
-    body = json.dumps(payload).encode()
-    request_sent = False
-    messages = []
-
-    async def receive():
-        nonlocal request_sent
-        if request_sent:
-            return {"type": "http.disconnect"}
-        request_sent = True
-        return {"type": "http.request", "body": body, "more_body": False}
-
-    async def send(message):
-        messages.append(message)
-
-    await app(
-        {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.3"},
-            "http_version": "1.1",
-            "method": "POST",
-            "scheme": "http",
-            "path": path,
-            "raw_path": path.encode(),
-            "query_string": b"",
-            "headers": [
-                (b"host", b"testserver"),
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode()),
-            ],
-            "client": ("testclient", 123),
-            "server": ("testserver", 80),
-        },
-        receive,
-        send,
+    return finance_response(
+        finance_request(
+            db,
+            "POST",
+            "/invoices/extract",
+            files={"file": ("invoice.xml", b"<invoice />", "application/xml")},
+        )
     )
-    response_start = next(message for message in messages if message["type"] == "http.response.start")
-    response_body = b"".join(
-        message.get("body", b"")
-        for message in messages
-        if message["type"] == "http.response.body"
+
+
+def post_json(db, path, payload):
+    response = finance_request(db, "POST", path, payload=payload)
+    return response.status_code, response.json()
+
+
+def get_transaction_candidates(invoice_id, db):
+    return finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice_id}/transaction-candidates")
     )
-    return response_start["status"], json.loads(response_body)
+
+
+def delete_invoice(invoice_id, db):
+    return finance_response(
+        finance_request(db, "DELETE", f"/invoices/delete/{invoice_id}")
+    )
+
+
+def list_invoices(*, status=None, supplier=None, month=None, db):
+    params = {
+        key: value
+        for key, value in {"status": status, "supplier": supplier, "month": month}.items()
+        if value is not None
+    }
+    return finance_response(finance_request(db, "GET", "/invoices", params=params))
+
+
+def create_invoice(payload, db):
+    return finance_response(
+        finance_request(db, "POST", "/invoices", payload=payload.model_dump(mode="json"))
+    )
+
+
+def create_payment(payload, db):
+    return finance_response(
+        finance_request(
+            db,
+            "POST",
+            "/payments",
+            payload=payload.model_dump(mode="json"),
+        )
+    )
+
+
+def link_payment(invoice_id, payload, db):
+    return finance_response(
+        finance_request(
+            db,
+            "POST",
+            f"/invoices/{invoice_id}/link-payment",
+            payload=payload.model_dump(mode="json"),
+        )
+    )
 
 
 def test_exact_transaction_is_candidate_without_database_changes(db):
@@ -173,20 +181,7 @@ def test_exact_transaction_is_candidate_without_database_changes(db):
     assert invoice.status == InvoiceStatus.pending
 
 
-def test_create_invoice_api_requires_issue_date_and_ignores_paid_status(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'create-invoice.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(engine)
-    api = FastAPI()
-    api.include_router(finance_router.router)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    api.dependency_overrides[get_db] = override_get_db
+def test_create_invoice_api_requires_issue_date_and_ignores_paid_status(db):
     payload_without_issue_date = {
         "supplier": "Supplier API",
         "invoice_number": "INV-API-1",
@@ -196,45 +191,27 @@ def test_create_invoice_api_requires_issue_date_and_ignores_paid_status(tmp_path
         "status": "paid",
     }
 
-    try:
-        status_code, _ = asyncio.run(post_json(api, "/invoices", payload_without_issue_date))
-        assert status_code == 422
-        with Session(engine) as session:
-            assert session.scalars(select(Invoice)).all() == []
+    status_code, _ = post_json(db, "/invoices", payload_without_issue_date)
+    assert status_code == 422
+    assert db.scalars(select(Invoice)).all() == []
 
-        payload_with_issue_date = {
-            **payload_without_issue_date,
-            "issue_date": "2026-08-30",
-        }
-        status_code, result = asyncio.run(post_json(api, "/invoices", payload_with_issue_date))
-        assert status_code == 200
-        assert result["status"] == InvoiceStatus.pending.value
-        assert result["issue_date"] == "2026-08-30"
-        assert result["linked_amount"] == 0.0
-        assert result["remaining_amount"] == 120.0
-        with Session(engine) as session:
-            invoice = session.scalar(select(Invoice))
-            assert invoice.status == InvoiceStatus.pending
-            assert session.scalars(select(InvoicePaymentLink)).all() == []
-    finally:
-        api.dependency_overrides.clear()
-        engine.dispose()
+    payload_with_issue_date = {
+        **payload_without_issue_date,
+        "issue_date": "2026-08-30",
+    }
+    status_code, result = post_json(db, "/invoices", payload_with_issue_date)
+    assert status_code == 200
+    assert result["status"] == InvoiceStatus.pending.value
+    assert result["issue_date"] == "2026-08-30"
+    assert result["linked_amount"] == 0.0
+    assert result["remaining_amount"] == 120.0
+    invoice = db.scalar(select(Invoice))
+    assert invoice.status == InvoiceStatus.pending
+    assert invoice.bar_id == db.info["bar_id"]
+    assert db.scalars(select(InvoicePaymentLink)).all() == []
 
 
-def test_create_invoice_api_rejects_invalid_amounts_and_accepts_consistent_totals(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'invoice-amount-validation.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(engine)
-    api = FastAPI()
-    api.include_router(finance_router.router)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    api.dependency_overrides[get_db] = override_get_db
+def test_create_invoice_api_rejects_invalid_amounts_and_accepts_consistent_totals(db):
     base_payload = {
         "supplier": "Supplier API",
         "invoice_number": "INV-VALIDATION",
@@ -252,70 +229,51 @@ def test_create_invoice_api_rejects_invalid_amounts_and_accepts_consistent_total
         ({"total": "100.00", "vat": "Infinity"}, "finite number"),
     ]
 
-    try:
-        for index, (amounts, error_message) in enumerate(invalid_amounts):
-            payload = {
-                **base_payload,
-                **amounts,
-                "invoice_number": f"INV-INVALID-{index}",
-            }
-            status_code, result = asyncio.run(post_json(api, "/invoices", payload))
+    for index, (amounts, error_message) in enumerate(invalid_amounts):
+        payload = {
+            **base_payload,
+            **amounts,
+            "invoice_number": f"INV-INVALID-{index}",
+        }
+        status_code, result = post_json(db, "/invoices", payload)
 
-            assert status_code == 422
-            assert error_message in str(result["detail"])
+        assert status_code == 422
+        assert error_message in str(result["detail"])
 
-        with Session(engine) as session:
-            assert session.scalars(select(Invoice)).all() == []
+    assert db.scalars(select(Invoice)).all() == []
 
-        for index, amounts in enumerate((
-            {"total": "100.00", "vat": "0.00"},
-            {"total": "100.00", "vat": "100.00"},
-            {"total": "100.00", "vat": "20.00"},
-        )):
-            payload = {
-                **base_payload,
-                **amounts,
-                "invoice_number": f"INV-VALID-{index}",
-            }
-            status_code, result = asyncio.run(post_json(api, "/invoices", payload))
-            assert status_code == 200
-            assert result["total"] == float(Decimal(amounts["total"]))
-            assert result["vat"] == float(Decimal(amounts["vat"]))
+    for index, amounts in enumerate((
+        {"total": "100.00", "vat": "0.00"},
+        {"total": "100.00", "vat": "100.00"},
+        {"total": "100.00", "vat": "20.00"},
+    )):
+        payload = {
+            **base_payload,
+            **amounts,
+            "invoice_number": f"INV-VALID-{index}",
+        }
+        status_code, result = post_json(db, "/invoices", payload)
+        assert status_code == 200
+        assert result["total"] == float(Decimal(amounts["total"]))
+        assert result["vat"] == float(Decimal(amounts["vat"]))
 
-        with Session(engine) as session:
-            assert len(session.scalars(select(Invoice)).all()) == 3
-    finally:
-        api.dependency_overrides.clear()
-        engine.dispose()
+    assert len(db.scalars(select(Invoice)).all()) == 3
 
 
-def test_create_invoice_api_rejects_normalized_duplicates_but_allows_other_supplier_and_year(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'invoice-duplicate-validation.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(engine)
-    api = FastAPI()
-    api.include_router(finance_router.router)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    api.dependency_overrides[get_db] = override_get_db
-    with Session(engine) as session:
-        session.add(
-            Invoice(
-                supplier="Caffè   Rossi S.r.l.",
-                invoice_number="FT 2026 001",
-                issue_date=dt.date(2026, 4, 1),
-                due_date=dt.date(2026, 4, 30),
-                total=Decimal("100.00"),
-                vat=Decimal("22.00"),
-                status=InvoiceStatus.pending,
-            )
+def test_create_invoice_api_rejects_normalized_duplicates_but_allows_other_supplier_and_year(db):
+    db.add(
+        Invoice(
+            bar_id=db.info["bar_id"],
+            supplier="Caffè   Rossi S.r.l.",
+            invoice_number="FT 2026 001",
+            issue_date=dt.date(2026, 4, 1),
+            due_date=dt.date(2026, 4, 30),
+            total=Decimal("100.00"),
+            vat=Decimal("22.00"),
+            status=InvoiceStatus.pending,
         )
-        session.commit()
+    )
+    db.commit()
 
     payload = {
         "supplier": "  CAFFÈ Rossi S.r.l. ",
@@ -326,44 +284,25 @@ def test_create_invoice_api_rejects_normalized_duplicates_but_allows_other_suppl
         "vat": "22.00",
     }
 
-    try:
-        status_code, result = asyncio.run(post_json(api, "/invoices", payload))
-        assert status_code == 409
-        assert result["detail"] == finance_router.DUPLICATE_INVOICE_DETAIL
+    status_code, result = post_json(db, "/invoices", payload)
+    assert status_code == 409
+    assert result["detail"] == finance_router.DUPLICATE_INVOICE_DETAIL
 
-        different_supplier = {**payload, "supplier": "Fornitore Diverso"}
-        status_code, _ = asyncio.run(post_json(api, "/invoices", different_supplier))
-        assert status_code == 200
+    different_supplier = {**payload, "supplier": "Fornitore Diverso"}
+    status_code, _ = post_json(db, "/invoices", different_supplier)
+    assert status_code == 200
 
-        different_year = {
-            **payload,
-            "issue_date": "2027-05-01",
-            "due_date": "2027-05-31",
-        }
-        status_code, _ = asyncio.run(post_json(api, "/invoices", different_year))
-        assert status_code == 200
-
-        with Session(engine) as session:
-            assert len(session.scalars(select(Invoice)).all()) == 3
-    finally:
-        api.dependency_overrides.clear()
-        engine.dispose()
+    different_year = {
+        **payload,
+        "issue_date": "2027-05-01",
+        "due_date": "2027-05-31",
+    }
+    status_code, _ = post_json(db, "/invoices", different_year)
+    assert status_code == 200
+    assert len(db.scalars(select(Invoice)).all()) == 3
 
 
-def test_invoice_api_rejects_invalid_dates_and_accepts_same_day_dates(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'invoice-date-validation.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(engine)
-    api = FastAPI()
-    api.include_router(finance_router.router)
-
-    def override_get_db():
-        with Session(engine) as session:
-            yield session
-
-    api.dependency_overrides[get_db] = override_get_db
+def test_invoice_api_rejects_invalid_dates_and_accepts_same_day_dates(db):
     base_payload = {
         "supplier": "Supplier Date",
         "invoice_number": "INV-DATE",
@@ -373,40 +312,35 @@ def test_invoice_api_rejects_invalid_dates_and_accepts_same_day_dates(tmp_path):
         "vat": "20.00",
     }
 
-    try:
-        status_code, result = asyncio.run(post_json(api, "/invoices", base_payload))
-        assert status_code == 200
-        assert result["issue_date"] == result["due_date"] == "2026-08-30"
+    status_code, result = post_json(db, "/invoices", base_payload)
+    assert status_code == 200
+    assert result["issue_date"] == result["due_date"] == "2026-08-30"
 
-        invalid_payloads = [
-            (
-                {**base_payload, "invoice_number": "INV-EARLY-DUE", "due_date": "2026-08-29"},
-                "La data di scadenza non può precedere la data fattura.",
-            ),
-            (
-                {**base_payload, "invoice_number": "INV-ISSUE-YEAR", "issue_date": "120026-08-30"},
-                "anno composto da quattro cifre",
-            ),
-            (
-                {**base_payload, "invoice_number": "INV-DUE-YEAR", "due_date": "2026-08-300001"},
-                "anno composto da quattro cifre",
-            ),
-            (
-                {**base_payload, "invoice_number": "INV-INVALID-DAY", "issue_date": "2026-02-30"},
-                "valid date",
-            ),
-        ]
+    invalid_payloads = [
+        (
+            {**base_payload, "invoice_number": "INV-EARLY-DUE", "due_date": "2026-08-29"},
+            "La data di scadenza non può precedere la data fattura.",
+        ),
+        (
+            {**base_payload, "invoice_number": "INV-ISSUE-YEAR", "issue_date": "120026-08-30"},
+            "anno composto da quattro cifre",
+        ),
+        (
+            {**base_payload, "invoice_number": "INV-DUE-YEAR", "due_date": "2026-08-300001"},
+            "anno composto da quattro cifre",
+        ),
+        (
+            {**base_payload, "invoice_number": "INV-INVALID-DAY", "issue_date": "2026-02-30"},
+            "valid date",
+        ),
+    ]
 
-        for payload, error_message in invalid_payloads:
-            status_code, result = asyncio.run(post_json(api, "/invoices", payload))
-            assert status_code == 422
-            assert error_message.lower() in str(result["detail"]).lower()
+    for payload, error_message in invalid_payloads:
+        status_code, result = post_json(db, "/invoices", payload)
+        assert status_code == 422
+        assert error_message.lower() in str(result["detail"]).lower()
 
-        with Session(engine) as session:
-            assert len(session.scalars(select(Invoice)).all()) == 1
-    finally:
-        api.dependency_overrides.clear()
-        engine.dispose()
+    assert len(db.scalars(select(Invoice)).all()) == 1
 
 
 def test_invoice_identity_advisory_lock_is_stable_and_transaction_scoped():
@@ -437,49 +371,35 @@ def test_invoice_identity_advisory_lock_is_stable_and_transaction_scoped():
     ) != finance_router.invoice_identity_lock_key("Vendor A", "INV 42", 2027)
 
 
-def test_concurrent_invoice_creates_only_insert_one_identity(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'concurrent-invoices.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    Base.metadata.create_all(engine)
+def test_concurrent_invoice_creates_only_insert_one_identity(db, monkeypatch):
     identity_lock = Lock()
     start_barrier = Barrier(2)
 
     @contextmanager
-    def serialize_identity(_db, _supplier, _invoice_number, _issue_date):
+    def serialize_identity(_db, _supplier, _invoice_number, _issue_date, _bar_id):
         with identity_lock:
             yield
 
     monkeypatch.setattr(finance_router, "invoice_identity_lock", serialize_identity)
-    payload = finance_router.InvoiceCreate(
-        supplier="Vendor Concurrent",
-        invoice_number="INV-42",
-        issue_date=dt.date(2026, 7, 1),
-        due_date=dt.date(2026, 7, 30),
-        total=Decimal("100.00"),
-        vat=Decimal("20.00"),
-    )
+    payload = {
+        "supplier": "Vendor Concurrent",
+        "invoice_number": "INV-42",
+        "issue_date": "2026-07-01",
+        "due_date": "2026-07-30",
+        "total": "100.00",
+        "vat": "20.00",
+    }
 
     def create_concurrently():
-        with Session(engine) as session:
-            start_barrier.wait()
-            try:
-                finance_router.create_invoice(payload, session)
-                return "created"
-            except HTTPException as error:
-                session.rollback()
-                return error.status_code
+        start_barrier.wait()
+        response = finance_request(db, "POST", "/invoices", payload=payload)
+        return "created" if response.status_code == 200 else response.status_code
 
-    try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            outcomes = list(executor.map(lambda _: create_concurrently(), range(2)))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: create_concurrently(), range(2)))
 
-        assert sorted(outcomes, key=str) == [409, "created"]
-        with Session(engine) as session:
-            assert len(session.scalars(select(Invoice)).all()) == 1
-    finally:
-        engine.dispose()
+    assert sorted(outcomes, key=str) == [409, "created"]
+    assert len(db.scalars(select(Invoice)).all()) == 1
 
 
 def test_candidate_search_excludes_positive_used_and_over_residual_transactions(db):
@@ -488,6 +408,7 @@ def test_candidate_search_excludes_positive_used_and_over_residual_transactions(
     over_residual = add_transaction(db, amount="-500.00", description="Supplier payment")
     used = add_transaction(db, amount="-100.00", description="Already used")
     payment = Payment(
+        bar_id=db.info["bar_id"],
         date=used.date,
         amount=Decimal("100.00"),
         method=PaymentMethod.bank_transfer,
@@ -555,11 +476,12 @@ def test_reconciliation_classifies_payment_method_from_transaction(
 
 def test_unlinked_invoice_can_be_deleted(db):
     invoice = add_invoice(db)
+    invoice_id = invoice.id
 
-    result = delete_invoice(invoice.id, db)
+    result = delete_invoice(invoice_id, db)
 
-    assert result == {"ok": True, "deleted_invoice_id": invoice.id}
-    assert db.get(Invoice, invoice.id) is None
+    assert result == {"ok": True, "deleted_invoice_id": invoice_id}
+    assert db.get(Invoice, invoice_id) is None
     assert db.scalars(select(Payment)).all() == []
     assert db.scalars(select(InvoicePaymentLink)).all() == []
 
@@ -701,6 +623,7 @@ def test_invoice_summary_excludes_paid_status_without_full_linked_total(db):
     invoice_without_links = add_invoice(db, total="120.00", status=InvoiceStatus.paid)
     invoice_with_partial_links = add_invoice(db, total="100.00", status=InvoiceStatus.paid)
     payment = Payment(
+        bar_id=db.info["bar_id"],
         date=dt.date(2026, 7, 3),
         amount=Decimal("40.00"),
         method=PaymentMethod.bank_transfer,
@@ -709,7 +632,13 @@ def test_invoice_summary_excludes_paid_status_without_full_linked_total(db):
     )
     db.add(payment)
     db.flush()
-    db.add(InvoicePaymentLink(invoice_id=invoice_with_partial_links.id, payment_id=payment.id))
+    db.add(
+        InvoicePaymentLink(
+            bar_id=db.info["bar_id"],
+            invoice_id=invoice_with_partial_links.id,
+            payment_id=payment.id,
+        )
+    )
     db.commit()
 
     summary = invoices_summary(db)
@@ -824,10 +753,15 @@ def test_ocr_generic_tail_date_is_rejected_without_invoice_or_uploaded_file(db, 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(finance_router, "ocr_pdf_bytes", lambda _: ocr_text)
     monkeypatch.setattr(finance_router, "parse_invoice_with_llm", lambda _: None)
-    upload = UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-test"))
-
     with pytest.raises(HTTPException) as error:
-        asyncio.run(finance_router.extract_invoice(upload, db))
+        finance_response(
+            finance_request(
+                db,
+                "POST",
+                "/invoices/extract",
+                files={"file": ("invoice.pdf", b"%PDF-test", "application/pdf")},
+            )
+        )
 
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "missing_due_date"
@@ -1043,6 +977,7 @@ def test_same_transaction_cannot_be_reconciled_twice(db):
 def test_database_rejects_two_payments_for_same_transaction(db):
     transaction = add_transaction(db)
     first_payment = Payment(
+        bar_id=db.info["bar_id"],
         date=transaction.date,
         amount=Decimal("200.00"),
         method=PaymentMethod.bank_transfer,
@@ -1051,6 +986,7 @@ def test_database_rejects_two_payments_for_same_transaction(db):
         transaction_id=transaction.id,
     )
     second_payment = Payment(
+        bar_id=db.info["bar_id"],
         date=transaction.date,
         amount=Decimal("220.00"),
         method=PaymentMethod.bank_transfer,
@@ -1113,20 +1049,20 @@ def test_legacy_link_endpoint_rejects_overpayment(db):
 def test_reconciliation_rolls_back_payment_if_link_creation_fails(db, monkeypatch):
     invoice = add_invoice(db)
     transaction = add_transaction(db)
-    original_add = db.add
+    original_add = finance_router.Session.add
 
-    def fail_on_link(instance):
+    def fail_on_link(session, instance, *args, **kwargs):
         if isinstance(instance, InvoicePaymentLink):
             raise RuntimeError("simulated link failure")
-        original_add(instance)
+        return original_add(session, instance, *args, **kwargs)
 
-    monkeypatch.setattr(db, "add", fail_on_link)
+    monkeypatch.setattr(finance_router.Session, "add", fail_on_link)
 
     with pytest.raises(HTTPException) as error:
         reconcile(db, invoice, transaction)
 
     assert error.value.status_code == 500
-    monkeypatch.setattr(db, "add", original_add)
+    monkeypatch.undo()
     assert db.scalars(select(Payment)).all() == []
     assert db.scalars(select(InvoicePaymentLink)).all() == []
     assert invoice.status == InvoiceStatus.pending

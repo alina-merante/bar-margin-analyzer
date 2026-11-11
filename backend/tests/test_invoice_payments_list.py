@@ -3,32 +3,24 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import Session
-
-from app.database import Base
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
-from app.routers.finance import list_invoice_payments
+from finance_test_support import finance_request, finance_response
 
 
 @pytest.fixture
-def db(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'payments.db'}")
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(connection, _):
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
+def db(finance_http_env):
+    with finance_http_env["sessionmaker"]() as session:
+        session.info.update(
+            finance_client=finance_http_env["client"],
+            csrf_token=finance_http_env["csrf_token"],
+            bar_id=finance_http_env["bar_id"],
+        )
         yield session
-    engine.dispose()
 
 
 def add_invoice(db, total="400.00", status=InvoiceStatus.pending):
     invoice = Invoice(
+        bar_id=db.info["bar_id"],
         supplier="Fornitore",
         invoice_number="F-1",
         issue_date=dt.date(2026, 7, 2),
@@ -44,6 +36,7 @@ def add_invoice(db, total="400.00", status=InvoiceStatus.pending):
 
 def add_payment(db, invoice, amount, date, method=PaymentMethod.cash, transaction=None, reference="rif"):
     payment = Payment(
+        bar_id=db.info["bar_id"],
         date=date,
         amount=Decimal(amount),
         method=method,
@@ -53,7 +46,13 @@ def add_payment(db, invoice, amount, date, method=PaymentMethod.cash, transactio
     )
     db.add(payment)
     db.flush()
-    db.add(InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id))
+    db.add(
+        InvoicePaymentLink(
+            bar_id=db.info["bar_id"],
+            invoice_id=invoice.id,
+            payment_id=payment.id,
+        )
+    )
     db.commit()
     return payment
 
@@ -62,7 +61,9 @@ def test_paid_invoice_with_single_payment(db):
     invoice = add_invoice(db, status=InvoiceStatus.paid)
     payment = add_payment(db, invoice, "400.00", dt.date(2026, 7, 5))
 
-    result = list_invoice_payments(invoice.id, db)
+    result = finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice.id}/payments")
+    )
 
     assert result["linked_amount"] == 400.0
     assert result["remaining_amount"] == 0.0
@@ -80,7 +81,9 @@ def test_invoice_with_multiple_partial_payments_ordered_by_date(db):
     add_payment(db, invoice, "100.00", dt.date(2026, 7, 9))
     add_payment(db, invoice, "150.00", dt.date(2026, 7, 3))
 
-    result = list_invoice_payments(invoice.id, db)
+    result = finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice.id}/payments")
+    )
 
     assert [p["amount"] for p in result["payments"]] == [150.0, 100.0]
     assert result["linked_amount"] == 250.0
@@ -92,7 +95,9 @@ def test_invoice_with_multiple_partial_payments_ordered_by_date(db):
 def test_invoice_without_payments(db):
     invoice = add_invoice(db)
 
-    result = list_invoice_payments(invoice.id, db)
+    result = finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice.id}/payments")
+    )
 
     assert result["payments"] == []
     assert result["linked_amount"] == 0.0
@@ -101,7 +106,7 @@ def test_invoice_without_payments(db):
 
 def test_missing_invoice_returns_404(db):
     with pytest.raises(HTTPException) as exc:
-        list_invoice_payments(999, db)
+        finance_response(finance_request(db, "GET", "/invoices/999/payments"))
 
     assert exc.value.status_code == 404
 
@@ -109,6 +114,7 @@ def test_missing_invoice_returns_404(db):
 def test_bank_and_manual_payments_are_distinguished(db):
     invoice = add_invoice(db)
     transaction = Transaction(
+        bar_id=db.info["bar_id"],
         date=dt.date(2026, 7, 4),
         description="SEPA",
         amount=Decimal("-100.00"),
@@ -119,7 +125,9 @@ def test_bank_and_manual_payments_are_distinguished(db):
     add_payment(db, invoice, "100.00", dt.date(2026, 7, 4), PaymentMethod.bank_transfer, transaction)
     add_payment(db, invoice, "50.00", dt.date(2026, 7, 6), PaymentMethod.cash)
 
-    bank, manual = list_invoice_payments(invoice.id, db)["payments"]
+    bank, manual = finance_response(
+        finance_request(db, "GET", f"/invoices/{invoice.id}/payments")
+    )["payments"]
 
     assert bank["source"] == "bank"
     assert bank["transaction_id"] == transaction.id
