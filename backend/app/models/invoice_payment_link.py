@@ -12,6 +12,7 @@ class InvoicePaymentLink(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
     payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
 

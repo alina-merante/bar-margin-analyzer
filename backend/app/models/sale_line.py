@@ -11,6 +11,7 @@ class SaleLine(Base):
     __tablename__ = "sale_lines"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     qty: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

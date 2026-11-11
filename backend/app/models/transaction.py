@@ -11,6 +11,7 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

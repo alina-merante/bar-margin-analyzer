@@ -20,6 +20,7 @@ class Payment(Base):
     __table_args__ = (UniqueConstraint("transaction_id", name="uq_payments_transaction_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod, name="payment_method"), nullable=False, index=True)

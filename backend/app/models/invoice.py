@@ -18,6 +18,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     supplier: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     invoice_number: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     issue_date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)

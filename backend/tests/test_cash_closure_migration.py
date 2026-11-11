@@ -43,12 +43,13 @@ def create_pre_revision_database(tmp_path, monkeypatch):
 
     backend_dir = Path(__file__).resolve().parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
     return config, engine
 
 
 def upgrade(config):
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261104_0008")
 
 
 def test_upgrade_preserves_existing_closure_values(tmp_path, monkeypatch):

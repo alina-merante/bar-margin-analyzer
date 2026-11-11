@@ -32,7 +32,7 @@ def test_tenant_migration_creates_only_new_tables(tmp_path, monkeypatch):
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
 
     try:
-        command.upgrade(config, "head")
+        command.upgrade(config, "20261110_0009")
 
         inspector = inspect(engine)
         table_names = set(inspector.get_table_names())
@@ -116,7 +116,7 @@ def test_tenant_migration_downgrade_drops_only_new_tables(tmp_path, monkeypatch)
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
 
     try:
-        command.upgrade(config, "head")
+        command.upgrade(config, "20261110_0009")
         command.downgrade(config, "20261104_0008")
 
         assert set(inspect(engine).get_table_names()) == {

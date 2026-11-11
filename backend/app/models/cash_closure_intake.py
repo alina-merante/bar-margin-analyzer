@@ -44,6 +44,7 @@ class CashClosureIntake(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
     document_id: Mapped[int] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,

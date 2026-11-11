@@ -18,6 +18,7 @@ class DailyCashClosure(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
 
     date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
     closure_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
