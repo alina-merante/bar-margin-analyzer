@@ -28,6 +28,14 @@ class AuthSession(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
+    active_bar_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "bars.id",
+            name="fk_auth_sessions_active_bar_id_bars",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -38,3 +46,4 @@ class AuthSession(Base):
     )
 
     user = relationship("User", back_populates="auth_sessions")
+    active_bar = relationship("Bar", foreign_keys=[active_bar_id])
