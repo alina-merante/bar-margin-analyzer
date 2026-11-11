@@ -1,7 +1,7 @@
 import datetime as dt
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -10,10 +10,26 @@ from app.database import Base
 class DailyCashClosure(Base):
     __tablename__ = "daily_cash_closures"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_daily_cash_closures_bar_date_number",
+            "bar_id",
             "date",
             "closure_number",
-            name="uq_daily_cash_closures_date_closure_number",
+            unique=True,
+            postgresql_where=text(
+                "bar_id IS NOT NULL AND closure_number IS NOT NULL"
+            ),
+            sqlite_where=text("bar_id IS NOT NULL AND closure_number IS NOT NULL"),
+        ),
+        Index(
+            "uq_daily_cash_closures_legacy_date_number",
+            "date",
+            "closure_number",
+            unique=True,
+            postgresql_where=text(
+                "bar_id IS NULL AND closure_number IS NOT NULL"
+            ),
+            sqlite_where=text("bar_id IS NULL AND closure_number IS NOT NULL"),
         ),
     )
 

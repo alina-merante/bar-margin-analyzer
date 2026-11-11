@@ -3,16 +3,20 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import require_session_csrf
+from app.bar_context import BarContext, BarPermission, require_bar_permission
 from app.database import get_db
+from app.models import AuthSession
 from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.document import Document
 
 router = APIRouter(prefix="/cash-closures", tags=["cash-closures"])
+review_context = require_bar_permission(BarPermission.REVIEW_OCR)
 
 
 class CashClosureCorrection(BaseModel):
@@ -57,13 +61,36 @@ def intake_to_dict(intake: CashClosureIntake) -> dict:
     }
 
 
-def get_pending_intake(db: Session, intake_id: int) -> CashClosureIntake:
+def get_intake_for_bar(
+    db: Session,
+    intake_id: int,
+    bar_id: int,
+    *,
+    pending_only: bool = False,
+) -> CashClosureIntake:
+    filters = [
+        CashClosureIntake.id == intake_id,
+        CashClosureIntake.bar_id == bar_id,
+        Document.bar_id == bar_id,
+    ]
     intake = db.scalar(
-        select(CashClosureIntake).where(CashClosureIntake.id == intake_id)
+        select(CashClosureIntake)
+        .join(Document, Document.id == CashClosureIntake.document_id)
+        .outerjoin(
+            DailyCashClosure,
+            DailyCashClosure.id == CashClosureIntake.closure_id,
+        )
+        .where(*filters)
+        .where(
+            or_(
+                CashClosureIntake.closure_id.is_(None),
+                DailyCashClosure.bar_id == bar_id,
+            )
+        )
     )
     if intake is None:
         raise HTTPException(status_code=404, detail="cash closure review not found")
-    if intake.status != "pending":
+    if pending_only and intake.status != "pending":
         raise HTTPException(status_code=409, detail="cash closure review is no longer pending")
     return intake
 
@@ -106,12 +133,25 @@ def validate_payment_breakdown(
 @router.get("/review")
 def list_cash_closure_reviews(
     month: str | None = Query(default=None, description="Upload month in YYYY-MM format"),
+    context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     query = (
         select(CashClosureIntake)
         .join(Document, Document.id == CashClosureIntake.document_id)
-        .where(CashClosureIntake.status == "pending")
+        .outerjoin(
+            DailyCashClosure,
+            DailyCashClosure.id == CashClosureIntake.closure_id,
+        )
+        .where(
+            CashClosureIntake.status == "pending",
+            CashClosureIntake.bar_id == context.bar.id,
+            Document.bar_id == context.bar.id,
+            or_(
+                CashClosureIntake.closure_id.is_(None),
+                DailyCashClosure.bar_id == context.bar.id,
+            ),
+        )
     )
     if month:
         query = query.where(Document.month == month)
@@ -122,16 +162,15 @@ def list_cash_closure_reviews(
 @router.get("/review/{intake_id}")
 def get_cash_closure_review(
     intake_id: int,
+    context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> dict:
-    intake = db.scalar(
-        select(CashClosureIntake).where(
-            CashClosureIntake.id == intake_id,
-            CashClosureIntake.status == "pending",
-        )
+    intake = get_intake_for_bar(
+        db,
+        intake_id,
+        context.bar.id,
+        pending_only=True,
     )
-    if intake is None:
-        raise HTTPException(status_code=404, detail="cash closure review not found")
     return intake_to_dict(intake)
 
 
@@ -139,9 +178,16 @@ def get_cash_closure_review(
 def correct_cash_closure_review(
     intake_id: int,
     payload: CashClosureCorrection,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> dict:
-    intake = get_pending_intake(db, intake_id)
+    intake = get_intake_for_bar(
+        db,
+        intake_id,
+        context.bar.id,
+        pending_only=True,
+    )
     corrections = payload.model_dump(exclude_unset=True)
     for field, value in corrections.items():
         if field in {"total_amount", "cash_amount", "card_amount"}:
@@ -165,11 +211,11 @@ def correct_cash_closure_review(
 @router.post("/review/{intake_id}/approve")
 def approve_cash_closure_review(
     intake_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> dict:
-    intake = db.get(CashClosureIntake, intake_id)
-    if intake is None:
-        raise HTTPException(status_code=404, detail="cash closure review not found")
+    intake = get_intake_for_bar(db, intake_id, context.bar.id)
     if intake.status == "approved":
         return intake_to_dict(intake)
     if intake.status != "pending":
@@ -190,6 +236,7 @@ def approve_cash_closure_review(
 
     duplicate_closure = db.scalar(
         select(DailyCashClosure).where(
+            DailyCashClosure.bar_id == context.bar.id,
             DailyCashClosure.date == intake.date,
             DailyCashClosure.closure_number == intake.closure_number,
         )
@@ -197,6 +244,7 @@ def approve_cash_closure_review(
     duplicate_intake = db.scalar(
         select(CashClosureIntake).where(
             CashClosureIntake.id != intake.id,
+            CashClosureIntake.bar_id == context.bar.id,
             CashClosureIntake.date == intake.date,
             CashClosureIntake.closure_number == intake.closure_number,
             CashClosureIntake.status.in_(("pending", "approved")),
@@ -209,6 +257,7 @@ def approve_cash_closure_review(
         )
 
     closure = DailyCashClosure(
+        bar_id=context.bar.id,
         date=intake.date,
         closure_number=intake.closure_number,
         total_amount=intake.total_amount,
@@ -237,9 +286,16 @@ def approve_cash_closure_review(
 @router.post("/review/{intake_id}/reject")
 def reject_cash_closure_review(
     intake_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> dict:
-    intake = get_pending_intake(db, intake_id)
+    intake = get_intake_for_bar(
+        db,
+        intake_id,
+        context.bar.id,
+        pending_only=True,
+    )
     intake.status = "rejected"
     intake.document.status = "Rifiutata"
     db.commit()

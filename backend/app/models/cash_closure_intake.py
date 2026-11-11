@@ -32,14 +32,45 @@ class CashClosureIntake(Base):
             name="ck_cash_closure_intakes_classification",
         ),
         UniqueConstraint("document_id", name="uq_cash_closure_intakes_document_id"),
-        UniqueConstraint("source_sha256", name="uq_cash_closure_intakes_source_sha256"),
         Index(
-            "uq_cash_closure_intakes_date_number_active",
+            "uq_cash_closure_intakes_bar_date_number_active",
+            "bar_id",
             "date",
             "closure_number",
             unique=True,
-            sqlite_where=text("status != 'rejected'"),
-            postgresql_where=text("status != 'rejected'"),
+            sqlite_where=(
+                text("bar_id IS NOT NULL AND status != 'rejected'")
+            ),
+            postgresql_where=(
+                text("bar_id IS NOT NULL AND status != 'rejected'")
+            ),
+        ),
+        Index(
+            "uq_cash_closure_intakes_legacy_date_number_active",
+            "date",
+            "closure_number",
+            unique=True,
+            sqlite_where=text(
+                "bar_id IS NULL AND status != 'rejected'"
+            ),
+            postgresql_where=text(
+                "bar_id IS NULL AND status != 'rejected'"
+            ),
+        ),
+        Index(
+            "uq_cash_closure_intakes_bar_source_sha256",
+            "bar_id",
+            "source_sha256",
+            unique=True,
+            sqlite_where=text("bar_id IS NOT NULL"),
+            postgresql_where=text("bar_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_cash_closure_intakes_legacy_source_sha256",
+            "source_sha256",
+            unique=True,
+            sqlite_where=text("bar_id IS NULL"),
+            postgresql_where=text("bar_id IS NULL"),
         ),
     )
 

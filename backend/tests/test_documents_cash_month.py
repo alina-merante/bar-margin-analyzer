@@ -5,27 +5,43 @@ import tempfile
 from decimal import Decimal
 from io import BytesIO
 
-from fastapi import HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, event, select
+from sqlalchemy.orm import Session, sessionmaker
 
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
 from app.models import (
+    Bar,
     CashClosureIntake,
     DailyCashClosure,
     Document,
     Invoice,
     InvoicePaymentLink,
     InvoiceStatus,
+    MembershipRole,
     Payment,
     Transaction,
+    User,
+    UserBarMembership,
 )
-from app.routers import documents as documents_router, finance as finance_router, imports as imports_router
+from app.routers import (
+    documents as documents_router,
+    finance as finance_router,
+    imports as imports_router,
+)
 from app.routers.analytics import monthly_pnl, overview
+from app.routers.auth import router as auth_router
+from app.routers.bar_context import router as bar_context_router
+from app.security import hash_password
+
+
+ALLOWED_ORIGIN = "http://localhost:5173"
+TEST_PASSWORD = "correct horse battery"
 
 
 @pytest.fixture
@@ -35,6 +51,121 @@ def bank_document_db(tmp_path):
     with Session(engine) as session:
         yield session
     engine.dispose()
+
+
+@pytest.fixture
+def authenticated_bank_import_environment(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'bank-import.db'}")
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    test_sessionmaker = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    api = FastAPI()
+    api.include_router(auth_router)
+    api.include_router(bar_context_router)
+    api.include_router(imports_router.router)
+
+    def override_get_db():
+        db = test_sessionmaker()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    api.dependency_overrides[documents_router.get_db] = override_get_db
+
+    def ensure_test_upload_dirs():
+        (tmp_path / "uploads" / "documents").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "uploads" / "previews").mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(documents_router, "ensure_upload_dirs", ensure_test_upload_dirs)
+    monkeypatch.setattr(
+        documents_router,
+        "get_document_path",
+        lambda filename: str(tmp_path / "uploads" / "documents" / filename),
+    )
+    monkeypatch.setattr(
+        documents_router,
+        "get_preview_path",
+        lambda filename: str(tmp_path / "uploads" / "previews" / filename),
+    )
+    monkeypatch.setattr(
+        documents_router,
+        "get_document_url",
+        lambda filename: f"/uploads/documents/{filename}",
+    )
+    monkeypatch.setattr(
+        documents_router,
+        "create_text_preview_image",
+        lambda **_kwargs: "/uploads/previews/test.png",
+    )
+    monkeypatch.setattr(
+        imports_router,
+        "create_bank_document",
+        documents_router.create_bank_document,
+    )
+
+    with test_sessionmaker() as db:
+        bar = Bar(name="Test bar")
+        user = User(
+            email="bank-import@example.test",
+            password_hash=hash_password(TEST_PASSWORD),
+        )
+        db.add_all([bar, user])
+        db.flush()
+        db.add(
+            UserBarMembership(
+                user_id=user.id,
+                bar_id=bar.id,
+                role=MembershipRole.owner,
+            )
+        )
+        db.commit()
+        bar_id = bar.id
+
+    with TestClient(api) as client:
+        pre_auth_csrf = client.get("/auth/csrf").json()["csrf_token"]
+        login = client.post(
+            "/auth/login",
+            headers={
+                "Origin": ALLOWED_ORIGIN,
+                "X-CSRF-Token": pre_auth_csrf,
+            },
+            json={
+                "email": "bank-import@example.test",
+                "password": TEST_PASSWORD,
+            },
+        )
+        assert login.status_code == 200
+        csrf_token = login.json()["csrf_token"]
+        active_bar = client.put(
+            "/auth/active-bar",
+            headers={
+                "Origin": ALLOWED_ORIGIN,
+                "X-CSRF-Token": csrf_token,
+            },
+            json={"bar_id": bar_id},
+        )
+        assert active_bar.status_code == 200
+        yield client, test_sessionmaker, csrf_token, bar_id
+    engine.dispose()
+
+
+def post_bank_csv(client, csrf_token, filename, content, data=None):
+    return client.post(
+        "/imports/bank-csv",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": csrf_token,
+        },
+        files={"file": (filename, content, "text/csv")},
+        data=data or {},
+    )
 
 
 def create_bank_history_document(db):
@@ -240,52 +371,62 @@ def test_dashboard_bank_reminder_uses_latest_transaction_date(tmp_path):
     assert result["latest_bank_transaction_date"] == "2026-07-15"
 
 
-def test_uploading_old_bank_csv_does_not_advance_latest_transaction_date(tmp_path):
+def test_uploading_old_bank_csv_does_not_advance_latest_transaction_date(
+    authenticated_bank_import_environment,
+):
+    client, test_sessionmaker, csrf_token, bar_id = (
+        authenticated_bank_import_environment
+    )
     bank_csv = (
         b"date,description,amount\n"
         b"2026-07-10,Bank transfer - Supplier A,-25.00\n"
         b"2026-07-15,SEPA transfer - Supplier B,-200.00\n"
     )
 
-    with tempfile.TemporaryDirectory(dir=tmp_path) as temp_dir:
-        engine = create_engine(f"sqlite:///{temp_dir}/test_bank_upload_reminder.db")
-        Base.metadata.create_all(engine)
-        old_cwd = os.getcwd()
-        os.chdir(temp_dir)
+    imported = post_bank_csv(
+        client,
+        csrf_token,
+        "07_movimento_parziale_bevande_2026-07.csv",
+        bank_csv,
+        {"month": "2026-07"},
+    )
+    assert imported.status_code == 200
+    assert imported.json() == {"imported_rows": 2, "skipped_rows": 0}
 
-        try:
-            with Session(engine) as session:
-                imports_router.import_bank_csv(
-                    UploadFile(
-                        file=BytesIO(bank_csv),
-                        filename="07_movimento_parziale_bevande_2026-07.csv",
-                    ),
-                    session,
-                )
-                before_upload = overview(month="2026-07", db=session)
-                document = __import__("asyncio").run(
-                    documents_router.upload_document(
-                        file=UploadFile(
-                            file=BytesIO(bank_csv),
-                            filename="07_movimento_parziale_bevande_2026-07.csv",
-                        ),
-                        month="2026-09",
-                        section="bank",
-                        db=session,
-                    )
-                )
-                after_upload = overview(month="2026-07", db=session)
-                uploaded_at = dt.datetime.fromisoformat(document["created_at"])
+    with test_sessionmaker() as session:
+        before_upload = overview(month="2026-07", db=session)
+        document = __import__("asyncio").run(
+            documents_router.upload_document(
+                file=UploadFile(
+                    file=BytesIO(bank_csv),
+                    filename="07_movimento_parziale_bevande_2026-07.csv",
+                ),
+                month="2026-09",
+                section="bank",
+                db=session,
+            )
+        )
+        after_upload = overview(month="2026-07", db=session)
+        uploaded_at = dt.datetime.fromisoformat(document["created_at"])
+        uploaded_document = session.get(Document, document["id"])
+        tenant_document = session.scalar(
+            select(Document).where(Document.bar_id == bar_id)
+        )
 
-                assert uploaded_at.date() == dt.datetime.now(dt.UTC).date()
-                assert before_upload["latest_bank_transaction_date"] == "2026-07-15"
-                assert after_upload["latest_bank_transaction_date"] == "2026-07-15"
-        finally:
-            os.chdir(old_cwd)
-            engine.dispose()
+        assert uploaded_at.date() == dt.datetime.now(dt.UTC).date()
+        assert before_upload["latest_bank_transaction_date"] == "2026-07-15"
+        assert after_upload["latest_bank_transaction_date"] == "2026-07-15"
+        assert uploaded_document is not None
+        assert uploaded_document.bar_id is None
+        assert tenant_document is not None
 
 
-def test_bank_csv_document_month_uses_single_transaction_month_not_selected_month():
+def test_bank_csv_document_month_uses_single_transaction_month_not_selected_month(
+    authenticated_bank_import_environment,
+):
+    client, test_sessionmaker, csrf_token, bar_id = (
+        authenticated_bank_import_environment
+    )
     bank_csv = (
         b"date,description,amount\n"
         b"2026-07-03,SEPA transfer - Torrefazione Italiana S.p.A.,-420.00\n"
@@ -295,127 +436,117 @@ def test_bank_csv_document_month_uses_single_transaction_month_not_selected_mont
         b"2026-07-14,POS settlement - Incassi carte,2000.00\n"
     )
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        engine = create_engine(f"sqlite:///{temp_dir}/test_bank_import.db")
-        Base.metadata.create_all(engine)
-        old_cwd = os.getcwd()
-        os.chdir(temp_dir)
+    first_import = post_bank_csv(
+        client,
+        csrf_token,
+        "05_movimenti_bancari_2026-07.csv",
+        bank_csv,
+        {"month": "2026-09"},
+    )
+    assert first_import.status_code == 200
+    assert first_import.json() == {"imported_rows": 5, "skipped_rows": 0}
 
-        try:
-            with Session(engine) as session:
-                document = __import__("asyncio").run(
-                    documents_router.upload_document(
-                        file=UploadFile(
-                            file=BytesIO(bank_csv),
-                            filename="05_movimenti_bancari_2026-07.csv",
-                        ),
-                        month="2026-09",
-                        section="bank",
-                        db=session,
-                    )
-                )
-
-                first_import = imports_router.import_bank_csv(
-                    UploadFile(
-                        file=BytesIO(bank_csv),
-                        filename="05_movimenti_bancari_2026-07.csv",
-                    ),
-                    document_id=document["id"],
-                    db=session,
-                )
-                duplicate_import = imports_router.import_bank_csv(
-                    UploadFile(
-                        file=BytesIO(bank_csv),
-                        filename="05_movimenti_bancari_2026-07.csv",
-                    ),
-                    document_id=document["id"],
-                    db=session,
-                )
-
-                assert first_import == {"imported_rows": 5, "skipped_rows": 0}
-                assert duplicate_import == {"imported_rows": 0, "skipped_rows": 5}
-
-                transactions = session.scalars(
-                    select(Transaction).order_by(Transaction.id)
-                ).all()
-                assert len(transactions) == 5
-                assert {transaction.document_id for transaction in transactions} == {
-                    document["id"]
-                }
-                assert transactions[0].counterparty == "Torrefazione Italiana S.p.A."
-                assert transactions[0].amount == Decimal("-420.00")
-
-                assert document["month"] == "2026-07"
-                assert len(session.scalars(select(Transaction)).all()) == 5
-                assert session.scalars(select(Payment)).all() == []
-                assert session.scalars(select(InvoicePaymentLink)).all() == []
-
-                pnl = monthly_pnl(
-                    session,
-                    dt.date(2026, 7, 1),
-                    dt.date(2026, 8, 1),
-                )
-                assert pnl["expenses"] == Decimal("0.00")
-        finally:
-            os.chdir(old_cwd)
-
-
-def test_atomic_bank_import_creates_linked_document_and_transaction(bank_document_db, tmp_path):
-    content = b"date,description,amount\n2026-07-18,Commissioni bancarie luglio,-5.00\n"
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-
-    try:
-        result = imports_router.import_bank_csv(
-            UploadFile(file=BytesIO(content), filename="atomic_bank.csv"),
-            db=bank_document_db,
-            month="2026-07",
-        )
-
-        document = bank_document_db.scalar(select(Document))
-        transaction = bank_document_db.scalar(select(Transaction))
-
-        assert result == {"imported_rows": 1, "skipped_rows": 0}
+    with test_sessionmaker() as session:
+        document = session.scalar(select(Document))
         assert document is not None
+        assert document.bar_id == bar_id
+        duplicate_import = post_bank_csv(
+            client,
+            csrf_token,
+            "05_movimenti_bancari_2026-07.csv",
+            bank_csv,
+            {"document_id": str(document.id)},
+        )
+        assert duplicate_import.status_code == 200
+        assert duplicate_import.json() == {"imported_rows": 0, "skipped_rows": 5}
+
+        transactions = session.scalars(
+            select(Transaction).order_by(Transaction.id)
+        ).all()
+        assert len(transactions) == 5
+        assert {transaction.document_id for transaction in transactions} == {
+            document.id
+        }
+        assert transactions[0].counterparty == "Torrefazione Italiana S.p.A."
+        assert transactions[0].amount == Decimal("-420.00")
+
+        assert document.month == "2026-07"
+        assert len(session.scalars(select(Transaction)).all()) == 5
+        assert session.scalars(select(Payment)).all() == []
+        assert session.scalars(select(InvoicePaymentLink)).all() == []
+
+        pnl = monthly_pnl(
+            session,
+            dt.date(2026, 7, 1),
+            dt.date(2026, 8, 1),
+        )
+        assert pnl["expenses"] == Decimal("0.00")
+
+
+def test_atomic_bank_import_creates_linked_document_and_transaction(
+    authenticated_bank_import_environment,
+):
+    client, test_sessionmaker, csrf_token, bar_id = (
+        authenticated_bank_import_environment
+    )
+    content = b"date,description,amount\n2026-07-18,Commissioni bancarie luglio,-5.00\n"
+    result = post_bank_csv(
+        client,
+        csrf_token,
+        "atomic_bank.csv",
+        content,
+        {"month": "2026-07"},
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"imported_rows": 1, "skipped_rows": 0}
+    with test_sessionmaker() as db:
+        document = db.scalar(select(Document))
+        transaction = db.scalar(select(Transaction))
+
+        assert document is not None
+        assert document.bar_id == bar_id
         assert document.original_filename == "atomic_bank.csv"
         assert document.section == "bank"
         assert transaction is not None
+        assert transaction.bar_id == bar_id
         assert transaction.date == dt.date(2026, 7, 18)
         assert transaction.description == "Commissioni bancarie luglio"
         assert transaction.amount == Decimal("-5.00")
         assert transaction.document_id == document.id
-    finally:
-        os.chdir(old_cwd)
 
 
 def test_invalid_atomic_bank_import_leaves_no_document_or_transactions(
-    bank_document_db, tmp_path
+    authenticated_bank_import_environment,
 ):
+    client, test_sessionmaker, csrf_token, _bar_id = (
+        authenticated_bank_import_environment
+    )
     content = (
         b"date,description,amount\n"
         b"2026-07-18,Valid movement,-5.00\n"
         b"not-a-date,Invalid movement,-2.00\n"
     )
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
 
-    try:
-        with pytest.raises(HTTPException):
-            imports_router.import_bank_csv(
-                UploadFile(file=BytesIO(content), filename="invalid_bank.csv"),
-                db=bank_document_db,
-                month="2026-07",
-            )
-
-        assert bank_document_db.scalars(select(Document)).all() == []
-        assert bank_document_db.scalars(select(Transaction)).all() == []
-    finally:
-        os.chdir(old_cwd)
+    response = post_bank_csv(
+        client,
+        csrf_token,
+        "invalid_bank.csv",
+        content,
+        {"month": "2026-07"},
+    )
+    assert response.status_code == 400
+    with test_sessionmaker() as db:
+        assert db.scalars(select(Document)).all() == []
+        assert db.scalars(select(Transaction)).all() == []
 
 
 def test_atomic_bank_import_rolls_back_partial_transactions_and_document(
-    bank_document_db, tmp_path, monkeypatch
+    authenticated_bank_import_environment, tmp_path, monkeypatch
 ):
+    client, test_sessionmaker, csrf_token, _bar_id = (
+        authenticated_bank_import_environment
+    )
     content = (
         b"date,description,amount\n"
         b"2026-07-18,First movement,-5.00\n"
@@ -423,57 +554,65 @@ def test_atomic_bank_import_rolls_back_partial_transactions_and_document(
     )
     original_import = imports_router.import_bank_transactions
 
-    def fail_after_first_row(rows, db, document_id):
-        original_import(rows[:1], db, document_id)
+    def fail_after_first_row(rows, db, document_id, bar_id):
+        original_import(rows[:1], db, document_id, bar_id)
         raise RuntimeError("simulated bank import failure")
 
     monkeypatch.setattr(imports_router, "import_bank_transactions", fail_after_first_row)
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
 
-    try:
-        with pytest.raises(RuntimeError, match="simulated bank import failure"):
-            imports_router.import_bank_csv(
-                UploadFile(file=BytesIO(content), filename="failed_bank.csv"),
-                db=bank_document_db,
-                month="2026-07",
-            )
+    with pytest.raises(RuntimeError, match="simulated bank import failure"):
+        post_bank_csv(
+            client,
+            csrf_token,
+            "failed_bank.csv",
+            content,
+            {"month": "2026-07"},
+        )
 
-        assert bank_document_db.scalars(select(Document)).all() == []
-        assert bank_document_db.scalars(select(Transaction)).all() == []
-        assert not list((tmp_path / "uploads" / "documents").glob("*"))
-        assert not list((tmp_path / "uploads" / "previews").glob("*"))
-    finally:
-        os.chdir(old_cwd)
+    with test_sessionmaker() as db:
+        assert db.scalars(select(Document)).all() == []
+        assert db.scalars(select(Transaction)).all() == []
+    assert not list((tmp_path / "uploads" / "documents").glob("*"))
+    assert not list((tmp_path / "uploads" / "previews").glob("*"))
 
 
-def test_atomic_bank_import_keeps_transaction_deduplication(bank_document_db, tmp_path):
+def test_atomic_bank_import_keeps_transaction_deduplication(
+    authenticated_bank_import_environment,
+):
+    client, test_sessionmaker, csrf_token, bar_id = (
+        authenticated_bank_import_environment
+    )
     content = b"date,description,amount\n2026-07-18,Commissioni bancarie luglio,-5.00\n"
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
+    first_result = post_bank_csv(
+        client,
+        csrf_token,
+        "first_bank.csv",
+        content,
+        {"month": "2026-07"},
+    )
+    assert first_result.status_code == 200
+    assert first_result.json() == {"imported_rows": 1, "skipped_rows": 0}
 
-    try:
-        first_result = imports_router.import_bank_csv(
-            UploadFile(file=BytesIO(content), filename="first_bank.csv"),
-            db=bank_document_db,
-            month="2026-07",
-        )
-        original_transaction = bank_document_db.scalar(select(Transaction))
+    with test_sessionmaker() as db:
+        original_transaction = db.scalar(select(Transaction))
+        assert original_transaction is not None
         original_document_id = original_transaction.document_id
+        assert original_transaction.bar_id == bar_id
 
-        second_result = imports_router.import_bank_csv(
-            UploadFile(file=BytesIO(content), filename="reimport_bank.csv"),
-            db=bank_document_db,
-            month="2026-07",
-        )
+    second_result = post_bank_csv(
+        client,
+        csrf_token,
+        "reimport_bank.csv",
+        content,
+        {"document_id": str(original_document_id)},
+    )
+    assert second_result.status_code == 200
+    assert second_result.json() == {"imported_rows": 0, "skipped_rows": 1}
 
-        transactions = bank_document_db.scalars(select(Transaction)).all()
-        assert first_result == {"imported_rows": 1, "skipped_rows": 0}
-        assert second_result == {"imported_rows": 0, "skipped_rows": 1}
+    with test_sessionmaker() as db:
+        transactions = db.scalars(select(Transaction)).all()
         assert len(transactions) == 1
         assert transactions[0].document_id == original_document_id
-    finally:
-        os.chdir(old_cwd)
 
 
 def test_mixed_month_bank_csv_keeps_selected_document_month():

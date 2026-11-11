@@ -283,6 +283,7 @@ def create_bank_document(
     content: bytes,
     month: str,
     db: Session,
+    bar_id: int,
 ) -> tuple[Document, list[str]]:
     document_month = single_month_from_bank_csv(content) or month
     stored_filename = f"{uuid.uuid4()}.csv"
@@ -304,6 +305,7 @@ def create_bank_document(
         )
         category, result = classify_document(original_filename)
         document = Document(
+            bar_id=bar_id,
             month=document_month,
             original_filename=original_filename,
             stored_filename=stored_filename,

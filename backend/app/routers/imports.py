@@ -10,15 +10,31 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth import require_session_csrf
+from app.bar_context import BarContext, BarPermission, require_bar_permission
 from app.database import get_db
-from app.models import CategoryRule, Document, Product, SaleLine, Transaction
+from app.models import (
+    AuthSession,
+    CategoryRule,
+    Document,
+    ExpenseCategory,
+    Product,
+    SaleLine,
+    Transaction,
+)
 from app.routers.documents import create_bank_document
 
 router = APIRouter(prefix="/imports", tags=["imports"])
+operational_context = require_bar_permission(BarPermission.OPERATE)
 
 
 @router.post("/pos-csv")
-def import_pos_csv(file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict[str, int]:
+def import_pos_csv(
+    file: UploadFile = File(...),
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(operational_context),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file")
 
@@ -46,13 +62,26 @@ def import_pos_csv(file: UploadFile = File(...), db: Session = Depends(get_db)) 
         if not product_name:
             raise HTTPException(status_code=400, detail=f"Product is required at line {idx}")
 
-        product = db.scalar(select(Product).where(Product.name == product_name))
+        product = db.scalar(
+            select(Product).where(
+                Product.name == product_name,
+                Product.bar_id == context.bar.id,
+            )
+        )
         if product is None:
-            product = Product(name=product_name)
+            product = Product(name=product_name, bar_id=context.bar.id)
             db.add(product)
             db.flush()
 
-        db.add(SaleLine(date=sale_date, product_id=product.id, qty=qty, total=total))
+        db.add(
+            SaleLine(
+                bar_id=context.bar.id,
+                date=sale_date,
+                product_id=product.id,
+                qty=qty,
+                total=total,
+            )
+        )
         imported_rows += 1
 
     db.commit()
@@ -83,6 +112,8 @@ def extract_counterparty(description: str) -> str:
 @router.post("/bank-csv")
 def import_bank_csv(
     file: UploadFile = File(...),
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(operational_context),
     db: Session = Depends(get_db),
     document_id: Annotated[int | None, Form()] = None,
     month: Annotated[str | None, Form()] = None,
@@ -99,11 +130,15 @@ def import_bank_csv(
                     status_code=400,
                     detail="month cannot be combined with document_id",
                 )
-            document = db.get(Document, document_id)
+            document = db.scalar(
+                select(Document).where(
+                    Document.id == document_id,
+                    Document.bar_id == context.bar.id,
+                    Document.section == "bank",
+                )
+            )
             if document is None:
                 raise HTTPException(status_code=404, detail="bank document not found")
-            if document.section != "bank":
-                raise HTTPException(status_code=400, detail="document must be a bank document")
 
         content = file.file.read()
         rows = parse_bank_csv(file.filename, content)
@@ -114,10 +149,16 @@ def import_bank_csv(
                 content,
                 month,
                 db,
+                context.bar.id,
             )
             document_id = document.id
 
-        result = import_bank_transactions(rows, db, document_id)
+        result = import_bank_transactions(
+            rows,
+            db,
+            document_id,
+            context.bar.id,
+        )
         db.commit()
         return result
     except Exception:
@@ -163,8 +204,28 @@ def import_bank_transactions(
     rows: list[tuple[dt.date, str, Decimal]],
     db: Session,
     document_id: int | None,
+    bar_id: int,
 ) -> dict[str, int]:
-    rules = db.scalars(select(CategoryRule)).all()
+    if document_id is not None:
+        document_exists = db.scalar(
+            select(Document.id).where(
+                Document.id == document_id,
+                Document.bar_id == bar_id,
+                Document.section == "bank",
+            )
+        )
+        if document_exists is None:
+            raise HTTPException(status_code=404, detail="bank document not found")
+
+    rules = db.scalars(
+        select(CategoryRule)
+        .join(ExpenseCategory, ExpenseCategory.id == CategoryRule.category_id)
+        .where(
+            CategoryRule.bar_id == bar_id,
+            ExpenseCategory.bar_id == bar_id,
+        )
+        .order_by(CategoryRule.id.asc())
+    ).all()
     imported_rows = 0
     skipped_rows = 0
 
@@ -179,6 +240,7 @@ def import_bank_transactions(
         counterparty = extract_counterparty(description)
         existing_transaction = db.scalar(
             select(Transaction.id).where(
+                Transaction.bar_id == bar_id,
                 Transaction.date == date,
                 Transaction.description == description,
                 Transaction.amount == amount,
@@ -192,6 +254,7 @@ def import_bank_transactions(
 
         db.add(
             Transaction(
+                bar_id=bar_id,
                 date=date,
                 description=description,
                 amount=amount,

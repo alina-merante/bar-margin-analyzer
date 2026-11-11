@@ -73,10 +73,19 @@ le migrazioni al database scelto. Il comando chiede le credenziali senza
 mostrare la password e si rifiuta di procedere se esistono già utenti o bar
 non riconducibili al bar legacy.
 
-Questa fase fornisce solo le fondamenta auth: le API operative e i file sotto
-`/uploads` non sono ancora protetti né isolati per bar. Non considerare il
-sistema multi-tenant sicuro fino al completamento delle successive fasi di
-autorizzazione e protezione degli upload.
+La migrazione `20261111_0013` rende per-bar l'unicità di prodotti, categorie,
+chiusure e intake, mantenendo vincoli separati per record legacy con `bar_id`
+nullo. Categorie/regole, import CSV POS/banca e revisione delle chiusure
+richiedono sessione autenticata, bar attivo e i permessi previsti. Gli import
+assegnano `bar_id` lato server; gli ID di documenti e categorie vengono
+verificati contro il bar selezionato.
+
+Le API generali di upload/OCR, documenti, fatture, pagamenti e analytics non
+sono ancora tenant-aware; i documenti statici sotto `/uploads` restano
+pubblici. Gli intake o documenti senza un bar valido non sono mostrati né
+approvabili dalla revisione delle chiusure. Non considerare il sistema
+multi-tenant sicuro né esporlo pubblicamente fino al completamento delle fasi
+successive.
 
 ## Clean bootstrap
 
@@ -110,14 +119,15 @@ Comandi utili dalla root:
 
 ## Import e API principali
 
-Import POS:
+Import POS (richiede sessione autenticata, bar selezionato, cookie CSRF e
+header `Origin` autorizzato):
 
 ```bash
 curl -X POST http://localhost:8000/imports/pos-csv \
   -F "file=@data/pos_marzo_2026.csv"
 ```
 
-Import movimenti bancari:
+Import movimenti bancari (stessi requisiti dell'import POS):
 
 ```bash
 curl -X POST http://localhost:8000/imports/bank-csv \
