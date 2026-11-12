@@ -4,14 +4,14 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from app import config
 from app.database import Base, get_db
 from app.models import (
     AuthSession, Bar, CashClosureIntake, DailyCashClosure, Document, Invoice, InvoiceStatus,
-    Transaction, UserBarMembership,
+    Payment, Transaction, UserBarMembership,
 )
 from app.routers import documents, finance
 from app.services.document_ocr import DocumentReadError
@@ -116,6 +116,110 @@ def test_upload_download_switch_legacy_traversal_and_cache(document_environment)
     with factory() as db:
         assert db.get(Document, first["id"]).bar_id == ids["bar_one"]
         assert db.get(Document, second["id"]).bar_id == ids["bar_two"]
+
+
+def test_stale_tab_cannot_upload_pay_or_download_other_bar(document_environment):
+    client, factory, ids, root, app = document_environment
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    uploaded = upload(client, csrf, b"private-document").json()
+    (root / "invoices" / "invoice.pdf").write_bytes(b"private-invoice")
+    with factory() as db:
+        db.add(Invoice(
+            bar_id=ids["bar_one"], supplier="A", invoice_number="A-1",
+            issue_date=dt.date(2026, 7, 1), due_date=dt.date(2026, 7, 2),
+            total=Decimal("10"), vat=Decimal("0"), status=InvoiceStatus.pending,
+            file_url="/uploads/invoices/invoice.pdf",
+        ))
+        db.commit()
+
+    with TestClient(app) as second_tab:
+        second_tab.cookies.update(client.cookies)
+        assert select_bar(second_tab, ids["bar_two"], csrf).status_code == 200
+
+        assert upload(client, csrf, b"stale-upload").status_code == 409
+        payment = client.post(
+            "/payments",
+            headers=headers(csrf),
+            json={
+                "date": "2026-07-05",
+                "amount": "5.00",
+                "method": "cash",
+                "counterparty": "Supplier",
+                "reference": "stale-tab",
+            },
+        )
+        assert payment.status_code == 409
+        assert client.get(uploaded["file_url"]).status_code == 409
+        assert client.get("/uploads/invoices/invoice.pdf").status_code == 409
+        assert second_tab.get(uploaded["file_url"]).status_code == 404
+
+    with factory() as db:
+        assert db.query(Document).count() == 1
+        assert db.query(Payment).count() == 0
+
+
+def test_upload_revalidates_bar_before_persisting(document_environment, monkeypatch):
+    client, factory, ids, root, _app = document_environment
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+
+    def switch_bar_during_ocr(_content, _extension):
+        with factory() as db:
+            auth_session = db.query(AuthSession).one()
+            auth_session.active_bar_id = ids["bar_two"]
+            db.commit()
+        return {
+            "date": dt.date(2026, 7, 14),
+            "closure_number": "201",
+            "total_amount": Decimal("100"),
+            "cash_amount": Decimal("60"),
+            "card_amount": Decimal("40"),
+            "receipts_count": None,
+            "diagnostics": {},
+        }
+
+    monkeypatch.setattr(documents, "extract_daily_cash_closure", switch_bar_during_ocr)
+    monkeypatch.setattr(
+        documents.cash_closure_policy, "classify_closure",
+        lambda _data: documents.cash_closure_policy.SAVE_FOR_REVIEW,
+    )
+    response = upload(client, csrf, b"cash-document", "cash")
+    assert response.status_code == 409
+    with factory() as db:
+        assert db.query(Document).count() == 0
+        assert db.query(CashClosureIntake).count() == 0
+    assert list((root / "documents").iterdir()) == []
+
+
+def test_payment_revalidates_bar_before_commit(document_environment, monkeypatch):
+    client, factory, ids, _root, _app = document_environment
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    original_revalidate = finance.revalidate_active_bar_context
+
+    def switch_bar_before_commit(request, db, bar_id, *, lock=False):
+        db.execute(update(AuthSession).values(active_bar_id=ids["bar_two"]))
+        return original_revalidate(request, db, bar_id, lock=lock)
+
+    monkeypatch.setattr(
+        finance, "revalidate_active_bar_context", switch_bar_before_commit
+    )
+    response = client.post(
+        "/payments",
+        headers=headers(csrf),
+        json={
+            "date": "2026-07-05",
+            "amount": "5.00",
+            "method": "cash",
+            "counterparty": "Supplier",
+            "reference": "mid-request-switch",
+        },
+    )
+    assert response.status_code == 409
+    with factory() as db:
+        assert db.query(Payment).count() == 0
+        assert db.query(AuthSession).one().active_bar_id == ids["bar_one"]
 
 
 def test_ocr_review_correction_approval_and_deduplication(document_environment, monkeypatch):

@@ -54,6 +54,15 @@ def migration_database(tmp_path, monkeypatch):
         for table_name in OPERATIONAL_TABLES:
             table = metadata.tables[table_name]
             bar_id = table.c.bar_id
+            for index in list(table.indexes):
+                references_bar_id = any(
+                    column.name == "bar_id" for column in index.columns
+                ) or any(
+                    "bar_id" in str(index.dialect_options[dialect].get("where", ""))
+                    for dialect in ("sqlite", "postgresql")
+                )
+                if references_bar_id:
+                    table.indexes.remove(index)
             for constraint in list(table.foreign_key_constraints):
                 if any(element.parent is bar_id for element in constraint.elements):
                     table.constraints.remove(constraint)

@@ -5,13 +5,18 @@ import os
 import re
 import stat
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import config
-from app.bar_context import BarContext, BarPermission, require_bar_permission
+from app.bar_context import (
+    BarContext,
+    BarPermission,
+    revalidate_active_bar_context,
+    require_bar_permission,
+)
 from app.database import get_db
 from app.models import Document, Invoice
 
@@ -114,11 +119,16 @@ def _read_file(directory: str, filename: str) -> StreamingResponse:
 def read_upload(
     kind: str,
     filename: str,
+    request: Request,
     context: BarContext = Depends(read_context),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     if kind not in {"documents", "previews", "invoices"} or not safe_filename(filename):
         raise HTTPException(status_code=404, detail="file not found")
+    context = revalidate_active_bar_context(
+        request, db, context.bar.id, lock=True
+    )
+    read_context(context)
     url = f"/uploads/{kind}/{filename}"
 
     if kind == "invoices":

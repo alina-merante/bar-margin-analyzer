@@ -16,7 +16,7 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
 from app import config
-from app.bar_context import get_active_bar_context
+from app.bar_context import resolve_active_bar_context
 from app.models import (
     AuthSession,
     Bar,
@@ -71,14 +71,17 @@ def _test_context(db):
         )
         db.add(auth_session)
         db.flush()
-    return get_active_bar_context(auth_session, db)
+    return resolve_active_bar_context(auth_session, db, auth_session.active_bar_id)
 
 
 async def upload_for_test(*, db, **kwargs):
     context = _test_context(db)
     request = Request({
         "type": "http", "method": "POST", "path": "/documents/upload",
-        "headers": [(b"cookie", f"{settings.cookie_name}={TEST_SESSION_TOKEN}".encode())],
+        "headers": [
+            (b"cookie", f"{settings.cookie_name}={TEST_SESSION_TOKEN}".encode()),
+            (b"x-expected-bar-id", str(context.bar.id).encode()),
+        ],
     })
     return await documents_router.upload_document(
         request=request, _auth_session=context.auth_session, context=context, db=db, **kwargs
@@ -196,6 +199,7 @@ def authenticated_bank_import_environment(tmp_path, monkeypatch):
             json={"bar_id": bar_id},
         )
         assert active_bar.status_code == 200
+        client.headers["X-Expected-Bar-ID"] = str(bar_id)
         yield client, test_sessionmaker, csrf_token, bar_id
     engine.dispose()
 

@@ -9,7 +9,7 @@ from decimal import Decimal
 import os
 import uuid
 import pytesseract
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel, field_validator, model_validator
@@ -22,6 +22,7 @@ from app.bar_context import (
     BarContext,
     BarPermission,
     get_active_bar_context,
+    revalidate_active_bar_context,
     require_bar_permission,
 )
 from app.database import get_db
@@ -231,6 +232,15 @@ def invoice_to_dict(
         "status": payment_status.value,
         "file_url": invoice_url(invoice),
     }
+
+
+def revalidate_payment_context(
+    request: Request,
+    db: Session,
+    bar_id: int,
+) -> BarContext:
+    context = revalidate_active_bar_context(request, db, bar_id, lock=True)
+    return manage_payments_context(context)
 
 
 def parse_month(month: str) -> tuple[dt.date, dt.date]:
@@ -1134,6 +1144,7 @@ def create_invoice(
 
 @router.post("/invoices/extract")
 async def extract_invoice(
+    request: Request,
     file: UploadFile = File(...),
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(operate_context),
@@ -1215,6 +1226,10 @@ async def extract_invoice(
             ):
                 raise HTTPException(status_code=409, detail=DUPLICATE_INVOICE_DETAIL)
 
+            current_context = revalidate_active_bar_context(
+                request, db, context.bar.id, lock=True
+            )
+            operate_context(current_context)
             ensure_upload_dirs()
             safe_filename = f"{uuid.uuid4()}.{extension}"
             file_path = os.path.join(UPLOAD_INVOICES_DIR, safe_filename)
@@ -1428,6 +1443,7 @@ def get_transaction_candidates(
 def reconcile_invoice_transaction(
     invoice_id: int,
     payload: ReconcileTransactionPayload,
+    request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(manage_payments_context),
     db: Session = Depends(get_db),
@@ -1494,6 +1510,7 @@ def reconcile_invoice_transaction(
         linked_amount += payment_amount
         remaining_amount = invoice_remaining_amount(invoice, linked_amount)
         invoice.status = InvoiceStatus.paid if remaining_amount == 0 else InvoiceStatus.pending
+        revalidate_payment_context(request, db, context.bar.id)
         db.commit()
 
         return {
@@ -1518,6 +1535,7 @@ def reconcile_invoice_transaction(
 @router.post("/payments")
 def create_payment(
     payload: PaymentCreate,
+    request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(manage_payments_context),
     db: Session = Depends(get_db),
@@ -1531,6 +1549,7 @@ def create_payment(
         reference=payload.reference.strip(),
     )
     db.add(payment)
+    revalidate_payment_context(request, db, context.bar.id)
     db.commit()
     db.refresh(payment)
     return {
@@ -1591,6 +1610,7 @@ def list_payments(
 def link_payment(
     invoice_id: int,
     payload: LinkPaymentPayload,
+    request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(manage_payments_context),
     db: Session = Depends(get_db),
@@ -1644,6 +1664,7 @@ def link_payment(
         linked_amount += Decimal(payment.amount)
         remaining_amount = invoice_remaining_amount(invoice, linked_amount)
         invoice.status = InvoiceStatus.paid if remaining_amount == 0 else InvoiceStatus.pending
+        revalidate_payment_context(request, db, context.bar.id)
         db.commit()
 
         return {
@@ -1725,6 +1746,7 @@ def list_invoice_payments(
 def unlink_invoice_payment(
     invoice_id: int,
     link_id: int,
+    request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(manage_payments_context),
     db: Session = Depends(get_db),
@@ -1793,6 +1815,7 @@ def unlink_invoice_payment(
         invoice.status = (
             InvoiceStatus.paid if linked_amount > 0 and remaining_amount == 0 else InvoiceStatus.pending
         )
+        revalidate_payment_context(request, db, context.bar.id)
         db.commit()
 
         return {

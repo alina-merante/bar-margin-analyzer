@@ -104,8 +104,17 @@ Il frontend attuale deve ancora implementare `GET /auth/csrf`, `POST
 `X-CSRF-Token` e `Origin` autorizzato alle operazioni di scrittura, incluse
 `POST /documents/upload`, `DELETE /documents/{id}` e le modifiche a
 `/cash-closures/review/{id}`. Deve inoltre inviare la sessione nelle richieste
-dei file protetti. Fino a tale adeguamento il flusso non funziona
-dall'interfaccia attuale.
+dei file protetti e l'header `X-Expected-Bar-ID` in tutte le richieste tenant-
+scoped. Il valore deve essere l'ID del bar attivo letto da `/auth/active-bar`;
+è un controllo di coerenza, non un'autorizzazione. Il backend verifica sessione,
+bar attivo, membership e permessi indipendentemente dal valore ricevuto. Le
+richieste senza header sono rifiutate (428), con valore non valido (400) o
+diverso dal bar attivo (409). Le API `/auth/*` di login e selezione bar non
+richiedono questo header. Le scritture serializzano il contesto sessione/bar/
+membership per la durata della transazione; upload e OCR ricontrollano il
+contesto prima del salvataggio definitivo. I download protetti mantengono il
+contesto bloccato fino al completamento dello streaming del file. Fino a tale
+adeguamento il flusso non funziona dall'interfaccia attuale.
 
 Tutti gli endpoint `/analytics/*` richiedono sessione e bar attivo accessibile
 (owner, manager o staff); le risposte non sono memorizzabili nella cache.

@@ -207,7 +207,7 @@ def login(client, email):
 
 
 def select_bar(client, bar_id, csrf_token):
-    return client.put(
+    response = client.put(
         "/auth/active-bar",
         headers={
             "Origin": ALLOWED_ORIGIN,
@@ -215,6 +215,9 @@ def select_bar(client, bar_id, csrf_token):
         },
         json={"bar_id": bar_id},
     )
+    if response.status_code == 200:
+        client.headers["X-Expected-Bar-ID"] = str(bar_id)
+    return response
 
 
 def upload(client, path, csrf_token, filename, content, data=None):

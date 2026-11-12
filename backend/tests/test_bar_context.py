@@ -220,11 +220,14 @@ def select_bar(client, bar_id, csrf_token, *, origin=ALLOWED_ORIGIN):
     headers = {"X-CSRF-Token": csrf_token}
     if origin is not None:
         headers["Origin"] = origin
-    return client.put(
+    response = client.put(
         "/auth/active-bar",
         headers=headers,
         json={"bar_id": bar_id},
     )
+    if response.status_code == 200:
+        client.headers["X-Expected-Bar-ID"] = str(bar_id)
+    return response
 
 
 def test_user_can_select_multiple_bars_with_different_roles(context_environment):
@@ -293,6 +296,33 @@ def test_active_bar_is_independent_for_each_session(context_environment):
         second_client.close()
 
 
+def test_tenant_requests_require_expected_bar_matching_session(context_environment):
+    client, _engine, test_sessionmaker, api = context_environment
+    ids = seed_memberships(test_sessionmaker)
+    csrf_token = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf_token).status_code == 200
+
+    missing = client.get("/test/owner", headers={"X-Expected-Bar-ID": ""})
+    invalid = client.get("/test/owner", headers={"X-Expected-Bar-ID": "not-a-bar"})
+    assert missing.status_code == 428
+    assert invalid.status_code == 400
+    header_parameters = api.openapi()["paths"]["/test/owner"]["get"]["parameters"]
+    assert any(parameter["name"] == "X-Expected-Bar-ID" for parameter in header_parameters)
+    assert client.get(
+        "/test/owner", headers={"X-Expected-Bar-ID": str(ids["bar_two"])}
+    ).status_code == 409
+
+    second_client = TestClient(api)
+    try:
+        second_client.cookies.update(client.cookies)
+        second_client.headers["X-Expected-Bar-ID"] = str(ids["bar_two"])
+        assert select_bar(second_client, ids["bar_two"], csrf_token).status_code == 200
+        assert client.get("/test/owner").status_code == 409
+        assert second_client.get("/test/manager").status_code == 200
+    finally:
+        second_client.close()
+
+
 def test_revoked_membership_blocks_selected_bar(context_environment):
     client, _engine, test_sessionmaker, _api = context_environment
     ids = seed_memberships(test_sessionmaker)
@@ -311,6 +341,21 @@ def test_revoked_membership_blocks_selected_bar(context_environment):
         db.commit()
 
     assert client.get("/auth/active-bar").status_code == 403
+    assert client.get("/test/owner").status_code == 403
+
+
+def test_inactive_selected_bar_blocks_tenant_requests(context_environment):
+    client, _engine, test_sessionmaker, _api = context_environment
+    ids = seed_memberships(test_sessionmaker)
+    csrf_token = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf_token).status_code == 200
+
+    with test_sessionmaker() as db:
+        bar = db.get(Bar, ids["bar_one"])
+        assert bar is not None
+        bar.is_active = False
+        db.commit()
+
     assert client.get("/test/owner").status_code == 403
 
 

@@ -18,7 +18,7 @@ def api_request(db, method, path, *, params=None, payload=None):
     else:
         from test_documents_cash_month import TEST_SESSION_TOKEN, _test_context
 
-        _test_context(db)
+        context = _test_context(db)
         db.commit()
         app = FastAPI()
         app.include_router(analytics_router)
@@ -34,7 +34,11 @@ def api_request(db, method, path, *, params=None, payload=None):
             client.cookies.set("barmanager_csrf", "test-csrf")
             response = client.request(
                 method, path, params=params, json=payload,
-                headers={"Origin": "http://localhost:5173", "X-CSRF-Token": "test-csrf"},
+                headers={
+                    "Origin": "http://localhost:5173",
+                    "X-CSRF-Token": "test-csrf",
+                    "X-Expected-Bar-ID": str(context.bar.id),
+                },
             )
         db.expire_all()
     if response.status_code >= 400:

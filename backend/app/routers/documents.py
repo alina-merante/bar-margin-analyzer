@@ -15,11 +15,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.auth import get_current_session, require_session_csrf
+from app.auth import require_session_csrf
 from app.bar_context import (
-    BarContext, BarPermission, get_active_bar_context, require_bar_permission,
+    BarContext, BarPermission, get_active_bar_context, revalidate_active_bar_context,
+    require_bar_permission,
 )
-from app.models import AuthSession, Bar, User, UserBarMembership
+from app.models import AuthSession
 from app.config import (
     UPLOAD_DOCUMENTS_DIR, UPLOAD_PREVIEWS_DIR,
     get_document_path, get_preview_path,
@@ -471,29 +472,10 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
 def revalidate_upload_context(
     request: Request, db: Session, bar_id: int, *, lock: bool = False
 ) -> None:
-    db.expire_all()
-    current_session = get_current_session(request, db)
-    if lock:
-        db.execute(
-            select(AuthSession.id)
-            .where(AuthSession.id == current_session.id)
-            .with_for_update()
-        ).first()
-        db.execute(
-            select(User.id).where(User.id == current_session.user_id).with_for_update()
-        ).first()
-        db.execute(select(Bar.id).where(Bar.id == bar_id).with_for_update()).first()
-        db.execute(
-            select(UserBarMembership.id).where(
-                UserBarMembership.user_id == current_session.user_id,
-                UserBarMembership.bar_id == bar_id,
-            ).with_for_update()
-        ).first()
-        db.expire_all()
-        current_session = get_current_session(request, db)
-    current_context = upload_context(get_active_bar_context(current_session, db))
-    if current_context.bar.id != bar_id:
-        raise HTTPException(status_code=409, detail="active bar changed during upload")
+    current_context = revalidate_active_bar_context(
+        request, db, bar_id, lock=lock
+    )
+    upload_context(current_context)
 
 
 @router.post("/upload")

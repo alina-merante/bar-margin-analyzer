@@ -6,12 +6,17 @@ from decimal import Decimal
 from io import StringIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import require_session_csrf
-from app.bar_context import BarContext, BarPermission, require_bar_permission
+from app.bar_context import (
+    BarContext,
+    BarPermission,
+    revalidate_active_bar_context,
+    require_bar_permission,
+)
 from app.database import get_db
 from app.models import (
     AuthSession,
@@ -30,6 +35,7 @@ operational_context = require_bar_permission(BarPermission.OPERATE)
 
 @router.post("/pos-csv")
 def import_pos_csv(
+    request: Request,
     file: UploadFile = File(...),
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(operational_context),
@@ -84,6 +90,10 @@ def import_pos_csv(
         )
         imported_rows += 1
 
+    current_context = revalidate_active_bar_context(
+        request, db, context.bar.id, lock=True
+    )
+    operational_context(current_context)
     db.commit()
     return {"imported_rows": imported_rows}
 
@@ -111,6 +121,7 @@ def extract_counterparty(description: str) -> str:
 
 @router.post("/bank-csv")
 def import_bank_csv(
+    request: Request,
     file: UploadFile = File(...),
     _auth_session: AuthSession = Depends(require_session_csrf),
     context: BarContext = Depends(operational_context),
@@ -142,6 +153,11 @@ def import_bank_csv(
 
         content = file.file.read()
         rows = parse_bank_csv(file.filename, content)
+
+        current_context = revalidate_active_bar_context(
+            request, db, context.bar.id, lock=True
+        )
+        operational_context(current_context)
 
         if month:
             document, created_paths = create_bank_document(

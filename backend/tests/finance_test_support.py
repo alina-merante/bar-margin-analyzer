@@ -97,6 +97,7 @@ def finance_http_env(tmp_path, monkeypatch):
                 json={"bar_id": bar_id},
             )
             assert selected.status_code == 200
+            client.headers["X-Expected-Bar-ID"] = str(bar_id)
             yield {
                 "bar_id": bar_id,
                 "client": client,
