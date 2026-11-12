@@ -105,9 +105,20 @@ Il frontend attuale deve ancora implementare `GET /auth/csrf`, `POST
 `POST /documents/upload`, `DELETE /documents/{id}` e le modifiche a
 `/cash-closures/review/{id}`. Deve inoltre inviare la sessione nelle richieste
 dei file protetti. Fino a tale adeguamento il flusso non funziona
-dall'interfaccia attuale. Le API analytics restano fuori da questo isolamento:
-non considerare il sistema multi-tenant sicuro né esporlo pubblicamente fino
-al completamento delle fasi successive.
+dall'interfaccia attuale.
+
+Tutti gli endpoint `/analytics/*` richiedono sessione e bar attivo accessibile
+(owner, manager o staff); le risposte non sono memorizzabili nella cache.
+Aggregazioni e confronti includono soltanto i record del bar attivo, escludendo
+quelli con `bar_id` nullo e i collegamenti incoerenti fra tenant. Il frontend
+deve autenticarsi e selezionare un bar prima di caricare la dashboard, e
+ricaricare gli analytics dopo ogni cambio di bar. I riepiloghi per fornitore e
+gli insight per categoria/fornitore conservano il comportamento attuale ancora
+non implementato. Il fatturato usa il totale delle chiusure: non esiste un
+riepilogo analytics separato degli incassi contanti/carta;
+`payments-by-method` riguarda i pagamenti registrati. Non esporre pubblicamente
+l'applicazione senza una verifica
+complessiva della sicurezza e dell'integrazione frontend.
 
 ## Clean bootstrap
 

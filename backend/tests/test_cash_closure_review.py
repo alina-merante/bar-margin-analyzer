@@ -14,7 +14,7 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 from app.database import Base
 from app.models import CashClosureIntake, DailyCashClosure, Document
 from app.routers import cash_closures, documents
-from app.routers.analytics import monthly_pnl
+from analytics_test_support import monthly_pnl
 from test_documents_cash_month import _test_context, upload_for_test
 
 

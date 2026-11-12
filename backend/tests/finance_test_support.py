@@ -4,11 +4,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from app import config
 from app.database import Base, get_db
 from app.models import Bar, MembershipRole, User, UserBarMembership
 from app.routers.auth import router as auth_router
 from app.routers.bar_context import router as bar_context_router
+from app.routers import finance
 from app.routers.finance import router as finance_router
+from app.routers.analytics import router as analytics_router
 from app.security import hash_password
 
 
@@ -17,7 +20,12 @@ TEST_PASSWORD = "temporary-finance-test-password"
 
 
 @pytest.fixture
-def finance_http_env(tmp_path):
+def finance_http_env(tmp_path, monkeypatch):
+    root = tmp_path / "uploads"
+    monkeypatch.setattr(config, "UPLOAD_BASE_PATH", str(root))
+    for kind in ("documents", "previews", "invoices"):
+        monkeypatch.setattr(config, f"UPLOAD_{kind.upper()}_DIR", str(root / kind))
+    monkeypatch.setattr(finance, "UPLOAD_INVOICES_DIR", str(root / "invoices"))
     engine = create_engine(
         f"sqlite:///{tmp_path / 'finance-http.db'}",
         connect_args={"check_same_thread": False},
@@ -35,6 +43,7 @@ def finance_http_env(tmp_path):
     app.include_router(auth_router)
     app.include_router(bar_context_router)
     app.include_router(finance_router)
+    app.include_router(analytics_router)
 
     def override_get_db():
         db = test_sessionmaker()

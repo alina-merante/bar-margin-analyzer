@@ -11,7 +11,7 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 from app.database import Base
 from app.models import DailyCashClosure, Document
 from app.routers import documents as documents_router
-from app.routers.analytics import overview
+from analytics_test_support import overview
 from app.time_utils import to_utc_iso
 from test_documents_cash_month import _test_context
 
@@ -115,6 +115,7 @@ def test_legacy_naive_row_without_tenant_is_hidden_and_not_rewritten(db):
 def test_overview_latest_cash_closure_uploaded_at_is_explicit_utc(db):
     db.add(
         DailyCashClosure(
+            bar_id=_test_context(db).bar.id,
             date=dt.date(2026, 9, 30),
             total_amount=Decimal("100.00"),
             created_at=dt.datetime(2026, 9, 30, 23, 30),

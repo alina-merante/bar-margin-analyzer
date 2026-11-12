@@ -17,7 +17,7 @@ from app.models import (
     PaymentMethod,
     Transaction,
 )
-from app.routers.analytics import expenses_by_category, invoices_summary, monthly_pnl, overview
+from analytics_test_support import expenses_by_category, invoices_summary, monthly_pnl, overview
 from app.routers import finance as finance_router
 from app.routers.finance import (
     LinkPaymentPayload,

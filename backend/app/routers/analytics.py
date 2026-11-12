@@ -1,14 +1,14 @@
 import datetime as dt
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.bar_context import BarContext, get_active_bar_context
 from app.models import (
     DailyCashClosure,
-    ExpenseCategory,
     Invoice,
     InvoicePaymentLink,
     InvoiceStatus,
@@ -21,6 +21,14 @@ from app.routers.finance import infer_invoice_category
 from app.time_utils import to_utc_iso
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+def analytics_context(
+    response: Response, context: BarContext = Depends(get_active_bar_context)
+) -> BarContext:
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers.add_vary_header("Cookie")
+    return context
 
 
 def parse_month(month: str) -> tuple[dt.date, dt.date]:
@@ -59,9 +67,17 @@ def previous_month_start(month_start: dt.date) -> dt.date:
     return month_start.replace(month=month_start.month - 1)
 
 
-def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
+def require_tenant_id(bar_id: int) -> int:
+    if not isinstance(bar_id, int) or isinstance(bar_id, bool):
+        raise ValueError("bar_id must identify a tenant")
+    return bar_id
+
+
+def sum_revenue(db: Session, start: dt.date, end: dt.date, bar_id: int) -> Decimal:
+    bar_id = require_tenant_id(bar_id)
     revenue = db.execute(
         select(func.coalesce(func.sum(DailyCashClosure.total_amount), 0)).where(
+            DailyCashClosure.bar_id == bar_id,
             DailyCashClosure.date >= start,
             DailyCashClosure.date < end,
         )
@@ -70,7 +86,8 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date) -> Decimal:
     return Decimal(revenue.scalar_one())
 
 
-def invoice_payment_totals_subquery():
+def invoice_payment_totals_subquery(bar_id: int):
+    bar_id = require_tenant_id(bar_id)
     return (
         select(
             InvoicePaymentLink.invoice_id.label("invoice_id"),
@@ -78,6 +95,12 @@ def invoice_payment_totals_subquery():
             func.max(Payment.date).label("completion_date"),
         )
         .join(Payment, Payment.id == InvoicePaymentLink.payment_id)
+        .join(Invoice, Invoice.id == InvoicePaymentLink.invoice_id)
+        .where(
+            InvoicePaymentLink.bar_id == bar_id,
+            Payment.bar_id == bar_id,
+            Invoice.bar_id == bar_id,
+        )
         .group_by(InvoicePaymentLink.invoice_id)
         .subquery()
     )
@@ -90,13 +113,14 @@ def fully_paid_invoice_condition(linked_payments):
     )
 
 
-def completed_invoice_expenses_query(start: dt.date, end: dt.date):
-    linked_payments = invoice_payment_totals_subquery()
+def completed_invoice_expenses_query(start: dt.date, end: dt.date, bar_id: int):
+    linked_payments = invoice_payment_totals_subquery(bar_id)
 
     return (
         select(Invoice.total, Invoice.supplier, Invoice.invoice_number)
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
         .where(
+            Invoice.bar_id == bar_id,
             fully_paid_invoice_condition(linked_payments),
             linked_payments.c.completion_date >= start,
             linked_payments.c.completion_date < end,
@@ -104,17 +128,17 @@ def completed_invoice_expenses_query(start: dt.date, end: dt.date):
     )
 
 
-def sum_expenses(db: Session, start: dt.date, end: dt.date) -> Decimal:
+def sum_expenses(db: Session, start: dt.date, end: dt.date, bar_id: int) -> Decimal:
     completed_invoices = db.execute(
-        completed_invoice_expenses_query(start, end)
+        completed_invoice_expenses_query(start, end, bar_id)
     ).scalars().all()
 
     return sum((Decimal(total) for total in completed_invoices), Decimal("0"))
 
 
-def monthly_pnl(db: Session, start: dt.date, end: dt.date) -> dict[str, Decimal]:
-    revenue = sum_revenue(db, start, end)
-    expenses = sum_expenses(db, start, end)
+def monthly_pnl(db: Session, start: dt.date, end: dt.date, bar_id: int) -> dict[str, Decimal]:
+    revenue = sum_revenue(db, start, end, bar_id)
+    expenses = sum_expenses(db, start, end, bar_id)
     return {
         "revenue": revenue,
         "expenses": expenses,
@@ -144,19 +168,22 @@ def ratio_pct(part: Decimal, whole: Decimal) -> Decimal:
     return (part / whole) * Decimal("100")
 
 
-def top_expense_category(db: Session, start: dt.date, end: dt.date):
+def top_expense_category(db: Session, start: dt.date, end: dt.date, bar_id: int):
     return None
 
 
-def category_expense_sum(db: Session, start: dt.date, end: dt.date, category_name: str | None) -> Decimal:
+def category_expense_sum(
+    db: Session, start: dt.date, end: dt.date, category_name: str | None, bar_id: int
+) -> Decimal:
     return Decimal("0")
 
 
-def top_supplier(db: Session, start: dt.date, end: dt.date):
+def top_supplier(db: Session, start: dt.date, end: dt.date, bar_id: int):
     return None
 
 
-def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
+def fetch_ranked_products(db: Session, month: str, order: str, bar_id: int) -> dict:
+    bar_id = require_tenant_id(bar_id)
     start, end = parse_month(month)
 
     quantity_order = func.sum(SaleLine.qty).desc() if order == "desc" else func.sum(SaleLine.qty).asc()
@@ -169,7 +196,10 @@ def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
             func.sum(SaleLine.total).label("revenue"),
         )
         .join(SaleLine, SaleLine.product_id == Product.id)
-        .where(SaleLine.date >= start, SaleLine.date < end)
+        .where(
+            Product.bar_id == bar_id, SaleLine.bar_id == bar_id,
+            SaleLine.date >= start, SaleLine.date < end,
+        )
         .group_by(Product.id, Product.name)
         .order_by(quantity_order)
         .limit(10)
@@ -182,7 +212,10 @@ def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
             func.sum(SaleLine.total).label("revenue"),
         )
         .join(SaleLine, SaleLine.product_id == Product.id)
-        .where(SaleLine.date >= start, SaleLine.date < end)
+        .where(
+            Product.bar_id == bar_id, SaleLine.bar_id == bar_id,
+            SaleLine.date >= start, SaleLine.date < end,
+        )
         .group_by(Product.id, Product.name)
         .order_by(revenue_order)
         .limit(10)
@@ -212,22 +245,31 @@ def fetch_ranked_products(db: Session, month: str, order: str) -> dict:
 
 
 @router.get("/top-products")
-def top_products(month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)):
-    return fetch_ranked_products(db, month, order="desc")
+def top_products(
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+):
+    return fetch_ranked_products(db, month, order="desc", bar_id=context.bar.id)
 
 
 @router.get("/bottom-products")
-def bottom_products(month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)):
-    return fetch_ranked_products(db, month, order="asc")
+def bottom_products(
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+):
+    return fetch_ranked_products(db, month, order="asc", bar_id=context.bar.id)
 
 
 @router.get("/pnl")
-def pnl(month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)) -> dict:
+def pnl(
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+) -> dict:
     start, end = parse_month(month)
-    current = monthly_pnl(db, start, end)
+    current = monthly_pnl(db, start, end, context.bar.id)
 
     prev_start, prev_end = previous_month(start)
-    previous = monthly_pnl(db, prev_start, prev_end)
+    previous = monthly_pnl(db, prev_start, prev_end, context.bar.id)
 
     return {
         "month": month,
@@ -247,6 +289,7 @@ def pnl(month: str = Query(..., description="Month in YYYY-MM format"), db: Sess
 def pnl_trend(
     months: int = Query(default=6, ge=1, description="Number of months to include, including current month"),
     month: str | None = Query(default=None, description="Optional month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context),
     db: Session = Depends(get_db),
 ) -> list[dict[str, float | str]]:
     if month:
@@ -266,7 +309,7 @@ def pnl_trend(
         else:
             month_end = month_start.replace(month=month_start.month + 1)
 
-        values = monthly_pnl(db, month_start, month_end)
+        values = monthly_pnl(db, month_start, month_end, context.bar.id)
         trend.append(
             {
                 "month": month_start.strftime("%Y-%m"),
@@ -280,12 +323,15 @@ def pnl_trend(
 
 
 @router.get("/insights")
-def insights(month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)) -> dict:
+def insights(
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+) -> dict:
     start, end = parse_month(month)
     prev_start, prev_end = previous_month(start)
 
-    current = monthly_pnl(db, start, end)
-    previous = monthly_pnl(db, prev_start, prev_end)
+    current = monthly_pnl(db, start, end, context.bar.id)
+    previous = monthly_pnl(db, prev_start, prev_end, context.bar.id)
 
     revenue_change = calculate_change_pct(current["revenue"], previous["revenue"])
     expenses_change = calculate_change_pct(current["expenses"], previous["expenses"])
@@ -302,10 +348,12 @@ def insights(month: str = Query(..., description="Month in YYYY-MM format"), db:
             direction = "increased" if change > 0 else "decreased"
             generated_insights.append(f"{label} {direction} by {round_pct(change)}% vs previous month.")
 
-    top_category = top_expense_category(db, start, end)
+    top_category = top_expense_category(db, start, end, context.bar.id)
     if top_category and top_category.expenses and Decimal(top_category.expenses) > 0:
         current_category_expenses = Decimal(top_category.expenses)
-        previous_category_expenses = category_expense_sum(db, prev_start, prev_end, top_category.category)
+        previous_category_expenses = category_expense_sum(
+            db, prev_start, prev_end, top_category.category, context.bar.id
+        )
         category_change = calculate_change_pct(current_category_expenses, previous_category_expenses)
         if abs(category_change) > Decimal("10"):
             category_name = top_category.category or "Uncategorized"
@@ -314,7 +362,7 @@ def insights(month: str = Query(..., description="Month in YYYY-MM format"), db:
                 f"Top expense category '{category_name}' {direction} by {round_pct(category_change)}% vs previous month."
             )
 
-    top_supplier_row = top_supplier(db, start, end)
+    top_supplier_row = top_supplier(db, start, end, context.bar.id)
     if top_supplier_row and top_supplier_row.expenses and current["expenses"] > 0:
         supplier_expense = Decimal(top_supplier_row.expenses)
         supplier_share = ratio_pct(supplier_expense, current["expenses"])
@@ -337,9 +385,12 @@ def insights(month: str = Query(..., description="Month in YYYY-MM format"), db:
 
 
 @router.get("/pnl/ytd")
-def pnl_ytd(year: str = Query(..., description="Year in YYYY format"), db: Session = Depends(get_db)) -> dict:
+def pnl_ytd(
+    year: str = Query(..., description="Year in YYYY format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+) -> dict:
     start, end = parse_year(year)
-    ytd = monthly_pnl(db, start, end)
+    ytd = monthly_pnl(db, start, end, context.bar.id)
 
     monthly_breakdown: list[dict[str, float | str]] = []
     current_month = start
@@ -348,7 +399,7 @@ def pnl_ytd(year: str = Query(..., description="Year in YYYY format"), db: Sessi
             next_month = current_month.replace(year=current_month.year + 1, month=1)
         else:
             next_month = current_month.replace(month=current_month.month + 1)
-        month_values = monthly_pnl(db, current_month, next_month)
+        month_values = monthly_pnl(db, current_month, next_month, context.bar.id)
         monthly_breakdown.append(
             {
                 "month": current_month.strftime("%Y-%m"),
@@ -371,11 +422,12 @@ def pnl_ytd(year: str = Query(..., description="Year in YYYY format"), db: Sessi
 @router.get("/overview")
 def overview(
     month: str | None = Query(default=None, description="Optional month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context),
     db: Session = Depends(get_db),
 ) -> dict:
     selected_month = month or dt.date.today().strftime("%Y-%m")
     start, end = parse_month(selected_month)
-    pnl_summary = monthly_pnl(db, start, end)
+    pnl_summary = monthly_pnl(db, start, end, context.bar.id)
 
     top_products_by_quantity = db.execute(
         select(
@@ -384,7 +436,10 @@ def overview(
             func.sum(SaleLine.total).label("revenue"),
         )
         .join(SaleLine, SaleLine.product_id == Product.id)
-        .where(SaleLine.date >= start, SaleLine.date < end)
+        .where(
+            Product.bar_id == context.bar.id, SaleLine.bar_id == context.bar.id,
+            SaleLine.date >= start, SaleLine.date < end,
+        )
         .group_by(Product.id, Product.name)
         .order_by(func.sum(SaleLine.qty).desc())
         .limit(10)
@@ -397,7 +452,10 @@ def overview(
             func.sum(SaleLine.total).label("revenue"),
         )
         .join(SaleLine, SaleLine.product_id == Product.id)
-        .where(SaleLine.date >= start, SaleLine.date < end)
+        .where(
+            Product.bar_id == context.bar.id, SaleLine.bar_id == context.bar.id,
+            SaleLine.date >= start, SaleLine.date < end,
+        )
         .group_by(Product.id, Product.name)
         .order_by(func.sum(SaleLine.total).desc())
         .limit(10)
@@ -407,9 +465,15 @@ def overview(
 
     top_suppliers = []
 
-    latest_cash_closure_date = db.scalar(select(func.max(DailyCashClosure.date)))
-    latest_cash_closure_uploaded_at = db.scalar(select(func.max(DailyCashClosure.created_at)))
-    latest_bank_transaction_date = db.scalar(select(func.max(Transaction.date)))
+    latest_cash_closure_date = db.scalar(
+        select(func.max(DailyCashClosure.date)).where(DailyCashClosure.bar_id == context.bar.id)
+    )
+    latest_cash_closure_uploaded_at = db.scalar(
+        select(func.max(DailyCashClosure.created_at)).where(DailyCashClosure.bar_id == context.bar.id)
+    )
+    latest_bank_transaction_date = db.scalar(
+        select(func.max(Transaction.date)).where(Transaction.bar_id == context.bar.id)
+    )
 
     return {
         "top_products_by_quantity": [
@@ -440,10 +504,11 @@ def overview(
 
 @router.get("/expenses-by-category")
 def expenses_by_category(
-    month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
     start, end = parse_month(month)
-    rows = db.execute(completed_invoice_expenses_query(start, end)).all()
+    rows = db.execute(completed_invoice_expenses_query(start, end, context.bar.id)).all()
     category_totals: dict[str, Decimal] = {}
     for row in rows:
         category = infer_invoice_category(row.supplier, row.invoice_number)
@@ -465,7 +530,8 @@ def expenses_by_category(
 
 @router.get("/expenses-by-supplier")
 def expenses_by_supplier(
-    month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
     start, end = parse_month(month)
 
@@ -483,15 +549,19 @@ def expenses_by_supplier(
     }
 
 @router.get("/invoices-summary")
-def invoices_summary(db: Session = Depends(get_db)) -> dict:
-    total_invoices = db.scalar(select(func.count(Invoice.id))) or 0
+def invoices_summary(
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
+) -> dict:
+    total_invoices = db.scalar(
+        select(func.count(Invoice.id)).where(Invoice.bar_id == context.bar.id)
+    ) or 0
 
-    linked_payments = invoice_payment_totals_subquery()
+    linked_payments = invoice_payment_totals_subquery(context.bar.id)
     fully_paid = fully_paid_invoice_condition(linked_payments)
     paid_invoices = db.scalar(
         select(func.count(Invoice.id))
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
-        .where(fully_paid)
+        .where(Invoice.bar_id == context.bar.id, fully_paid)
     ) or 0
     pending_invoices = total_invoices - paid_invoices
     remaining_amount = case(
@@ -502,12 +572,12 @@ def invoices_summary(db: Session = Depends(get_db)) -> dict:
     pending_amount = db.scalar(
         select(func.coalesce(func.sum(remaining_amount), 0))
         .outerjoin(linked_payments, linked_payments.c.invoice_id == Invoice.id)
-        .where(remaining_amount > 0)
+        .where(Invoice.bar_id == context.bar.id, remaining_amount > 0)
     ) or 0
     paid_amount = db.scalar(
         select(func.coalesce(func.sum(Invoice.total), 0))
         .join(linked_payments, linked_payments.c.invoice_id == Invoice.id)
-        .where(fully_paid)
+        .where(Invoice.bar_id == context.bar.id, fully_paid)
     ) or 0
 
     return {
@@ -521,12 +591,13 @@ def invoices_summary(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/payments-by-method")
 def payments_by_method(
-    month: str = Query(..., description="Month in YYYY-MM format"), db: Session = Depends(get_db)
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
     start, end = parse_month(month)
     rows = db.execute(
         select(Payment.method.label("method"), func.coalesce(func.sum(Payment.amount), 0).label("total_amount"))
-        .where(Payment.date >= start, Payment.date < end)
+        .where(Payment.bar_id == context.bar.id, Payment.date >= start, Payment.date < end)
         .group_by(Payment.method)
         .order_by(Payment.method.asc())
     ).all()

@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
@@ -20,24 +21,32 @@ from app.models import (
     PaymentMethod,
     Transaction,
 )
-from app.routers.analytics import monthly_pnl
-from app.routers.finance import LinkPaymentPayload, link_payment as link_payment_endpoint
+from analytics_test_support import link_payment_endpoint, monthly_pnl
+from app.routers.finance import LinkPaymentPayload
+from test_documents_cash_month import _test_context
 
 
 def build_session():
-    engine = create_engine("sqlite://")
-    Base.metadata.drop_all(engine)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     Base.metadata.create_all(engine)
-    return Session(engine)
+    session = Session(engine)
+    _test_context(session)
+    session.commit()
+    return session
 
 
 def add_cash_closure(session, total_amount):
-    session.add(DailyCashClosure(date=date(2026, 9, 1), total_amount=total_amount))
+    session.add(DailyCashClosure(
+        bar_id=_test_context(session).bar.id, date=date(2026, 9, 1), total_amount=total_amount
+    ))
 
 
 def add_bank_transaction(session, amount, counterparty):
     session.add(
         Transaction(
+            bar_id=_test_context(session).bar.id,
             date=date(2026, 9, 2),
             description="bank movement",
             amount=amount,
@@ -49,6 +58,7 @@ def add_bank_transaction(session, amount, counterparty):
 
 def add_invoice(session, total, vat, status, supplier="Supplier A", invoice_number="INV-1"):
     invoice = Invoice(
+        bar_id=_test_context(session).bar.id,
         supplier=supplier,
         invoice_number=invoice_number,
         issue_date=date(2026, 9, 1),
@@ -64,6 +74,7 @@ def add_invoice(session, total, vat, status, supplier="Supplier A", invoice_numb
 
 def add_payment(session, amount, counterparty="Supplier A", reference="PAY-1"):
     payment = Payment(
+        bar_id=_test_context(session).bar.id,
         date=date(2026, 9, 10),
         amount=amount,
         method=PaymentMethod.bank_transfer,
@@ -76,7 +87,9 @@ def add_payment(session, amount, counterparty="Supplier A", reference="PAY-1"):
 
 
 def link_payment(session, invoice, payment):
-    session.add(InvoicePaymentLink(invoice_id=invoice.id, payment_id=payment.id))
+    session.add(InvoicePaymentLink(
+        bar_id=_test_context(session).bar.id, invoice_id=invoice.id, payment_id=payment.id
+    ))
 
 
 def test_revenue_comes_from_cash_closures_and_reconciled_invoice_is_counted_once():

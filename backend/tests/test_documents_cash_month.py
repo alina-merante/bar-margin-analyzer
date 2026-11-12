@@ -37,7 +37,7 @@ from app.routers import (
     finance as finance_router,
     imports as imports_router,
 )
-from app.routers.analytics import monthly_pnl, overview
+from analytics_test_support import monthly_pnl, overview
 from app.routers.auth import router as auth_router
 from app.routers.bar_context import router as bar_context_router
 from app.security import hash_password, token_hash
@@ -413,15 +413,18 @@ def test_dashboard_bank_reminder_uses_latest_transaction_date(tmp_path):
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
+        bar_id = _test_context(session).bar.id
         session.add_all(
             [
                 Transaction(
+                    bar_id=bar_id,
                     date=dt.date(2026, 7, 10),
                     description="Older bank movement",
                     amount=Decimal("-25.00"),
                     counterparty="Supplier A",
                 ),
                 Transaction(
+                    bar_id=bar_id,
                     date=dt.date(2026, 7, 15),
                     description="Latest bank movement",
                     amount=Decimal("-200.00"),

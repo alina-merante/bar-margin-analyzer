@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models import Invoice, InvoicePaymentLink, InvoiceStatus, Payment, PaymentMethod, Transaction
-from app.routers.analytics import overview
+from analytics_test_support import overview
 from finance_test_support import finance_request, finance_response
 
 
