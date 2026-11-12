@@ -171,7 +171,8 @@ def login(
     now = dt.datetime.now(dt.timezone.utc)
     _check_login_rate_limit(db, email_key, source_key, now)
 
-    user = db.scalar(select(User).where(User.email == email))
+    # Serialize session issuance with account deactivation.
+    user = db.scalar(select(User).where(User.email == email).with_for_update())
     password_hash = user.password_hash if user is not None else dummy_password_hash()
     valid_password = verify_password(payload.password, password_hash)
     if user is None or not valid_password or not user.is_active:

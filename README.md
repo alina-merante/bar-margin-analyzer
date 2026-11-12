@@ -123,6 +123,54 @@ ancora la registrazione dell'autore e il controllo su API e download.
 Il bar legacy con ID `-1` non viene modificato da questa migrazione; l'header
 tenant corrente accetta soltanto ID positivi, problema da risolvere separatamente.
 
+### API di amministrazione globale
+
+La migrazione `20261112_0015` aggiunge il registro `admin_audit` e una riga di
+serializzazione per le scritture amministrative. Le operazioni e il relativo
+audit sono confermati nella stessa transazione; l'audit registra l'attore,
+l'azione, i riferimenti al bar/account e le variazioni, mai password o token.
+Il downgrade è bloccato se esistono eventi di audit, per evitare di perderli.
+
+Le API `/admin/*` richiedono una sessione attiva di amministratrice globale,
+verificata nel backend; non richiedono un bar attivo né `X-Expected-Bar-ID`.
+Le scritture richiedono anche `Origin` autorizzato e `X-CSRF-Token`. La
+protezione delle API operative e la loro matrice di ruoli rimangono invariate.
+
+| Metodo e percorso | Operazione |
+| --- | --- |
+| `GET /admin/bars`, `POST /admin/bars` | Elenco, inclusi i disattivati; creazione con `name` |
+| `GET /admin/bars/{id}`, `PATCH /admin/bars/{id}` | Dettaglio; modifica di `name` e/o `is_active` |
+| `GET /admin/users`, `POST /admin/users` | Elenco; creazione con `email` |
+| `GET /admin/users/{id}`, `PATCH /admin/users/{id}` | Dettaglio; modifica di `email` e/o `is_active` |
+| `GET /admin/bars/{id}/memberships` | Elenco delle assegnazioni del bar |
+| `POST /admin/bars/{id}/memberships` | Assegna `user_id` e ruolo `owner` o `staff` |
+| `PATCH /admin/bars/{id}/memberships/{user_id}` | Cambia il ruolo in `owner` o `staff` |
+| `DELETE /admin/bars/{id}/memberships/{user_id}` | Revoca l'assegnazione |
+
+Non è possibile cambiare `is_global_admin` via API. L'ultimo amministratore
+globale attivo non può essere disattivato. La disattivazione del bar non
+elimina dati o membership; la revoca nega il successivo accesso tenant senza
+cancellare i dati operativi. I ruoli `manager` storici restano visibili e non
+sono convertiti automaticamente. La modifica del ruolo o la revoca elimina
+anche gli eventuali permessi granulari associati alla vecchia membership.
+
+La creazione dell'account normalizza l'email e genera una credenziale casuale
+non comunicata, non utilizzabile dall'utente. La risposta indica
+`password_setup_required`: **l'account non può ancora effettuare il login**.
+Non esiste un servizio configurato per invito/reset password e nessun endpoint
+di impostazione password è stato introdotto; serve un successivo flusso sicuro
+prima dell'utilizzo degli account creati. Risposte e audit non contengono hash
+o password. La disattivazione revoca tutte le sessioni non ancora revocate
+dell'utente, anche quelle su altri dispositivi, nella stessa transazione della
+modifica dello stato. La riattivazione non ripristina le vecchie sessioni:
+è necessario un nuovo login.
+
+L'amministratrice globale non ha ancora accesso operativo automatico a tutti i
+bar, e i permessi granulari non sono ancora applicati alle API operative. Non
+esistono ancora API di gestione dei permessi dei dipendenti né interfaccia
+amministrativa. Le criticità di lettura economica e approvazione chiusure
+descritte sopra restano aperte.
+
 La migrazione `20261111_0013` rende per-bar l'unicità di prodotti, categorie,
 chiusure e intake, mantenendo vincoli separati per record legacy con `bar_id`
 nullo. Categorie/regole, import CSV POS/banca e revisione delle chiusure

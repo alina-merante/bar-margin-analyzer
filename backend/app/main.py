@@ -13,6 +13,7 @@ from app.routers.upload_files import router as upload_files_router
 from app.routers.cash_closures import router as cash_closures_router
 from app.routers.auth import router as auth_router
 from app.routers.bar_context import router as bar_context_router
+from app.routers.admin import router as admin_router
 from app.config import ensure_upload_dirs
 
 app = FastAPI(title="Bar Margin Analyzer API")
@@ -50,6 +51,7 @@ app.include_router(upload_files_router)
 app.include_router(cash_closures_router)
 app.include_router(auth_router)
 app.include_router(bar_context_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

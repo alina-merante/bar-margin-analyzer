@@ -16,6 +16,7 @@ from app.models.user_bar_membership import MembershipRole, UserBarMembership
 from app.models.membership_permission import MembershipPermission
 from app.models.auth_session import AuthSession
 from app.models.auth_login_attempt import AuthLoginAttempt
+from app.models.admin_audit import AdminAudit, AdminWriteLock
 
 __all__ = [
     "Base",
@@ -39,4 +40,6 @@ __all__ = [
         "MembershipPermission",
         "AuthSession",
         "AuthLoginAttempt",
+        "AdminAudit",
+        "AdminWriteLock",
 ]
