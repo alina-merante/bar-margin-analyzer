@@ -120,8 +120,9 @@ intervento di enforcement completo, non protezioni già attive. L'accesso a
 analytics non dovrà implicare accesso a dati economici non autorizzati, anche
 quando ricavabili da aggregati. La distinzione dei propri documenti richiede
 ancora la registrazione dell'autore e il controllo su API e download.
-Il bar legacy con ID `-1` non viene modificato da questa migrazione; l'header
-tenant corrente accetta soltanto ID positivi, problema da risolvere separatamente.
+Il bar legacy con ID `-1` non viene modificato da questa migrazione. L'header
+tenant accetta ID positivi e, come unica eccezione negativa, `-1`; restano
+obbligatorie sessione, membership e autorizzazioni per il bar.
 
 ### API di amministrazione globale
 
@@ -197,22 +198,43 @@ condivisi tra bar vengono negati. I file sono inviati senza cache e quelli
 non visualizzabili in sicurezza vengono scaricati come allegati. Eliminare
 un record documento non elimina i file dal disco.
 
-Il frontend attuale deve ancora implementare `GET /auth/csrf`, `POST
-/auth/login`, `GET /auth/bars` e `PUT /auth/active-bar`, e inviare cookie,
-`X-CSRF-Token` e `Origin` autorizzato alle operazioni di scrittura, incluse
-`POST /documents/upload`, `DELETE /documents/{id}` e le modifiche a
-`/cash-closures/review/{id}`. Deve inoltre inviare la sessione nelle richieste
-dei file protetti e l'header `X-Expected-Bar-ID` in tutte le richieste tenant-
-scoped. Il valore deve essere l'ID del bar attivo letto da `/auth/active-bar`;
-è un controllo di coerenza, non un'autorizzazione. Il backend verifica sessione,
-bar attivo, membership e permessi indipendentemente dal valore ricevuto. Le
-richieste senza header sono rifiutate (428), con valore non valido (400) o
-diverso dal bar attivo (409). Le API `/auth/*` di login e selezione bar non
-richiedono questo header. Le scritture serializzano il contesto sessione/bar/
-membership per la durata della transazione; upload e OCR ricontrollano il
-contesto prima del salvataggio definitivo. I download protetti mantengono il
-contesto bloccato fino al completamento dello streaming del file. Fino a tale
-adeguamento il flusso non funziona dall'interfaccia attuale.
+### Accesso dal frontend
+
+Il frontend usa `/api/auth/csrf`, `/login`, `/session`, `/logout`, `/bars` e
+`/active-bar` tramite il proxy Vite. Effettuare il login con un account attivo
+già configurato, quindi selezionare un bar assegnato; la selezione può essere
+cambiata dalla barra laterale. L'invito e il reset della password non sono
+ancora disponibili. L'amministratrice globale non ha un bypass operativo:
+per usare un bar serve comunque una membership.
+
+Il cookie di sessione `HttpOnly` è gestito dal browser; la password e il token
+CSRF non vengono salvati in localStorage. Il token CSRF rimane in memoria e
+viene inviato nelle scritture; il browser invia `Origin` e il backend lo
+confronta con `AUTH_ALLOWED_ORIGINS`. La sessione dura 12 ore per default
+(`AUTH_SESSION_TTL_SECONDS`); logout o scadenza richiedono un nuovo accesso.
+Per HTTPS configurare `AUTH_COOKIE_SECURE=true` e un secret stabile e sicuro.
+In produzione il cookie Secure è obbligatorio.
+
+Le richieste tenant includono `X-Expected-Bar-ID`, che verifica la coerenza
+con la selezione nella sessione e **non** concede autorizzazioni. Il backend
+continua a controllare sessione, membership, bar attivo e ruolo. Le richieste
+senza header sono rifiutate (428), con ID non valido (400), bar non accessibile
+(403) o bar attivo differente (409). Le API `/auth/*` non richiedono l'header.
+Al cambio bar o logout il frontend chiude il vecchio contesto, annulla le
+richieste pendenti e rimuove i dati visualizzati. L'annullamento nel browser
+non garantisce l'interruzione di una scrittura già ricevuta dal server.
+I file protetti sono richiesti
+con lo stesso contesto e mostrati tramite URL blob temporanei revocati alla
+chiusura; le richieste usano `no-store`.
+
+Schede dello stesso browser condividono la sessione: una selezione fatta in
+un'altra scheda può causare 409. Inoltre `/auth/csrf` ruota il token della
+sessione e può invalidare quello in memoria in un'altra scheda. In questi casi
+l'interfaccia richiede di ripristinare la sessione; un'operazione fallita non
+viene ripetuta automaticamente. Browser o dispositivi con login distinti
+mantengono sessioni indipendenti. Le scritture serializzano il contesto
+sessione/bar/membership; upload e OCR lo ricontrollano prima del salvataggio.
+I download protetti lo mantengono bloccato fino al termine dello streaming.
 
 Tutti gli endpoint `/analytics/*` richiedono sessione e bar attivo accessibile
 (owner, manager o staff); le risposte non sono memorizzabili nella cache.
@@ -226,6 +248,62 @@ riepilogo analytics separato degli incassi contanti/carta;
 `payments-by-method` riguarda i pagamenti registrati. Non esporre pubblicamente
 l'applicazione senza una verifica
 complessiva della sicurezza e dell'integrazione frontend.
+
+### Prova isolata e tablet Android
+
+Per una prova locale con dati fittizi, scegliere porte libere e usare un
+database e una directory upload temporanei, separati da quelli reali. Ad
+esempio, dalla root, con le dipendenze già installate:
+
+```bash
+export BM_TEST_DIR="$(mktemp -d)"
+export DATABASE_URL="sqlite:///$BM_TEST_DIR/app.db"
+export UPLOAD_BASE_PATH="$BM_TEST_DIR/uploads"
+export OPENAI_API_KEY=""
+export AUTH_ALLOWED_ORIGINS="http://localhost:5173"
+export AUTH_COOKIE_SECURE=false
+cd backend
+.venv/bin/python -c 'from app.database import Base, engine; import app.models; Base.metadata.create_all(engine)'
+.venv/bin/python -m app.bootstrap_owner
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Il bootstrap va eseguito solo dopo aver verificato `DATABASE_URL`; inserire
+credenziali e dati fittizi. `create_all` è utile solo per questa prova
+temporanea, non sostituisce le migrazioni per ambienti reali. In un secondo
+terminale avviare `npm --prefix frontend run dev -- --host 127.0.0.1` e
+aprire `http://localhost:5173`. Il proxy Vite richiede l'API sulla porta
+locale 8000. Non eseguire lo script Codespaces standard per questa prova:
+applica migrazioni al database configurato. Eliminare successivamente solo la
+directory temporanea creata per la prova.
+
+Per verifiche automatiche isolate, dalla root:
+
+```bash
+npm --prefix frontend test
+export BM_TEST_DIR="$(mktemp -d)"
+export DATABASE_URL="sqlite:///$BM_TEST_DIR/app.db"
+export UPLOAD_BASE_PATH="$BM_TEST_DIR/uploads"
+export OPENAI_API_KEY=""
+unset TEST_POSTGRESQL_URL TEST_PERMISSION_POSTGRESQL_URL TEST_ADMIN_MIGRATION_POSTGRESQL_URL TEST_ADMIN_RACE_POSTGRESQL_URL TEST_ADMIN_POSTGRESQL_URL
+cd backend
+.venv/bin/python -m pytest -p no:cacheprovider tests/test_bar_context.py tests/test_operational_tenant_scope.py tests/test_document_tenant_scope.py tests/test_finance_tenant_scope.py tests/test_analytics_tenant_scope.py tests/test_cash_closure_review.py -q
+```
+
+Una prova Chromium locale con backend SQLite e dati fittizi ha esercitato
+login, ripristino sessione, dashboard, cambio bar, anteprima fattura protetta, riconciliazione e
+scollegamento pagamento, upload e approvazione di una chiusura, logout e
+sessione scaduta. L'estrazione OCR nella prova era simulata: qualità e
+comportamento dell'OCR reale non sono così verificati.
+
+Per Codespaces su Android usare solo la porta frontend inoltrata **privata** e
+HTTPS, con autenticazione GitHub autorizzata, origine esatta in
+`AUTH_ALLOWED_ORIGINS` e `AUTH_COOKIE_SECURE=true`; non pubblicare API, database
+o upload. Verificare effettivamente accesso, cookie e selezione del bar dal
+tablet. La responsività ha ancora conflitti noti nella sidebar sotto 900 px;
+touch, orientamento, tastiera e fotocamera vanno provati sul dispositivo.
+Manifest PWA, installazione e pulsante dedicato alla fotocamera non sono ancora
+implementati. Le regole di approvazione e i permessi granulari restano invariati.
 
 ## Clean bootstrap
 

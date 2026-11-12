@@ -91,6 +91,8 @@ def get_expected_bar_id(
     if value is None or not value.strip():
         return None
     value = value.strip()
+    if value == "-1":
+        return -1
     if not value.isascii() or not value.isdecimal() or int(value) < 1:
         raise HTTPException(status_code=400, detail="invalid expected bar id")
     return int(value)

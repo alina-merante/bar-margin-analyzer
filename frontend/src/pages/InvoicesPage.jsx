@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner.jsx";
+import { useProtectedFiles } from "../ApiContext";
 import {
   getCalendarDate,
   getInvoiceDateStatus,
@@ -161,13 +162,6 @@ function getCategoryLabel(invoice, knownCategories = []) {
   return "Altro";
 }
 
-function buildPdfPreviewUrl(url) {
-  if (!url) return "";
-  if (!/\.pdf($|[?#])/i.test(url)) return url;
-  if (url.includes("#")) return url;
-  return `${url}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`;
-}
-
 function getInvoiceNumberDisplay(invoiceNumber) {
   const value = String(invoiceNumber || "").trim();
   if (!value) return "-";
@@ -183,11 +177,7 @@ function getInvoiceDocumentUrl(invoice) {
     invoice?.url ||
     "";
 
-  if (!rawUrl) return "";
-
-  if (rawUrl.startsWith("http")) return rawUrl;
-
-  return `/api${rawUrl}`;
+  return rawUrl;
 }
 
 const EMPTY_MANUAL_FORM = {
@@ -685,9 +675,13 @@ useEffect(() => {
       categoryForInvoice: (invoice) => getCategoryLabel(invoice, knownCategoryNames),
     });
 
-  const selectedInvoiceDocumentUrl = getInvoiceDocumentUrl(selectedInvoice);
-  const selectedInvoiceIsImage = /\.(jpg|jpeg|png|webp)($|[?#])/i.test(selectedInvoiceDocumentUrl);
-  const selectedInvoicePreviewUrl = buildPdfPreviewUrl(selectedInvoiceDocumentUrl);
+  const selectedInvoiceRawUrl = getInvoiceDocumentUrl(selectedInvoice);
+  const protectedInvoice = useProtectedFiles([selectedInvoiceRawUrl]);
+  const selectedInvoiceDocumentUrl = protectedInvoice.urls[0];
+  const selectedInvoiceIsImage = /\.(jpg|jpeg|png|webp)($|[?#])/i.test(selectedInvoiceRawUrl);
+  const selectedInvoicePreviewUrl = selectedInvoiceDocumentUrl && /\.pdf$/i.test(selectedInvoiceRawUrl)
+    ? `${selectedInvoiceDocumentUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`
+    : selectedInvoiceDocumentUrl;
 
   return (
     <main className="main invoices-dashboard-page">
@@ -1436,7 +1430,9 @@ useEffect(() => {
       </button>
 
       <div className="invoice-preview-body invoice-preview-body-only-document">
-        {selectedInvoiceDocumentUrl ? (
+        {protectedInvoice.loading ? <p>Caricamento documento...</p> : protectedInvoice.error ? (
+          <p role="alert">{protectedInvoice.error}</p>
+        ) : selectedInvoiceDocumentUrl ? (
           <div className="invoice-preview-document full">
             {selectedInvoiceIsImage ? (
               <img

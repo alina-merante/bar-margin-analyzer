@@ -5049,3 +5049,31 @@ body {
     height: 40px;
   }
 }
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #fdf7f0;
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid #e4d5c2;
+  border-radius: 20px;
+  background: white;
+  color: #5a3e28;
+}
+
+.auth-card h1, .auth-card h2 { margin: 0; }
+.auth-card label { display: grid; gap: 6px; }
+.auth-card input, .auth-card button, .sidebar-account select, .sidebar-account button {
+  padding: 10px;
+  border: 1px solid #d7c2a7;
+  border-radius: 8px;
+}
+.auth-card button, .sidebar-account button { cursor: pointer; }
+.sidebar-account { display: grid; gap: 6px; margin-bottom: 12px; color: white; }

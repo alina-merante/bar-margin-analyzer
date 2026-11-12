@@ -344,6 +344,38 @@ def test_revoked_membership_blocks_selected_bar(context_environment):
     assert client.get("/test/owner").status_code == 403
 
 
+def test_legacy_bar_header_preserves_tenant_and_role_checks(context_environment):
+    client, _engine, test_sessionmaker, _api = context_environment
+    ids = seed_memberships(test_sessionmaker)
+    with test_sessionmaker() as db:
+        db.add(Bar(id=-1, name="Bar Legacy"))
+        db.add(UserBarMembership(
+            user_id=ids["owner"], bar_id=-1, role=MembershipRole.staff
+        ))
+        db.commit()
+
+    csrf_token = login(client, "owner@example.test")
+    assert select_bar(client, -1, csrf_token).status_code == 200
+    assert client.get("/test/documents").json()["bar_id"] == -1
+    assert client.get("/test/owner").status_code == 403
+    assert client.get(
+        "/test/documents", headers={"X-Expected-Bar-ID": str(ids["bar_one"])}
+    ).status_code == 409
+    for invalid in ("-2", "0", "-01", "+1"):
+        assert client.get(
+            "/test/documents", headers={"X-Expected-Bar-ID": invalid}
+        ).status_code == 400
+
+    with test_sessionmaker() as db:
+        membership = db.scalar(select(UserBarMembership).where(
+            UserBarMembership.user_id == ids["owner"],
+            UserBarMembership.bar_id == -1,
+        ))
+        db.delete(membership)
+        db.commit()
+    assert client.get("/test/documents").status_code == 403
+
+
 def test_inactive_selected_bar_blocks_tenant_requests(context_environment):
     client, _engine, test_sessionmaker, _api = context_environment
     ids = seed_memberships(test_sessionmaker)

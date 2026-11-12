@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import AlertBanner from "../components/AlertBanner.jsx";
+import { useProtectedFiles } from "../ApiContext";
 
 import {
   HISTORY_DATE_KIND_CIVIL,
@@ -161,26 +162,18 @@ function formatInvoiceCategory(invoice = {}, knownCategories = []) {
 }
 
 function getDocumentPreviewUrl(document) {
-  const rawUrl = document?.preview_url || document?.file_url || "";
-
-  if (!rawUrl) return "";
-  if (rawUrl.startsWith("http")) return rawUrl;
-
-  return `/api${rawUrl}`;
+  return document?.preview_url || document?.file_url || "";
 }
 
 function getDocumentFileUrl(document) {
-  const rawUrl = document?.file_url || "";
-
-  if (!rawUrl) return "";
-  if (rawUrl.startsWith("http")) return rawUrl;
-
-  return `/api${rawUrl}`;
+  return document?.file_url || "";
 }
 
 // Componente React per gestire il caricamento e gli errori delle immagini
 function DocumentPreview({ document }) {
   const [imageErrors, setImageErrors] = useState(new Set());
+  const preview = useProtectedFiles([getDocumentPreviewUrl(document)]);
+  const file = useProtectedFiles([getDocumentFileUrl(document)]);
 
   // Azzera gli errori quando il documento cambia
   useEffect(() => {
@@ -190,13 +183,13 @@ function DocumentPreview({ document }) {
   if (!document) return null;
 
   const documentType = (document.document_type || "").toUpperCase();
-  const previewUrl = getDocumentPreviewUrl(document);
-  const fileUrl = getDocumentFileUrl(document);
+  const fileUrl = file.urls[0];
   
   // Split preview URLs solo se esiste e non è vuota
-  const previewUrls = previewUrl 
-    ? previewUrl.split(",").map(u => u.trim()).filter(u => u.length > 0)
-    : [];
+  const previewUrls = preview.urls;
+
+  if (preview.loading || file.loading) return <p>Caricamento documento...</p>;
+  if (preview.error || file.error) return <p role="alert">{preview.error || file.error}</p>;
 
   // Handler per errore di caricamento immagine
   const handleImageError = (url) => {
@@ -319,7 +312,7 @@ function DocumentPreview({ document }) {
           <div>📄</div>
           <h3>Documento testuale</h3>
           <p>Questo è un file di testo. Scaricalo per visualizzarne il contenuto.</p>
-          <a href={fileUrl} target="_blank" rel="noreferrer" className="document-download-link">
+          <a href={fileUrl} download={document.original_filename} className="document-download-link">
             Scarica {documentType}
           </a>
         </div>
@@ -342,7 +335,7 @@ function DocumentPreview({ document }) {
       <h3>Anteprima non disponibile</h3>
       <p>Il documento è stato salvato, ma non è disponibile un'anteprima per il formato {documentType || "sconosciuto"}.</p>
       {fileUrl && (
-        <a href={fileUrl} target="_blank" rel="noreferrer" className="document-download-link">
+        <a href={fileUrl} download={document.original_filename} className="document-download-link">
           Scarica documento
         </a>
       )}
@@ -378,7 +371,8 @@ function CashClosureReviewCard({
     form.cash_amount,
     form.card_amount
   );
-  const previewUrl = getDocumentPreviewUrl({ file_url: review.document.file_url });
+  const original = useProtectedFiles([review.document.file_url]);
+  const previewUrl = original.urls[0];
 
   async function submit(action) {
     setBusy(true);
@@ -409,9 +403,10 @@ function CashClosureReviewCard({
           <h3>{review.document.original_filename}</h3>
           <p>Caricata il {new Date(review.created_at).toLocaleString("it-IT")}</p>
         </div>
-        <a href={previewUrl} target="_blank" rel="noreferrer">
+        {previewUrl && <a href={previewUrl} target="_blank" rel="noreferrer">
           Apri documento originale
-        </a>
+        </a>}
+        {original.error && <p role="alert">{original.error}</p>}
       </header>
 
       {uncertainFields.length > 0 ? (

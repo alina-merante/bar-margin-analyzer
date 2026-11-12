@@ -36,7 +36,7 @@ function shiftMonth(month, delta) {
   return `${date.getFullYear()}-${nextMonth}`;
 }
 
-export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
+export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout }) {
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   const [selectedYear, selectedMonth] = month.split("-").map(Number);
@@ -92,6 +92,13 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0 }) {
       </nav>
 
       <div className="sidebar-bottom">
+        <div className="sidebar-account">
+          <label htmlFor="active-bar">Bar attivo</label>
+          <select id="active-bar" value={activeBar.id} onChange={(event) => onSelectBar(event.target.value)}>
+            {bars.map((bar) => <option key={bar.id} value={bar.id}>{bar.name}</option>)}
+          </select>
+          <button type="button" onClick={onLogout}>Esci</button>
+        </div>
         <div className="month-selector">
           <button
             type="button"

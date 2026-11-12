@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import Sidebar from "./components/Sidebar";
+import { useTenantApi } from "./ApiContext";
 import UploadPage from "./pages/UploadPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -150,16 +151,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-async function fetchJsonOrThrow(url) {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Errore API (${response.status})`);
-  }
-
-  return response.json();
-}
-
 async function responseJsonOrThrow(response) {
   const payload = await response.json().catch(() => null);
 
@@ -171,7 +162,13 @@ async function responseJsonOrThrow(response) {
   return payload;
 }
 
-export default function App() {
+export default function App({ bars, activeBar, onSelectBar, onLogout }) {
+  const { fetch } = useTenantApi();
+  async function fetchJsonOrThrow(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Errore API (${response.status})`);
+    return response.json();
+  }
   const [month, setMonth] = useState(getCurrentMonth());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1110,6 +1107,7 @@ export default function App() {
           loadDocuments(month),
         ]);
       } catch (err) {
+        if (err.name === "AbortError") return;
         console.error(err);
 
         if (!cancelled) {
@@ -1570,6 +1568,10 @@ const overdueInvoicesAmount = useMemo(
           month={month}
           setMonth={setMonth}
           pendingInvoices={pendingInvoices.length}
+          bars={bars}
+          activeBar={activeBar}
+          onSelectBar={onSelectBar}
+          onLogout={onLogout}
         />
 
         <Routes>
