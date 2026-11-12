@@ -296,14 +296,55 @@ scollegamento pagamento, upload e approvazione di una chiusura, logout e
 sessione scaduta. L'estrazione OCR nella prova era simulata: qualità e
 comportamento dell'OCR reale non sono così verificati.
 
-Per Codespaces su Android usare solo la porta frontend inoltrata **privata** e
-HTTPS, con autenticazione GitHub autorizzata, origine esatta in
-`AUTH_ALLOWED_ORIGINS` e `AUTH_COOKIE_SECURE=true`; non pubblicare API, database
-o upload. Verificare effettivamente accesso, cookie e selezione del bar dal
-tablet. La responsività ha ancora conflitti noti nella sidebar sotto 900 px;
-touch, orientamento, tastiera e fotocamera vanno provati sul dispositivo.
-Manifest PWA, installazione e pulsante dedicato alla fotocamera non sono ancora
-implementati. Le regole di approvazione e i permessi granulari restano invariati.
+#### Accesso privato da Codespaces
+
+Per una prova con dati fittizi, configurare un database e una directory upload
+temporanei come sopra, senza avviare lo script Codespaces che applica migrazioni.
+Nel pannello **Ports** verificare manualmente che la porta frontend 5173 sia
+privata; copiare il relativo URL HTTPS e aprirlo nel browser del tablet dopo
+aver effettuato l'accesso con un account GitHub autorizzato al Codespace.
+Prima di avviare il backend, impostare `AUTH_ALLOWED_ORIGINS` all'origine esatta
+dell'URL HTTPS del frontend, senza percorso né barra finale, e
+`AUTH_COOKIE_SECURE=true`. Avviare il frontend Vite e il backend sulla porta
+locale 8000: il proxy `/api` inoltra le richieste al backend senza esporlo
+direttamente. Non rendere pubblici frontend, API, database o upload.
+Se Vite rifiuta l'host inoltrato, si può riavviare il frontend impostando
+`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` al solo hostname esatto dell'URL
+frontend, senza protocollo né percorso; non autorizzare indiscriminatamente
+tutti gli host.
+
+Il login usa cookie HttpOnly, CSRF e l'header di contesto tenant
+`X-Expected-Bar-ID`; queste protezioni non vanno disabilitate. L'accesso
+all'URL privato dal tablet, inclusi autenticazione GitHub, eventuale controllo
+host di Vite, cookie e selezione del bar, richiede una prova reale: il
+forwarding privato può richiedere passaggi manuali. Non è un deployment.
+
+#### PWA e fotocamera
+
+Il manifest BarManager indica apertura standalone, avvio da `/` e icone
+192/512 px. Su Chrome Android, dall'URL HTTPS privato, usare il menu del browser
+e scegliere **Installa app** o **Aggiungi a schermata Home**, se disponibile.
+La disponibilità dell'installazione e il funzionamento dell'app installata con
+l'autenticazione privata di Codespaces devono essere verificati sul dispositivo.
+
+La connessione Internet rimane necessaria: non è registrato un service worker e
+non è prevista alcuna cache offline di documenti, dati finanziari o risposte API.
+La disconnessione impedisce l'accesso alle funzionalità.
+
+In Carica documenti, **Scatta foto** è disponibile separatamente per chiusure di
+cassa e fatture; un secondo pulsante per le fatture è presente nella pagina
+Fatture. Il browser riceve la richiesta di utilizzare la fotocamera posteriore:
+la scelta effettiva dipende da Android, browser e permessi. I selettori per
+documenti esistenti restano disponibili. Le foto seguono gli stessi flussi
+OCR e revisione già in uso per i file, con i relativi limiti e controlli;
+per le chiusure il file originale oltre 20 MB viene rifiutato.
+
+Una prova Chromium con viewport e tocco simulati, usando API e file fittizi, ha
+verificato login, cambio bar, dashboard, pagamenti, caricamento, revisione e
+controlli fotocamera. Non verifica fotocamera nativa, OCR reale o installazione
+Android. Touch, orientamento, tastiera, accesso privato e acquisizione vanno
+ancora provati sul tablet. Le regole di approvazione e i permessi granulari
+restano invariati.
 
 ## Clean bootstrap
 

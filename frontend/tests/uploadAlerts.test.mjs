@@ -14,6 +14,7 @@ let server;
 let AlertBanner;
 let attachAlertDismissalHandlers;
 let UploadPage;
+let InvoicesPage;
 
 before(async () => {
   server = await createServer({
@@ -27,6 +28,7 @@ before(async () => {
   AlertBanner = alertModule.default;
   attachAlertDismissalHandlers = alertModule.attachAlertDismissalHandlers;
   UploadPage = (await server.ssrLoadModule("/src/pages/UploadPage.jsx")).default;
+  InvoicesPage = (await server.ssrLoadModule("/src/pages/InvoicesPage.jsx")).default;
 });
 
 after(async () => {
@@ -42,6 +44,24 @@ function renderUploadPage(props) {
     createElement(MemoryRouter, null, createElement(UploadPage, { month: "2026-10", ...props }))
   );
 }
+
+test("cash and invoice camera controls remain separate from file upload", () => {
+  const upload = renderUploadPage({});
+  assert.match(upload, /aria-label="Scatta foto chiusura di cassa"/);
+  assert.match(upload, /aria-label="Scatta foto fattura"/);
+  assert.equal((upload.match(/accept="image\/\*" capture="environment"/g) || []).length, 2);
+  assert.match(upload, /id="daily-cash-upload-input"/);
+  assert.match(upload, /id="invoice-upload-input"/);
+
+  const invoices = renderToStaticMarkup(createElement(
+    MemoryRouter, null, createElement(InvoicesPage, {
+      month: "2026-10", handleInvoiceDocumentUpload: () => {},
+    })
+  ));
+  assert.match(invoices, /aria-label="Scatta foto fattura"/);
+  assert.match(invoices, /accept="image\/\*" capture="environment"/);
+  assert.match(invoices, /accept="\.pdf,\.jpg,\.jpeg,\.png,\.xml"/);
+});
 
 test("AlertBanner uses role alert for errors and warnings, status for success", () => {
   assert.match(renderBanner({ variant: "error", children: "x" }), /role="alert"/);

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AlertBanner from "../components/AlertBanner.jsx";
+import CameraCapture from "../components/CameraCapture.jsx";
 import { useProtectedFiles } from "../ApiContext";
 import {
   getCalendarDate,
@@ -723,6 +724,11 @@ useEffect(() => {
               }}
             />
           </label>
+          {handleInvoiceDocumentUpload && <CameraCapture
+            className="invoice-upload-btn"
+            label="Scatta foto fattura"
+            onCapture={handleInvoiceDocumentUpload}
+          />}
         </div>
       </section>
 

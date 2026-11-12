@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import AlertBanner from "../components/AlertBanner.jsx";
+import CameraCapture from "../components/CameraCapture.jsx";
 import { useProtectedFiles } from "../ApiContext";
 
 import {
@@ -844,7 +845,11 @@ if (uploaded) setActiveHistoryTab("other");
                 oppure <span>clicca per selezionare</span>
               </div>
             </div>
-
+            <CameraCapture
+              className="upload-camera-btn"
+              label="Scatta foto chiusura di cassa"
+              onCapture={handleCashDocument}
+            />
           </article>
 
           <article className="upload-doc-card cool">
@@ -998,6 +1003,11 @@ if (uploaded) setActiveHistoryTab("other");
               <div className="upload-mini-box-title">Carica fattura</div>
               <div className="upload-mini-box-sub">PDF o file XML SDI</div>
             </div>
+            <CameraCapture
+              className="upload-camera-btn"
+              label="Scatta foto fattura"
+              onCapture={uploadInvoiceAndGoToInvoices}
+            />
           </article>
 
           <article className="upload-mini-card">

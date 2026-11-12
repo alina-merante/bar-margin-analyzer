@@ -5077,3 +5077,37 @@ body {
 }
 .auth-card button, .sidebar-account button { cursor: pointer; }
 .sidebar-account { display: grid; gap: 6px; margin-bottom: 12px; color: white; }
+
+.upload-camera-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fffaf5;
+  color: var(--text-mid);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 100%;
+  }
+
+  .main {
+    margin-left: 0;
+  }
+
+  .invoices-dashboard-page {
+    padding: 24px;
+  }
+
+  .month-picker-popover {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 50%;
+    width: min(310px, calc(100vw - 32px));
+  }
+}
