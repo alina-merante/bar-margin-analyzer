@@ -13,6 +13,7 @@ from app.models.cash_closure_intake import CashClosureIntake
 from app.models.bar import Bar
 from app.models.user import User
 from app.models.user_bar_membership import MembershipRole, UserBarMembership
+from app.models.membership_permission import MembershipPermission
 from app.models.auth_session import AuthSession
 from app.models.auth_login_attempt import AuthLoginAttempt
 
@@ -35,6 +36,7 @@ __all__ = [
         "User",
         "MembershipRole",
         "UserBarMembership",
+        "MembershipPermission",
         "AuthSession",
         "AuthLoginAttempt",
 ]

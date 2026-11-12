@@ -65,3 +65,8 @@ class UserBarMembership(Base):
 
     user = relationship("User", back_populates="memberships")
     bar = relationship("Bar", back_populates="memberships")
+    permissions = relationship(
+        "MembershipPermission",
+        back_populates="membership",
+        cascade="all, delete-orphan",
+    )

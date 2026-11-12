@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
-from app.models import Bar, MembershipRole, User, UserBarMembership
+from app.models import Bar, MembershipPermission, MembershipRole, User, UserBarMembership
+from app.permissions import DelegablePermission
 
 
 @pytest.fixture
@@ -132,4 +133,60 @@ def test_membership_foreign_keys_are_enforced(tenant_session, user_id, bar_id):
                 "VALUES (:user_id, :bar_id, 'staff')"
             ),
             {"user_id": user_id, "bar_id": bar_id},
+        )
+
+
+def test_permissions_are_scoped_to_membership_and_default_to_deny(tenant_session):
+    user = create_user(tenant_session)
+    first = UserBarMembership(user=user, bar=Bar(name="Uno"), role=MembershipRole.staff)
+    second = UserBarMembership(user=user, bar=Bar(name="Due"), role=MembershipRole.staff)
+    tenant_session.add_all([first, second])
+    tenant_session.flush()
+    assert not user.is_global_admin
+    assert first.permissions == []
+    assert second.permissions == []
+
+    first.permissions.append(MembershipPermission(permission=DelegablePermission.INVOICES_UPLOAD))
+    second.permissions.append(MembershipPermission(permission=DelegablePermission.COSTS_VIEW))
+    tenant_session.commit()
+    tenant_session.expire_all()
+
+    assert [grant.permission for grant in first.permissions] == ["invoices.upload"]
+    assert [grant.permission for grant in second.permissions] == ["costs.view"]
+
+
+def test_unknown_or_cash_closure_approval_permissions_are_rejected(tenant_session):
+    membership = UserBarMembership(
+        user=create_user(tenant_session), bar=Bar(name="Uno"), role=MembershipRole.staff
+    )
+    tenant_session.add(membership)
+    tenant_session.commit()
+    membership_id = membership.id
+    assert "cash_closures.approve" not in {item.value for item in DelegablePermission}
+    for code in ("cash_closures.approve", "is_global_admin", "unknown.permission"):
+        with pytest.raises(ValueError):
+            MembershipPermission(permission=code)
+        with pytest.raises(IntegrityError):
+            tenant_session.execute(
+                text("INSERT INTO membership_permissions (membership_id, permission) VALUES (:id, :code)"),
+                {"id": membership_id, "code": code},
+            )
+        tenant_session.rollback()
+
+
+def test_permission_uniqueness_and_foreign_key(tenant_session):
+    membership = UserBarMembership(
+        user=create_user(tenant_session), bar=Bar(name="Uno"), role=MembershipRole.staff
+    )
+    tenant_session.add(membership)
+    tenant_session.flush()
+    tenant_session.add(MembershipPermission(membership=membership, permission="invoices.upload"))
+    tenant_session.commit()
+    tenant_session.add(MembershipPermission(membership=membership, permission="invoices.upload"))
+    with pytest.raises(IntegrityError):
+        tenant_session.commit()
+    tenant_session.rollback()
+    with pytest.raises(IntegrityError):
+        tenant_session.execute(
+            text("INSERT INTO membership_permissions (membership_id, permission) VALUES (99999, 'invoices.upload')")
         )

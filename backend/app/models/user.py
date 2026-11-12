@@ -8,6 +8,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     String,
     UniqueConstraint,
+    false,
     func,
     true,
 )
@@ -42,6 +43,12 @@ class User(Base):
         Boolean,
         default=True,
         server_default=true(),
+        nullable=False,
+    )
+    is_global_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=false(),
         nullable=False,
     )
     created_at: Mapped[dt.datetime] = mapped_column(

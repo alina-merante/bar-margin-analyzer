@@ -73,6 +73,56 @@ le migrazioni al database scelto. Il comando chiede le credenziali senza
 mostrare la password e si rifiuta di procedere se esistono già utenti o bar
 non riconducibili al bar legacy.
 
+### Fondazione amministrazione globale e permessi
+
+La migrazione additiva `20261112_0014` aggiunge `users.is_global_admin`,
+predefinito a `false` anche per gli utenti esistenti, e la tabella
+`membership_permissions`. Non cambia ruoli, membership o bar legacy e non
+assegna permessi. Il privilegio globale è indipendente da email e ruolo owner.
+Il downgrade rifiuta di procedere se esistono amministratrici globali o permessi:
+la loro rimozione deve essere decisa e gestita esplicitamente prima del downgrade.
+
+La nomina di un utente **esistente e attivo** è un'operazione amministrativa
+locale, non un endpoint. Dopo la migrazione, da un ambiente con accesso
+amministrativo controllato al database, configurare esplicitamente
+`DATABASE_URL` per il database desiderato e avviare:
+
+```bash
+cd backend
+.venv/bin/python -m app.promote_global_admin ID_UTENTE
+```
+
+Il comando mostra driver, host, porta e nome del database senza credenziali né
+parametri di connessione, oltre all'utente; verificare entrambi e digitare
+esattamente `PROMOTE ID_UTENTE` per confermare. Non crea
+account, non richiede password utente e non promuove automaticamente gli owner.
+Limitare accesso al comando, alle credenziali del database e all'ambiente
+operativo a personale autorizzato.
+
+I permessi sono righe univoche per membership: quindi uno stesso utente può
+avere concessioni diverse nei diversi bar. I codici ammessi sono definiti in
+`backend/app/permissions.py` e vincolati anche nello schema; codici sconosciuti
+sono rifiutati. Nessun permesso viene assegnato automaticamente. Il catalogo
+distingue documenti propri e di tutti, upload, creazione, modifica, revisione,
+approvazione ed eliminazione dove applicabili, e lettura separata di incassi,
+costi, pagamenti, profitti, margini e analytics. Non contiene un permesso
+delegabile per approvare chiusure di cassa: la regola futura riserva tale
+approvazione all'amministratrice globale o all'owner del bar.
+
+**Questa è soltanto una fondazione, non l'enforcement dei nuovi permessi.**
+Non esistono ancora API di gestione account, assegnazioni o permessi, né un
+bypass operativo per l'amministratrice globale; i router usano ancora la matrice
+owner/manager/staff descritta sotto. Analytics e altre letture economiche sono
+ancora visibili allo staff del bar. Oggi lo staff può anche approvare chiusure
+in revisione e le chiusure `AUTO_SAVE` sono approvate automaticamente durante
+l'upload: entrambi i comportamenti sono criticità da eliminare nel successivo
+intervento di enforcement completo, non protezioni già attive. L'accesso a
+analytics non dovrà implicare accesso a dati economici non autorizzati, anche
+quando ricavabili da aggregati. La distinzione dei propri documenti richiede
+ancora la registrazione dell'autore e il controllo su API e download.
+Il bar legacy con ID `-1` non viene modificato da questa migrazione; l'header
+tenant corrente accetta soltanto ID positivi, problema da risolvere separatamente.
+
 La migrazione `20261111_0013` rende per-bar l'unicità di prodotti, categorie,
 chiusure e intake, mantenendo vincoli separati per record legacy con `bar_id`
 nullo. Categorie/regole, import CSV POS/banca e revisione delle chiusure

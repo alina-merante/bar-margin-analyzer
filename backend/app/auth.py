@@ -56,6 +56,12 @@ def get_current_user(
     return auth_session.user
 
 
+def require_global_admin(user: User = Depends(get_current_user)) -> User:
+    if not user.is_active or not user.is_global_admin:
+        raise HTTPException(status_code=403, detail="global administrator required")
+    return user
+
+
 def require_session_csrf(
     request: Request,
     auth_session: AuthSession = Depends(get_current_session),

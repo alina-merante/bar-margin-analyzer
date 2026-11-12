@@ -16,7 +16,7 @@ from alembic import command
 from alembic.config import Config
 from app.bootstrap_owner import BootstrapError, bootstrap_owner
 from app import bootstrap_owner as bootstrap_owner_module
-from app.auth import require_session_csrf
+from app.auth import require_global_admin, require_session_csrf
 from app.database import Base, get_db
 from app.models import (
     AuthLoginAttempt,
@@ -57,6 +57,11 @@ def auth_test_environment(tmp_path):
         return {"ok": True}
 
     api.add_api_route("/protected", protected_mutation, methods=["POST"])
+    api.add_api_route(
+        "/test-global-admin",
+        lambda user=Depends(require_global_admin): {"id": user.id},
+        methods=["GET"],
+    )
 
     def override_get_db():
         db = test_sessionmaker()
@@ -103,6 +108,71 @@ def login(client, csrf_token, email="owner@example.test", password="correct hors
         },
         json={"email": email, "password": password},
     )
+
+
+def test_global_admin_guard_cannot_be_escalated_via_login(auth_test_environment):
+    client, _engine, factory = auth_test_environment
+    user_id = create_owner(factory)
+    assert client.get("/test-global-admin").status_code == 401
+    csrf = csrf_for_login(client)
+    response = client.post(
+        "/auth/login",
+        headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf},
+        json={
+            "email": "owner@example.test",
+            "password": "correct horse battery",
+            "is_global_admin": True,
+            "role": "admin",
+        },
+    )
+    assert response.status_code == 200
+    assert client.get("/test-global-admin").status_code == 403
+    with factory() as db:
+        user = db.get(User, user_id)
+        assert not user.is_global_admin
+        user.is_global_admin = True
+        db.commit()
+    assert client.get("/test-global-admin").status_code == 200
+    with factory() as db:
+        user = db.get(User, user_id)
+        user.is_active = False
+        db.commit()
+    assert client.get("/test-global-admin").status_code == 401
+
+
+def test_global_admin_cli_requires_explicit_confirmation(auth_test_environment, monkeypatch):
+    from app import promote_global_admin as cli
+
+    _client, engine, factory = auth_test_environment
+    user_id = create_owner(factory)
+    monkeypatch.setattr(cli, "engine", engine)
+    monkeypatch.setattr(sys, "argv", ["promote_global_admin", str(user_id)])
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert cli.main() == 1
+    monkeypatch.setenv("DATABASE_URL", str(engine.url))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    assert cli.main() == 1
+    with factory() as db:
+        assert not db.get(User, user_id).is_global_admin
+    monkeypatch.setattr("builtins.input", lambda _prompt: f"PROMOTE {user_id}")
+    assert cli.main() == 0
+    with factory() as db:
+        assert db.get(User, user_id).is_global_admin
+    assert cli.main() == 1
+
+
+def test_global_admin_promotion_rejects_missing_or_inactive_user(auth_test_environment):
+    from app.promote_global_admin import promote_global_admin
+
+    _client, _engine, factory = auth_test_environment
+    user_id = create_owner(factory)
+    with factory() as db:
+        db.get(User, user_id).is_active = False
+        db.commit()
+        for invalid_id in (user_id, 99999):
+            with pytest.raises(ValueError):
+                promote_global_admin(db, invalid_id)
+        assert not db.get(User, user_id).is_global_admin
 
 
 def test_argon2id_hash_and_password_verification():
