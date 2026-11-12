@@ -15,6 +15,7 @@ from app.database import Base
 from app.models import CashClosureIntake, DailyCashClosure, Document
 from app.routers import cash_closures, documents
 from app.routers.analytics import monthly_pnl
+from test_documents_cash_month import _test_context, upload_for_test
 
 
 @pytest.fixture
@@ -22,12 +23,15 @@ def review_session(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'cash-review.db'}")
     Base.metadata.create_all(engine)
     with Session(engine) as session:
+        _test_context(session)
+        session.commit()
         yield session
     engine.dispose()
 
 
 def create_document(session, month="2026-11"):
     document = Document(
+        bar_id=_test_context(session).bar.id,
         month=month,
         original_filename="closure.png",
         stored_filename="closure.png",
@@ -55,6 +59,7 @@ def create_intake(
     source_sha256="a" * 64,
 ):
     intake = CashClosureIntake(
+        bar_id=document.bar_id,
         document_id=document.id,
         source_sha256=source_sha256,
         classification="SAVE_FOR_REVIEW",
@@ -72,6 +77,27 @@ def create_intake(
     return intake
 
 
+def approve_review(intake_id, session):
+    context = _test_context(session)
+    return cash_closures.approve_cash_closure_review(
+        intake_id, _auth_session=context.auth_session, context=context, db=session
+    )
+
+
+def correct_review(intake_id, payload, session):
+    context = _test_context(session)
+    return cash_closures.correct_cash_closure_review(
+        intake_id, payload, _auth_session=context.auth_session, context=context, db=session
+    )
+
+
+def reject_review(intake_id, session):
+    context = _test_context(session)
+    return cash_closures.reject_cash_closure_review(
+        intake_id, _auth_session=context.auth_session, context=context, db=session
+    )
+
+
 def test_pending_review_is_excluded_until_approved_and_repeated_approval_counts_once(
     review_session,
 ):
@@ -86,8 +112,8 @@ def test_pending_review_is_excluded_until_approved_and_repeated_approval_counts_
     before = monthly_pnl(review_session, dt.date(2026, 11, 1), dt.date(2026, 12, 1))
     assert before["revenue"] == Decimal("0.00")
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
-    again = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
+    again = approve_review(intake.id, review_session)
     closures = review_session.scalars(select(DailyCashClosure)).all()
     after = monthly_pnl(review_session, dt.date(2026, 11, 1), dt.date(2026, 12, 1))
 
@@ -108,7 +134,7 @@ def test_approval_allows_exact_payment_breakdown(review_session):
         card_amount=Decimal("120.00"),
     )
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
 
     assert approved["status"] == "approved"
     assert approved["unallocated_amount"] is None
@@ -124,7 +150,7 @@ def test_approval_allows_explicit_zero_total_and_payments(review_session):
         card_amount=Decimal("0.00"),
     )
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
 
     assert approved["status"] == "approved"
     assert approved["unallocated_amount"] is None
@@ -140,7 +166,7 @@ def test_approval_rejects_payment_breakdown_above_total(review_session):
     )
 
     with pytest.raises(HTTPException) as error:
-        cash_closures.approve_cash_closure_review(intake.id, review_session)
+        approve_review(intake.id, review_session)
 
     assert error.value.status_code == 422
     assert "contanti e POS" in error.value.detail
@@ -158,7 +184,7 @@ def test_approval_reports_amount_below_total_as_unallocated(review_session):
         card_amount=Decimal("100.00"),
     )
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
 
     assert approved["status"] == "approved"
     assert approved["unallocated_amount"] == "25.00"
@@ -183,7 +209,7 @@ def test_approval_allows_unknown_payment_amounts(
         card_amount=card_amount,
     )
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
 
     assert approved["status"] == "approved"
     assert approved["unallocated_amount"] is None
@@ -194,7 +220,7 @@ def test_approval_requires_date_number_and_total(review_session):
     intake = create_intake(review_session, document, total_amount=None)
 
     with pytest.raises(HTTPException) as error:
-        cash_closures.approve_cash_closure_review(intake.id, review_session)
+        approve_review(intake.id, review_session)
 
     assert error.value.status_code == 422
     assert review_session.scalars(select(DailyCashClosure)).all() == []
@@ -205,6 +231,7 @@ def test_duplicate_approval_conflicts_with_existing_accounted_closure(review_ses
     intake = create_intake(review_session, document)
     review_session.add(
         DailyCashClosure(
+            bar_id=intake.bar_id,
             date=intake.date,
             closure_number=intake.closure_number,
             total_amount=Decimal("200.00"),
@@ -213,7 +240,7 @@ def test_duplicate_approval_conflicts_with_existing_accounted_closure(review_ses
     review_session.commit()
 
     with pytest.raises(HTTPException) as error:
-        cash_closures.approve_cash_closure_review(intake.id, review_session)
+        approve_review(intake.id, review_session)
 
     assert error.value.status_code == 409
     assert len(review_session.scalars(select(DailyCashClosure)).all()) == 1
@@ -232,7 +259,7 @@ def test_review_correction_cannot_duplicate_another_pending_date_and_number(revi
     )
 
     with pytest.raises(HTTPException) as error:
-        cash_closures.correct_cash_closure_review(
+        correct_review(
             second.id,
             cash_closures.CashClosureCorrection(
                 date=first.date,
@@ -250,7 +277,7 @@ def test_correction_and_manual_rejection(review_session):
     document = create_document(review_session)
     intake = create_intake(review_session, document, date=None, closure_number=None)
 
-    corrected = cash_closures.correct_cash_closure_review(
+    corrected = correct_review(
         intake.id,
         cash_closures.CashClosureCorrection(
             date=dt.date(2026, 11, 4),
@@ -262,7 +289,7 @@ def test_correction_and_manual_rejection(review_session):
     assert corrected["date"] == "2026-11-04"
     assert corrected["total_amount"] == "0.00"
 
-    rejected = cash_closures.reject_cash_closure_review(intake.id, review_session)
+    rejected = reject_review(intake.id, review_session)
     assert rejected == {"id": intake.id, "status": "rejected"}
     assert review_session.scalars(select(DailyCashClosure)).all() == []
 
@@ -276,7 +303,7 @@ def test_correction_rejects_invalid_payment_amount(review_session, amount):
     intake = create_intake(review_session, document)
 
     with pytest.raises(HTTPException) as error:
-        cash_closures.correct_cash_closure_review(
+        correct_review(
             intake.id,
             cash_closures.CashClosureCorrection(cash_amount=amount),
             review_session,
@@ -294,7 +321,7 @@ def test_approval_with_explicit_zero_payments_reports_total_unallocated(review_s
         card_amount=Decimal("0.00"),
     )
 
-    approved = cash_closures.approve_cash_closure_review(intake.id, review_session)
+    approved = approve_review(intake.id, review_session)
 
     assert approved["unallocated_amount"] == "200.00"
 
@@ -303,8 +330,9 @@ def test_review_api_exposes_original_document_and_ocr_anomalies(review_session):
     document = create_document(review_session)
     intake = create_intake(review_session, document)
 
-    listed = cash_closures.list_cash_closure_reviews(None, review_session)
-    detail = cash_closures.get_cash_closure_review(intake.id, review_session)
+    context = _test_context(review_session)
+    listed = cash_closures.list_cash_closure_reviews(None, context, review_session)
+    detail = cash_closures.get_cash_closure_review(intake.id, context, review_session)
 
     assert listed[0]["document"]["file_url"] == document.file_url
     assert listed[0]["anomalies"] == ["total_amount:ambiguous"]
@@ -340,7 +368,7 @@ def test_upload_stages_readable_but_unresolved_closure_without_touching_kpis(
     )
 
     response = asyncio.run(
-        documents.upload_document(
+        upload_for_test(
             file=UploadFile(file=BytesIO(b"unique readable closure"), filename="closure.png"),
             month="2026-11",
             section="cash",
@@ -381,7 +409,7 @@ def test_upload_hash_prevents_duplicate_review_documents(review_session, tmp_pat
         },
     )
     upload = lambda: asyncio.run(
-        documents.upload_document(
+        upload_for_test(
             file=UploadFile(file=BytesIO(b"same review file"), filename="closure.png"),
             month="2026-11",
             section="cash",
@@ -420,7 +448,7 @@ def test_upload_without_closure_evidence_is_rejected_without_persistence(
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(
-            documents.upload_document(
+            upload_for_test(
                 file=UploadFile(file=BytesIO(b"unreadable"), filename="closure.png"),
                 month="2026-11",
                 section="cash",

@@ -2,7 +2,7 @@ import datetime as dt
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,12 +14,15 @@ from app.models import AuthSession
 from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.document import Document
+from app.routers.upload_files import document_urls
 
 router = APIRouter(prefix="/cash-closures", tags=["cash-closures"])
 review_context = require_bar_permission(BarPermission.REVIEW_OCR)
 
 
 class CashClosureCorrection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     date: dt.date | None = None
     closure_number: str | None = None
     total_amount: Decimal | None = None
@@ -29,6 +32,7 @@ class CashClosureCorrection(BaseModel):
 
 def intake_to_dict(intake: CashClosureIntake) -> dict:
     document = intake.document
+    file_url, preview_url = document_urls(document)
     unallocated_amount = unallocated_payment_amount(
         intake.total_amount,
         intake.cash_amount,
@@ -54,8 +58,8 @@ def intake_to_dict(intake: CashClosureIntake) -> dict:
             "id": document.id,
             "month": document.month,
             "original_filename": document.original_filename,
-            "file_url": document.file_url,
-            "preview_url": document.preview_url,
+            "file_url": file_url,
+            "preview_url": preview_url,
         },
         "closure_id": intake.closure_id,
     }
@@ -84,12 +88,15 @@ def get_intake_for_bar(
         .where(
             or_(
                 CashClosureIntake.closure_id.is_(None),
-                DailyCashClosure.bar_id == bar_id,
+                (DailyCashClosure.bar_id == bar_id)
+                & (DailyCashClosure.document_id == CashClosureIntake.document_id),
             )
         )
     )
     if intake is None:
         raise HTTPException(status_code=404, detail="cash closure review not found")
+    if (intake.status == "approved") != (intake.closure_id is not None):
+        raise HTTPException(status_code=409, detail="inconsistent cash closure review")
     if pending_only and intake.status != "pending":
         raise HTTPException(status_code=409, detail="cash closure review is no longer pending")
     return intake
@@ -145,11 +152,13 @@ def list_cash_closure_reviews(
         )
         .where(
             CashClosureIntake.status == "pending",
+            CashClosureIntake.closure_id.is_(None),
             CashClosureIntake.bar_id == context.bar.id,
             Document.bar_id == context.bar.id,
             or_(
                 CashClosureIntake.closure_id.is_(None),
-                DailyCashClosure.bar_id == context.bar.id,
+                (DailyCashClosure.bar_id == context.bar.id)
+                & (DailyCashClosure.document_id == CashClosureIntake.document_id),
             ),
         )
     )

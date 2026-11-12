@@ -13,6 +13,7 @@ from app.models import DailyCashClosure, Document
 from app.routers import documents as documents_router
 from app.routers.analytics import overview
 from app.time_utils import to_utc_iso
+from test_documents_cash_month import _test_context
 
 
 @pytest.fixture
@@ -20,6 +21,8 @@ def db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'utc_timestamps.db'}")
     Base.metadata.create_all(engine)
     with Session(engine) as session:
+        _test_context(session)
+        session.commit()
         yield session
     engine.dispose()
 
@@ -78,15 +81,18 @@ def test_serialized_value_parses_to_the_same_instant():
 
 
 def test_document_dict_serializes_created_at_as_explicit_utc(db):
-    db.add(make_document(created_at=dt.datetime(2026, 9, 30, 23, 30, 5, 123456)))
+    context = _test_context(db)
+    db.add(make_document(
+        bar_id=context.bar.id, created_at=dt.datetime(2026, 9, 30, 23, 30, 5, 123456)
+    ))
     db.commit()
 
-    result = documents_router.list_documents(month="2026-09", db=db)
+    result = documents_router.list_documents(month="2026-09", context=context, db=db)
 
     assert result[0]["created_at"] == "2026-09-30T23:30:05.123456+00:00"
 
 
-def test_legacy_naive_row_in_database_is_read_as_utc_and_not_rewritten(db):
+def test_legacy_naive_row_without_tenant_is_hidden_and_not_rewritten(db):
     db.execute(
         text(
             "INSERT INTO documents (month, original_filename, stored_filename, section, "
@@ -97,10 +103,12 @@ def test_legacy_naive_row_in_database_is_read_as_utc_and_not_rewritten(db):
     )
     db.commit()
 
-    result = documents_router.list_documents(month="2026-09", db=db)
+    result = documents_router.list_documents(
+        month="2026-09", context=_test_context(db), db=db
+    )
     stored = db.execute(text("SELECT created_at FROM documents")).scalar_one()
 
-    assert result[0]["created_at"] == "2026-09-30T14:41:40.512236+00:00"
+    assert result == []
     assert stored == "2026-09-30 14:41:40.512236"
 
 

@@ -5,7 +5,7 @@ import tempfile
 from decimal import Decimal
 from io import BytesIO
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 import pytest
@@ -15,7 +15,10 @@ from sqlalchemy.orm import Session, sessionmaker
 sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
+from app import config
+from app.bar_context import get_active_bar_context
 from app.models import (
+    AuthSession,
     Bar,
     CashClosureIntake,
     DailyCashClosure,
@@ -37,11 +40,49 @@ from app.routers import (
 from app.routers.analytics import monthly_pnl, overview
 from app.routers.auth import router as auth_router
 from app.routers.bar_context import router as bar_context_router
-from app.security import hash_password
+from app.security import hash_password, token_hash
+from app.settings import settings
 
 
 ALLOWED_ORIGIN = "http://localhost:5173"
 TEST_PASSWORD = "correct horse battery"
+TEST_SESSION_TOKEN = "document-unit-test-session"
+
+
+def _test_context(db):
+    auth_session = db.scalar(
+        select(AuthSession).where(AuthSession.token_hash == token_hash(TEST_SESSION_TOKEN))
+    )
+    if auth_session is None:
+        bar = db.scalar(select(Bar).order_by(Bar.id))
+        if bar is None:
+            bar = Bar(name="Document test bar")
+            db.add(bar)
+            db.flush()
+        user = User(email="document-unit@example.test", password_hash="test")
+        db.add(user)
+        db.flush()
+        db.add(UserBarMembership(user_id=user.id, bar_id=bar.id, role=MembershipRole.owner))
+        now = dt.datetime.now(dt.timezone.utc)
+        auth_session = AuthSession(
+            user_id=user.id, active_bar_id=bar.id, token_hash=token_hash(TEST_SESSION_TOKEN),
+            csrf_token_hash=token_hash("test-csrf"), created_at=now,
+            expires_at=now + dt.timedelta(days=1),
+        )
+        db.add(auth_session)
+        db.flush()
+    return get_active_bar_context(auth_session, db)
+
+
+async def upload_for_test(*, db, **kwargs):
+    context = _test_context(db)
+    request = Request({
+        "type": "http", "method": "POST", "path": "/documents/upload",
+        "headers": [(b"cookie", f"{settings.cookie_name}={TEST_SESSION_TOKEN}".encode())],
+    })
+    return await documents_router.upload_document(
+        request=request, _auth_session=context.auth_session, context=context, db=db, **kwargs
+    )
 
 
 @pytest.fixture
@@ -49,6 +90,8 @@ def bank_document_db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'bank_document_dates.db'}")
     Base.metadata.create_all(engine)
     with Session(engine) as session:
+        _test_context(session)
+        session.commit()
         yield session
     engine.dispose()
 
@@ -69,6 +112,7 @@ def authenticated_bank_import_environment(tmp_path, monkeypatch):
     api.include_router(auth_router)
     api.include_router(bar_context_router)
     api.include_router(imports_router.router)
+    api.include_router(documents_router.router)
 
     def override_get_db():
         db = test_sessionmaker()
@@ -170,6 +214,7 @@ def post_bank_csv(client, csrf_token, filename, content, data=None):
 
 def create_bank_history_document(db):
     document = Document(
+        bar_id=_test_context(db).bar.id,
         month="2026-07",
         original_filename="bank_test.csv",
         stored_filename="bank_test.csv",
@@ -189,6 +234,7 @@ def create_bank_history_document(db):
 
 def create_cash_history_document(db):
     document = Document(
+        bar_id=_test_context(db).bar.id,
         month="2026-07",
         original_filename="cash_test.pdf",
         stored_filename="cash_test.pdf",
@@ -210,6 +256,7 @@ def test_bank_document_history_uses_single_transaction_date(bank_document_db):
     document = create_bank_history_document(bank_document_db)
     bank_document_db.add(
         Transaction(
+            bar_id=document.bar_id,
             date=dt.date(2026, 7, 18),
             description="Commissioni bancarie luglio",
             amount=Decimal("-5.00"),
@@ -219,7 +266,9 @@ def test_bank_document_history_uses_single_transaction_date(bank_document_db):
     )
     bank_document_db.commit()
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] == "2026-07-18"
     assert result[0]["effective_date_end"] == "2026-07-18"
@@ -230,6 +279,7 @@ def test_bank_document_history_uses_transaction_date_range(bank_document_db):
     bank_document_db.add_all(
         [
             Transaction(
+                bar_id=document.bar_id,
                 date=dt.date(2026, 7, 3),
                 description="Primo movimento",
                 amount=Decimal("-5.00"),
@@ -237,6 +287,7 @@ def test_bank_document_history_uses_transaction_date_range(bank_document_db):
                 document_id=document.id,
             ),
             Transaction(
+                bar_id=document.bar_id,
                 date=dt.date(2026, 7, 31),
                 description="Ultimo movimento",
                 amount=Decimal("-8.00"),
@@ -247,7 +298,9 @@ def test_bank_document_history_uses_transaction_date_range(bank_document_db):
     )
     bank_document_db.commit()
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] == "2026-07-03"
     assert result[0]["effective_date_end"] == "2026-07-31"
@@ -260,6 +313,7 @@ def test_bank_document_history_with_same_transaction_date_stays_single_date(
     bank_document_db.add_all(
         [
             Transaction(
+                bar_id=document.bar_id,
                 date=dt.date(2026, 7, 18),
                 description="Primo movimento",
                 amount=Decimal("-5.00"),
@@ -267,6 +321,7 @@ def test_bank_document_history_with_same_transaction_date_stays_single_date(
                 document_id=document.id,
             ),
             Transaction(
+                bar_id=document.bar_id,
                 date=dt.date(2026, 7, 18),
                 description="Secondo movimento",
                 amount=Decimal("-8.00"),
@@ -277,7 +332,9 @@ def test_bank_document_history_with_same_transaction_date_stays_single_date(
     )
     bank_document_db.commit()
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] == "2026-07-18"
     assert result[0]["effective_date_end"] == "2026-07-18"
@@ -286,7 +343,9 @@ def test_bank_document_history_with_same_transaction_date_stays_single_date(
 def test_legacy_bank_document_history_has_no_transaction_date(bank_document_db):
     document = create_bank_history_document(bank_document_db)
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] is None
     assert result[0]["effective_date_end"] is None
@@ -297,6 +356,7 @@ def test_cash_document_history_uses_linked_closure_date(bank_document_db):
     document = create_cash_history_document(bank_document_db)
     bank_document_db.add(
         DailyCashClosure(
+            bar_id=document.bar_id,
             date=dt.date(2026, 7, 14),
             total_amount=Decimal("500.00"),
             document_id=document.id,
@@ -304,7 +364,9 @@ def test_cash_document_history_uses_linked_closure_date(bank_document_db):
     )
     bank_document_db.commit()
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] == "2026-07-14"
 
@@ -312,7 +374,9 @@ def test_cash_document_history_uses_linked_closure_date(bank_document_db):
 def test_legacy_cash_document_history_keeps_created_at_fallback(bank_document_db):
     document = create_cash_history_document(bank_document_db)
 
-    result = documents_router.list_documents(month="2026-07", db=bank_document_db)
+    result = documents_router.list_documents(
+        month="2026-07", context=_test_context(bank_document_db), db=bank_document_db
+    )
 
     assert result[0]["effective_date"] is None
     assert result[0]["created_at"] == "2026-09-30T12:00:00+00:00"
@@ -320,6 +384,7 @@ def test_legacy_cash_document_history_keeps_created_at_fallback(bank_document_db
 
 def test_invoice_history_payload_includes_issue_date(bank_document_db):
     invoice = Invoice(
+        bar_id=_test_context(bank_document_db).bar.id,
         supplier="Fornitore Test",
         invoice_number="FT-2026-07",
         issue_date=dt.date(2026, 7, 2),
@@ -335,6 +400,7 @@ def test_invoice_history_payload_includes_issue_date(bank_document_db):
         status=None,
         supplier=None,
         month="2026-07",
+        context=_test_context(bank_document_db),
         db=bank_document_db,
     )
 
@@ -395,17 +461,14 @@ def test_uploading_old_bank_csv_does_not_advance_latest_transaction_date(
 
     with test_sessionmaker() as session:
         before_upload = overview(month="2026-07", db=session)
-        document = __import__("asyncio").run(
-            documents_router.upload_document(
-                file=UploadFile(
-                    file=BytesIO(bank_csv),
-                    filename="07_movimento_parziale_bevande_2026-07.csv",
-                ),
-                month="2026-09",
-                section="bank",
-                db=session,
-            )
+        response = client.post(
+            "/documents/upload",
+            headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf_token},
+            files={"file": ("07_movimento_parziale_bevande_2026-07.csv", bank_csv)},
+            data={"month": "2026-09", "section": "bank"},
         )
+        assert response.status_code == 200, response.text
+        document = response.json()
         after_upload = overview(month="2026-07", db=session)
         uploaded_at = dt.datetime.fromisoformat(document["created_at"])
         uploaded_document = session.get(Document, document["id"])
@@ -417,7 +480,7 @@ def test_uploading_old_bank_csv_does_not_advance_latest_transaction_date(
         assert before_upload["latest_bank_transaction_date"] == "2026-07-15"
         assert after_upload["latest_bank_transaction_date"] == "2026-07-15"
         assert uploaded_document is not None
-        assert uploaded_document.bar_id is None
+        assert uploaded_document.bar_id == bar_id
         assert tenant_document is not None
 
 
@@ -631,7 +694,7 @@ def test_mixed_month_bank_csv_keeps_selected_document_month():
         try:
             with Session(engine) as session:
                 document = __import__("asyncio").run(
-                    documents_router.upload_document(
+                    upload_for_test(
                         file=UploadFile(
                             file=BytesIO(bank_csv),
                             filename="mixed_bank_months.csv",
@@ -679,7 +742,7 @@ def test_cash_upload_uses_extracted_closure_month_for_document_history():
         try:
             with Session(engine) as session:
                 result = __import__("asyncio").run(
-                    documents_router.upload_document(
+                    upload_for_test(
                         file=UploadFile(file=BytesIO(b"cash closure"), filename="closure.png"),
                         month="2026-09",
                         section="cash",
@@ -688,8 +751,9 @@ def test_cash_upload_uses_extracted_closure_month_for_document_history():
                 )
 
                 closure = session.scalar(select(DailyCashClosure))
-                july_documents = documents_router.list_documents("2026-07", session)
-                september_documents = documents_router.list_documents("2026-09", session)
+                context = _test_context(session)
+                july_documents = documents_router.list_documents("2026-07", context, session)
+                september_documents = documents_router.list_documents("2026-09", context, session)
 
                 assert closure is not None
                 assert closure.date == dt.date(2026, 7, 14)
@@ -735,7 +799,7 @@ def test_duplicate_cash_upload_returns_conflict_without_duplicating_revenue():
         try:
             with Session(engine) as session:
                 upload = lambda: __import__("asyncio").run(
-                    documents_router.upload_document(
+                    upload_for_test(
                         file=UploadFile(file=BytesIO(b"same cash closure"), filename="closure.png"),
                         month="2026-09",
                         section="cash",
@@ -792,7 +856,7 @@ def _fake_cash_data(content: bytes, extension: str) -> dict:
 
 def _upload_cash_pdf(session):
     return __import__("asyncio").run(
-        documents_router.upload_document(
+        upload_for_test(
             file=UploadFile(file=BytesIO(b"%PDF fake"), filename="closure.pdf"),
             month="2026-09",
             section="cash",
@@ -812,6 +876,14 @@ def cash_upload_env(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path}/test_documents.db")
     Base.metadata.create_all(engine)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "UPLOAD_BASE_PATH", "uploads")
+    monkeypatch.setattr(config, "UPLOAD_DOCUMENTS_DIR", "uploads/documents")
+    monkeypatch.setattr(config, "UPLOAD_PREVIEWS_DIR", "uploads/previews")
+    monkeypatch.setattr(config, "UPLOAD_INVOICES_DIR", "uploads/invoices")
+    monkeypatch.setattr(documents_router, "UPLOAD_PREVIEWS_DIR", "uploads/previews")
+    with Session(engine) as session:
+        _test_context(session)
+        session.commit()
     monkeypatch.setattr(documents_router, "extract_daily_cash_closure", _fake_cash_data)
     monkeypatch.setattr(
         documents_router,
@@ -824,12 +896,15 @@ def cash_upload_env(tmp_path, monkeypatch):
 def test_cash_upload_failure_after_document_flush_rolls_back_and_removes_files(
     cash_upload_env, monkeypatch
 ):
-    def failing_closure(**kwargs):
-        raise RuntimeError("closure creation failed")
-
-    monkeypatch.setattr(documents_router, "DailyCashClosure", failing_closure)
-
     with Session(cash_upload_env) as session:
+        original_add = session.add
+
+        def failing_add(instance, *args, **kwargs):
+            if isinstance(instance, DailyCashClosure):
+                raise RuntimeError("closure creation failed")
+            return original_add(instance, *args, **kwargs)
+
+        monkeypatch.setattr(session, "add", failing_add)
         with pytest.raises(RuntimeError):
             _upload_cash_pdf(session)
 
@@ -944,6 +1019,7 @@ class _FakePgError(Exception):
 def _add_existing_closure(session):
     session.add(
         DailyCashClosure(
+            bar_id=_test_context(session).bar.id,
             date=dt.date(2026, 7, 14),
             closure_number="301",
             total_amount=Decimal("100.00"),
@@ -959,6 +1035,7 @@ def test_db_rejects_duplicate_date_and_closure_number(cash_upload_env):
         _add_existing_closure(session)
         session.add(
             DailyCashClosure(
+                bar_id=_test_context(session).bar.id,
                 date=dt.date(2026, 7, 14),
                 closure_number="301",
                 total_amount=Decimal("100.00"),
@@ -980,9 +1057,11 @@ def test_db_allows_same_number_on_different_dates_and_different_numbers_same_dat
         session.add_all(
             [
                 DailyCashClosure(
+                    bar_id=_test_context(session).bar.id,
                     date=dt.date(2026, 7, 15), closure_number="301", total_amount=Decimal("1.00")
                 ),
                 DailyCashClosure(
+                    bar_id=_test_context(session).bar.id,
                     date=dt.date(2026, 7, 14), closure_number="302", total_amount=Decimal("1.00")
                 ),
             ]
@@ -1003,9 +1082,9 @@ def test_concurrent_duplicate_cash_upload_returns_409_and_cleans_up(
         real_find = documents_router.find_existing_cash_closure
         calls = []
 
-        def find_blind_first_time(db, extracted_data):
+        def find_blind_first_time(db, extracted_data, bar_id):
             calls.append(1)
-            return None if len(calls) == 1 else real_find(db, extracted_data)
+            return None if len(calls) == 1 else real_find(db, extracted_data, bar_id)
 
         monkeypatch.setattr(documents_router, "find_existing_cash_closure", find_blind_first_time)
 
@@ -1056,13 +1135,20 @@ def test_other_integrity_errors_are_not_reported_as_duplicate_closure(
         monkeypatch.setattr(
             documents_router,
             "find_existing_cash_closure",
-            lambda db, data: None if not calls.append(1) and len(calls) == 1 else real_find(db, data),
+            lambda db, data, bar_id: (
+                None if not calls.append(1) and len(calls) == 1
+                else real_find(db, data, bar_id)
+            ),
         )
 
-        def failing_commit():
-            raise IntegrityError("INSERT", {}, _FakePgError("some_other_constraint"))
+        original_flush = session.flush
 
-        monkeypatch.setattr(session, "commit", failing_commit)
+        def failing_flush(*args, **kwargs):
+            if any(isinstance(item, DailyCashClosure) for item in session.new):
+                raise IntegrityError("INSERT", {}, _FakePgError("some_other_constraint"))
+            return original_flush(*args, **kwargs)
+
+        monkeypatch.setattr(session, "flush", failing_flush)
 
         with pytest.raises(IntegrityError):
             _upload_cash_pdf(session)
@@ -1386,7 +1472,7 @@ def test_no_warning_when_total_matches_payments_sum(cash_upload_env, monkeypatch
 def test_non_cash_upload_response_has_no_warnings_key(cash_upload_env):
     with Session(cash_upload_env) as session:
         payload = __import__("asyncio").run(
-            documents_router.upload_document(
+            upload_for_test(
                 file=UploadFile(file=BytesIO(b"hello"), filename="note.txt"),
                 month="2026-09",
                 section="other",
@@ -1498,7 +1584,7 @@ def test_two_closures_same_day_are_saved_and_exact_duplicate_is_rejected(cash_up
                 lambda content, extension: content.decode("utf-8"),
             )
             return __import__("asyncio").run(
-                documents_router.upload_document(
+                upload_for_test(
                     file=UploadFile(file=BytesIO(text.encode("utf-8")), filename="closure.txt"),
                     month="2026-09",
                     section="cash",

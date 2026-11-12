@@ -37,6 +37,7 @@ from app.models import (
 )
 from app.services.ai_invoice_parser import parse_invoice_with_llm
 from app.services.invoice_status import get_invoice_payment_status
+from app.routers.upload_files import invoice_url
 
 from pillow_heif import register_heif_opener
 register_heif_opener()
@@ -228,7 +229,7 @@ def invoice_to_dict(
         "remaining_amount": float(remaining_amount),
         "category": infer_invoice_category(invoice.supplier, invoice.invoice_number),
         "status": payment_status.value,
-        "file_url": invoice.file_url,
+        "file_url": invoice_url(invoice),
     }
 
 

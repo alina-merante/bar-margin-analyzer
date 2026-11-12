@@ -28,6 +28,7 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 from app.database import Base
 from app.models import CashClosureIntake, DailyCashClosure, Document
 from app.routers import documents as documents_router
+from test_documents_cash_month import upload_for_test
 
 pytesseract = pytest.importorskip("pytesseract")
 
@@ -321,7 +322,7 @@ def _upload_png(session, image):
     import asyncio
 
     return asyncio.run(
-        documents_router.upload_document(
+        upload_for_test(
             file=UploadFile(file=BytesIO(to_png(image)), filename="closure.png"),
             month="2026-11",
             section="cash",

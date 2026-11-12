@@ -84,12 +84,30 @@ Le API finanziarie di fatture, pagamenti e riconciliazioni richiedono ora una
 sessione autenticata e un bar attivo. Owner e manager possono operare; lo staff
 può consultare i dati finanziari del bar selezionato ma non crearli, modificarli,
 cancellarli o riconciliarli. Le API verificano il tenant anche nei collegamenti
-tra fatture, pagamenti e transazioni. Le API generali di upload/OCR, documenti e
-analytics restano fuori da questo isolamento; i documenti statici sotto
-`/uploads`, incluse le fatture caricate, restano pubblici. Gli intake o
-documenti senza un bar valido non sono mostrati né approvabili dalla revisione
-delle chiusure. Non considerare il sistema multi-tenant sicuro né esporlo
-pubblicamente fino al completamento delle fasi successive.
+tra fatture, pagamenti e transazioni. Upload, elenco ed eliminazione documenti
+e revisione OCR richiedono sessione, bar attivo e permessi; le scritture
+richiedono anche token CSRF e `Origin` autorizzato. Lo staff può caricare e
+revisionare, ma non eliminare documenti né gestire pagamenti. Documenti,
+intake e allegati senza tenant non sono automaticamente accessibili.
+
+Non esiste più un mount pubblico dei file: `GET /uploads/documents/{nome}`,
+`GET /uploads/previews/{nome}` e `GET /uploads/invoices/{nome}` verificano
+sessione, membership, bar attivo e record `Document` o `Invoice` pertinente.
+Gli allegati fattura sono autorizzati tramite `Invoice.file_url`, senza
+modifica dello schema o associazione automatica a `Document`; riferimenti
+condivisi tra bar vengono negati. I file sono inviati senza cache e quelli
+non visualizzabili in sicurezza vengono scaricati come allegati. Eliminare
+un record documento non elimina i file dal disco.
+
+Il frontend attuale deve ancora implementare `GET /auth/csrf`, `POST
+/auth/login`, `GET /auth/bars` e `PUT /auth/active-bar`, e inviare cookie,
+`X-CSRF-Token` e `Origin` autorizzato alle operazioni di scrittura, incluse
+`POST /documents/upload`, `DELETE /documents/{id}` e le modifiche a
+`/cash-closures/review/{id}`. Deve inoltre inviare la sessione nelle richieste
+dei file protetti. Fino a tale adeguamento il flusso non funziona
+dall'interfaccia attuale. Le API analytics restano fuori da questo isolamento:
+non considerare il sistema multi-tenant sicuro né esporlo pubblicamente fino
+al completamento delle fasi successive.
 
 ## Clean bootstrap
 
@@ -138,19 +156,23 @@ curl -X POST http://localhost:8000/imports/bank-csv \
   -F "file=@data/bank_marzo_2026.csv"
 ```
 
-Upload chiusura di cassa (`section=cash`):
+Upload chiusura di cassa (`section=cash`), dopo autenticazione e selezione
+del bar (sostituire cookie e token con quelli della sessione):
 
 ```bash
 curl -X POST http://localhost:8000/documents/upload \
+  -H "Origin: http://localhost:5173" -H "X-CSRF-Token: TOKEN" \
+  -b "barmanager_session=SESSIONE; barmanager_csrf=TOKEN" \
   -F "file=@chiusura.pdf" -F "month=2026-03" -F "section=cash"
 ```
 
-L'endpoint crea `Document` e `DailyCashClosure` in un'unica transazione e
-risponde:
+L'endpoint crea `Document` e `CashClosureIntake` nella stessa transazione,
+assegnandoli al bar attivo; una chiusura attendibile viene salvata subito,
+mentre una lettura incerta richiede revisione e approvazione. Risponde:
 
-- HTTP 409 se esiste già una chiusura con la stessa data e lo stesso numero;
-- HTTP 422 se la data o il numero di chiusura non vengono rilevati o la data non
-  è valida.
+- HTTP 409 per un documento duplicato o una chiusura con la stessa data e
+  numero nello stesso bar;
+- HTTP 422 se il file è illeggibile o non contiene evidenze sufficienti.
 
 Il campo `detail` della risposta contiene il motivo in italiano ed è mostrato
 così com'è nell'interfaccia. Dettagli e limiti dell'estrazione sono in

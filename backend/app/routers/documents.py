@@ -3,17 +3,23 @@ import glob
 import hashlib
 import logging
 import os
+import re
 import uuid
 from io import BytesIO, StringIO
 
 from PIL import Image, ImageDraw, ImageFont
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pdf2image import convert_from_bytes
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import get_current_session, require_session_csrf
+from app.bar_context import (
+    BarContext, BarPermission, get_active_bar_context, require_bar_permission,
+)
+from app.models import AuthSession, Bar, User, UserBarMembership
 from app.config import (
     UPLOAD_DOCUMENTS_DIR, UPLOAD_PREVIEWS_DIR,
     get_document_path, get_preview_path,
@@ -24,6 +30,7 @@ from app.models.document import Document
 from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.transaction import Transaction
+from app.routers.upload_files import document_urls
 from app.services import cash_closure_parser, cash_closure_policy, document_ocr
 from app.time_utils import to_utc_iso
 
@@ -35,6 +42,9 @@ import pytesseract
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+read_context = require_bar_permission(BarPermission.READ_DOCUMENTS)
+upload_context = require_bar_permission(BarPermission.UPLOAD_DOCUMENTS)
+delete_context = require_bar_permission(BarPermission.DELETE_RECORDS)
 
 
 def classify_document(filename: str) -> tuple[str, str]:
@@ -60,16 +70,17 @@ def document_to_dict(
     transaction_date_range: tuple[dt.date, dt.date] | None = None,
     cash_date: dt.date | None = None,
 ) -> dict:
+    file_url, preview_url = document_urls(document)
     result = {
         "id": document.id,
         "month": document.month,
         "original_filename": document.original_filename,
-        "stored_filename": document.stored_filename,
+        "stored_filename": document.stored_filename if file_url else "",
         "document_type": document.document_type,
         "category": document.category,
         "result": document.result,
-        "file_url": document.file_url,
-        "preview_url": document.preview_url,
+        "file_url": file_url,
+        "preview_url": preview_url,
         "status": document.status,
         "created_at": to_utc_iso(document.created_at),
         "section": document.section,
@@ -88,7 +99,7 @@ def document_to_dict(
     return result
 
 
-CASH_CLOSURE_UNIQUE_CONSTRAINT = "uq_daily_cash_closures_date_closure_number"
+CASH_CLOSURE_UNIQUE_CONSTRAINT = "uq_daily_cash_closures_bar_date_number"
 
 
 def cash_closure_conflict(
@@ -111,11 +122,14 @@ def cash_closure_conflict(
     return HTTPException(status_code=409, detail=detail + ").")
 
 
-def find_existing_cash_closure(db: Session, extracted_data: dict) -> DailyCashClosure | None:
+def find_existing_cash_closure(
+    db: Session, extracted_data: dict, bar_id: int
+) -> DailyCashClosure | None:
     if extracted_data.get("date") is None or not extracted_data.get("closure_number"):
         return None
     return db.scalar(
         select(DailyCashClosure).where(
+            DailyCashClosure.bar_id == bar_id,
             DailyCashClosure.date == extracted_data["date"],
             DailyCashClosure.closure_number == extracted_data["closure_number"],
         )
@@ -126,9 +140,13 @@ def find_duplicate_cash_intake(
     db: Session,
     source_sha256: str,
     extracted_data: dict,
+    bar_id: int,
 ) -> CashClosureIntake | None:
     duplicate = db.scalar(
-        select(CashClosureIntake).where(CashClosureIntake.source_sha256 == source_sha256)
+        select(CashClosureIntake).where(
+            CashClosureIntake.bar_id == bar_id,
+            CashClosureIntake.source_sha256 == source_sha256,
+        )
     )
     if duplicate is not None:
         return duplicate
@@ -139,6 +157,7 @@ def find_duplicate_cash_intake(
         return None
     return db.scalar(
         select(CashClosureIntake).where(
+            CashClosureIntake.bar_id == bar_id,
             CashClosureIntake.date == closure_date,
             CashClosureIntake.closure_number == closure_number,
             CashClosureIntake.status != "rejected",
@@ -404,12 +423,13 @@ def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
 
 
 def find_possible_duplicate_cash_closures(
-    db: Session, extracted_data: dict
+    db: Session, extracted_data: dict, bar_id: int
 ) -> list[DailyCashClosure]:
     """Chiusure con lo stesso totale ma data o numero diversi (non è un duplicato certo)."""
     return list(
         db.scalars(
             select(DailyCashClosure).where(
+                DailyCashClosure.bar_id == bar_id,
                 DailyCashClosure.total_amount == extracted_data["total_amount"],
                 or_(
                     (DailyCashClosure.date == extracted_data["date"])
@@ -448,13 +468,46 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     return extraction.to_result()
 
 
+def revalidate_upload_context(
+    request: Request, db: Session, bar_id: int, *, lock: bool = False
+) -> None:
+    db.expire_all()
+    current_session = get_current_session(request, db)
+    if lock:
+        db.execute(
+            select(AuthSession.id)
+            .where(AuthSession.id == current_session.id)
+            .with_for_update()
+        ).first()
+        db.execute(
+            select(User.id).where(User.id == current_session.user_id).with_for_update()
+        ).first()
+        db.execute(select(Bar.id).where(Bar.id == bar_id).with_for_update()).first()
+        db.execute(
+            select(UserBarMembership.id).where(
+                UserBarMembership.user_id == current_session.user_id,
+                UserBarMembership.bar_id == bar_id,
+            ).with_for_update()
+        ).first()
+        db.expire_all()
+        current_session = get_current_session(request, db)
+    current_context = upload_context(get_active_bar_context(current_session, db))
+    if current_context.bar.id != bar_id:
+        raise HTTPException(status_code=409, detail="active bar changed during upload")
+
+
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     month: str = Form(...),
     section: str = Form("other"),
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(upload_context),
     db: Session = Depends(get_db),
 ) -> dict:
+    if "bar_id" in await request.form():
+        raise HTTPException(status_code=422, detail="bar_id must not be supplied")
     if not file.filename:
         raise HTTPException(status_code=400, detail="file is required")
 
@@ -468,11 +521,14 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="uploaded file is empty")
 
     extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    if not re.fullmatch(r"[a-z0-9]{1,16}", extension):
+        raise HTTPException(status_code=400, detail="invalid file extension")
     document_month = month
     extracted_data = None
     cash_classification = None
     source_sha256 = None
     cash_warnings: list[str] = []
+    bar_id = context.bar.id
 
     if section == "bank" and extension == "csv":
         document_month = single_month_from_bank_csv(content) or month
@@ -498,10 +554,13 @@ async def upload_document(
                     "una chiusura di cassa."
                 ),
             )
-        existing_closure = find_existing_cash_closure(db, extracted_data)
+        revalidate_upload_context(request, db, bar_id)
+        existing_closure = find_existing_cash_closure(db, extracted_data, bar_id)
         if existing_closure:
             raise cash_closure_conflict(extracted_data, existing_closure)
-        duplicate_intake = find_duplicate_cash_intake(db, source_sha256, extracted_data)
+        duplicate_intake = find_duplicate_cash_intake(
+            db, source_sha256, extracted_data, bar_id
+        )
         if duplicate_intake:
             raise HTTPException(
                 status_code=409,
@@ -511,9 +570,11 @@ async def upload_document(
         if extracted_data.get("date") is not None and extracted_data.get("total_amount") is not None:
             cash_warnings.extend(
                 possible_duplicate_warnings(
-                    find_possible_duplicate_cash_closures(db, extracted_data)
+                    find_possible_duplicate_cash_closures(db, extracted_data, bar_id)
                 )
             )
+
+    revalidate_upload_context(request, db, bar_id)
 
     ensure_upload_dirs()
 
@@ -554,6 +615,7 @@ async def upload_document(
             document_month = extracted_data["date"].strftime("%Y-%m")
 
         document = Document(
+            bar_id=bar_id,
             month=document_month,
             original_filename=file.filename,
             stored_filename=stored_filename,
@@ -578,6 +640,7 @@ async def upload_document(
             intake_status = "pending"
             if cash_classification == cash_closure_policy.AUTO_SAVE:
                 closure = DailyCashClosure(
+                    bar_id=bar_id,
                     date=extracted_data["date"],
                     closure_number=extracted_data["closure_number"],
                     total_amount=extracted_data["total_amount"],
@@ -592,6 +655,7 @@ async def upload_document(
             diagnostics = extracted_data.get("diagnostics") or {}
             db.add(
                 CashClosureIntake(
+                    bar_id=bar_id,
                     document_id=document.id,
                     closure=closure,
                     source_sha256=source_sha256,
@@ -607,6 +671,8 @@ async def upload_document(
                 )
             )
 
+        db.flush()
+        revalidate_upload_context(request, db, bar_id, lock=True)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -618,8 +684,9 @@ async def upload_document(
                 db,
                 source_sha256 or "",
                 extracted_data,
+                bar_id,
             )
-            existing_closure = find_existing_cash_closure(db, extracted_data)
+            existing_closure = find_existing_cash_closure(db, extracted_data, bar_id)
             # Without a constraint name (non-PostgreSQL), fall back to checking
             # that the competing closure now exists.
             if duplicate_intake is not None:
@@ -650,9 +717,10 @@ async def upload_document(
 @router.get("")
 def list_documents(
     month: str | None = None,
+    context: BarContext = Depends(read_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    query = select(Document)
+    query = select(Document).where(Document.bar_id == context.bar.id)
 
     if month:
         query = query.where(Document.month == month)
@@ -672,7 +740,10 @@ def list_documents(
                 func.min(Transaction.date),
                 func.max(Transaction.date),
             )
-            .where(Transaction.document_id.in_(bank_document_ids))
+            .where(
+                Transaction.document_id.in_(bank_document_ids),
+                Transaction.bar_id == context.bar.id,
+            )
             .group_by(Transaction.document_id)
         ).all()
         transaction_date_ranges = {
@@ -683,7 +754,10 @@ def list_documents(
     if cash_document_ids:
         cash_rows = db.execute(
             select(DailyCashClosure.document_id, func.min(DailyCashClosure.date))
-            .where(DailyCashClosure.document_id.in_(cash_document_ids))
+            .where(
+                DailyCashClosure.document_id.in_(cash_document_ids),
+                DailyCashClosure.bar_id == context.bar.id,
+            )
             .group_by(DailyCashClosure.document_id)
         ).all()
         cash_dates = {document_id: cash_date for document_id, cash_date in cash_rows}
@@ -699,30 +773,64 @@ def list_documents(
 
 
 @router.delete("/{document_id}")
-def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
-    document = db.get(Document, document_id)
+def delete_document(
+    document_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(delete_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    document = db.scalar(
+        select(Document).where(
+            Document.id == document_id, Document.bar_id == context.bar.id
+        )
+    )
 
     if not document:
         raise HTTPException(status_code=404, detail="document not found")
 
-    file_path = document.file_url.lstrip("/") if document.file_url else None
-    preview_urls = document.preview_url.split(",") if document.preview_url else []
+    for model in (DailyCashClosure, CashClosureIntake, Transaction):
+        inconsistent_link = db.scalar(
+            select(model.id).where(
+                model.document_id == document.id,
+                or_(model.bar_id.is_(None), model.bar_id != context.bar.id),
+            ).limit(1)
+        )
+        if inconsistent_link is not None:
+            raise HTTPException(status_code=409, detail="inconsistent document links")
 
-    if file_path and os.path.exists(file_path):
-        os.remove(file_path)
-
-    for preview_url in preview_urls:
-        preview_path = preview_url.lstrip("/")
-
-        if preview_path != file_path and os.path.exists(preview_path):
-            os.remove(preview_path)
+    inconsistent_closure = db.scalar(
+        select(CashClosureIntake.id)
+        .join(DailyCashClosure, DailyCashClosure.id == CashClosureIntake.closure_id)
+        .where(
+            or_(
+                CashClosureIntake.document_id == document.id,
+                DailyCashClosure.document_id == document.id,
+            ),
+            or_(
+                CashClosureIntake.bar_id.is_(None),
+                CashClosureIntake.bar_id != context.bar.id,
+                DailyCashClosure.bar_id.is_(None),
+                DailyCashClosure.bar_id != context.bar.id,
+                CashClosureIntake.document_id != DailyCashClosure.document_id,
+                DailyCashClosure.document_id.is_(None),
+            ),
+        ).limit(1)
+    )
+    if inconsistent_closure is not None:
+        raise HTTPException(status_code=409, detail="inconsistent document links")
 
     cash_closures = db.scalars(
-        select(DailyCashClosure).where(DailyCashClosure.document_id == document.id)
+        select(DailyCashClosure).where(
+            DailyCashClosure.document_id == document.id,
+            DailyCashClosure.bar_id == context.bar.id,
+        )
     ).all()
 
     intakes = db.scalars(
-        select(CashClosureIntake).where(CashClosureIntake.document_id == document.id)
+        select(CashClosureIntake).where(
+            CashClosureIntake.document_id == document.id,
+            CashClosureIntake.bar_id == context.bar.id,
+        )
     ).all()
     for intake in intakes:
         db.delete(intake)
