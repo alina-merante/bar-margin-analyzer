@@ -95,9 +95,10 @@ def main() -> int:
         with Session(bind=connection) as db:
             try:
                 user_id, bar_id = bootstrap_owner(db, email, password, bar_name)
-                db.commit()
+                db.flush()
+                connection.commit()
             except Exception:
-                db.rollback()
+                connection.rollback()
                 raise
         print(f"Bootstrap complete. Owner id: {user_id}; bar id: {bar_id}.")
         if bar_id == LEGACY_BAR_ID:

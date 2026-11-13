@@ -432,6 +432,15 @@ def test_bootstrap_cli_does_not_echo_password(auth_test_environment, monkeypatch
     )
 
     assert bootstrap_owner_module.main() == 0
+    with _test_sessionmaker() as db:
+        user = db.scalar(
+            select(User).where(User.email == "owner@example.test")
+        )
+        assert user is not None
+        assert verify_password(
+            "a cli password that is long enough",
+            user.password_hash,
+        )
     output = capsys.readouterr()
     assert "Bootstrap complete" in output.out
     assert "a cli password that is long enough" not in output.out
@@ -478,7 +487,7 @@ def test_pre_auth_csrf_token_has_a_short_expiry():
     assert not verify_pre_auth_csrf_token(csrf_token, issued_at - 1)
 
 
-def test_auth_migration_0011_only_adds_session_tables_on_sqlite(tmp_path):
+def test_auth_migration_0011_only_adds_session_tables_on_sqlite(tmp_path, monkeypatch):
     database = tmp_path / "auth-migration.db"
     engine = create_engine(f"sqlite:///{database}")
     try:
@@ -530,6 +539,7 @@ def test_auth_migration_0011_only_adds_session_tables_on_sqlite(tmp_path):
             for table in operational_tables
         }
 
+        monkeypatch.delenv("DATABASE_URL", raising=False)
         command.upgrade(config, "20261111_0011")
 
         inspector = inspect(engine)

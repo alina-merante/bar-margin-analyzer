@@ -11,7 +11,7 @@ from app import config
 from app.database import Base, get_db
 from app.models import (
     AuthSession, Bar, CashClosureIntake, DailyCashClosure, Document, Invoice, InvoiceStatus,
-    Payment, Transaction, UserBarMembership,
+    Payment, Transaction, User, UserBarMembership,
 )
 from app.routers import documents, finance
 from app.services.document_ocr import DocumentReadError
@@ -251,9 +251,16 @@ def test_ocr_review_correction_approval_and_deduplication(document_environment, 
         f"/cash-closures/review/{review_one['id']}/approve", headers=headers(csrf)
     ).status_code == 404
 
-    correction = {"total_amount": "100.00", "cash_amount": "60.00", "card_amount": "40.00"}
+    correction = {
+        "total_amount": "100.00", "cash_amount": "60.00",
+        "card_amount": "40.00", "receipts_count": 25,
+    }
     for bar, intake in ((ids["bar_two"], review_two), (ids["bar_one"], review_one)):
         assert select_bar(client, bar, csrf).status_code == 200
+        assert client.patch(
+            f"/cash-closures/review/{intake['id']}", headers=headers(csrf),
+            json={"receipts_count": -1},
+        ).status_code == 422
         assert client.patch(
             f"/cash-closures/review/{intake['id']}", headers=headers(csrf),
             json={**correction, "bar_id": ids["bar_two"]},
@@ -274,12 +281,167 @@ def test_ocr_review_correction_approval_and_deduplication(document_environment, 
             closure = db.get(DailyCashClosure, row.closure_id)
             assert row.bar_id == row.document.bar_id == closure.bar_id == bar
             assert closure.document_id == row.document_id
+            assert closure.receipts_count == 25
     with factory() as db:
         assert len(db.scalars(select(DailyCashClosure)).all()) == 2
         assert len(db.scalars(select(CashClosureIntake)).all()) == 2
 
 
-def test_auto_save_and_ocr_error_do_not_create_duplicates(document_environment, monkeypatch):
+def test_reprocess_preview_confirmation_preserves_history_and_tenant_scope(
+    document_environment, monkeypatch
+):
+    client, factory, ids, root, _app = document_environment
+    old_text = "NUM. CHIUSURA 10\nDATA 14-07-2026"
+    new_text = (
+        "Data: 26/09/2023\nNumero scontrini: 25\nTotale scontrini: 303,50\n"
+        "Totale fatture: 5,50\nPagamenti contanti: 255,50\nNumero azzeramenti: 10"
+    )
+    ocr = {"text": old_text}
+    monkeypatch.setattr(documents, "extract_text_from_document", lambda *_args: ocr["text"])
+    monkeypatch.setattr(documents, "extract_alternate_texts", lambda *_args: iter(()))
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    upload_response = upload(client, csrf, b"original-image", "cash")
+    assert upload_response.status_code == 200
+    document_id = upload_response.json()["id"]
+    duplicate = upload(client, csrf, b"original-image", "cash")
+    assert duplicate.status_code == 409
+    assert "non è stato rielaborato" in duplicate.json()["detail"]
+    review = client.get("/cash-closures/review").json()[0]
+    url = f"/cash-closures/review/{review['id']}"
+    assert client.patch(
+        url, headers=headers(csrf),
+        json={"closure_number": "MANUALE", "total_amount": "400.00", "receipts_count": 24},
+    ).status_code == 200
+    ocr["text"] = new_text
+    assert client.post(f"{url}/reprocess/preview").status_code == 403
+    assert client.post(f"{url}/reprocess/preview", headers={
+        "X-CSRF-Token": csrf, "Origin": "https://evil.example"
+    }).status_code == 403
+
+    preview_response = client.post(f"{url}/reprocess/preview", headers=headers(csrf))
+    assert preview_response.status_code == 200, preview_response.text
+    preview = preview_response.json()
+    assert preview["previous"]["closure_number"] == "MANUALE"
+    assert preview["previous"]["total_amount"] == "400.00"
+    assert preview["previous"]["receipts_count"] == 24
+    assert preview["proposed"]["closure_number"] is None
+    assert preview["proposed"]["total_amount"] is None
+    assert preview["proposed"]["receipts_total"] == "303.50"
+    assert preview["proposed"]["receipts_count"] == 25
+    assert client.get(url).json()["closure_number"] == "MANUALE"
+
+    payload = {key: preview[key] for key in ("review_version", "extraction_version")}
+    assert client.post(f"{url}/reprocess", json=payload).status_code == 403
+    assert select_bar(client, ids["bar_two"], csrf).status_code == 200
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 404
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 404
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+
+    ocr["text"] = old_text
+    changed = client.post(f"{url}/reprocess", headers=headers(csrf), json=payload)
+    assert changed.status_code == 409
+    assert client.get(url).json()["closure_number"] == "MANUALE"
+    ocr["text"] = new_text
+    confirmed = client.post(f"{url}/reprocess", headers=headers(csrf), json=payload)
+    assert confirmed.status_code == 200, confirmed.text
+    result = confirmed.json()
+    assert result["id"] == review["id"]
+    assert result["document"]["id"] == document_id
+    assert result["document"]["month"] == "2023-09"
+    assert result["status"] == "pending"
+    assert result["classification"] == "SAVE_FOR_REVIEW"
+    assert result["closure_number"] is None and result["total_amount"] is None
+    assert result["receipts_count"] == 25 and result["receipts_total"] == "303.50"
+    refreshed = client.get("/cash-closures/review").json()[0]
+    assert refreshed["id"] == review["id"]
+    assert refreshed["document"]["id"] == document_id
+    assert refreshed["receipts_total"] == "303.50" and refreshed["total_amount"] is None
+    previous = result["ocr_values"]["reprocessing_history"][0]
+    assert previous["previous_values"]["closure_number"] == "MANUALE"
+    assert previous["previous_values"]["total_amount"] == "400.00"
+    assert previous["previous_values"]["receipts_count"] == 24
+    assert previous["previous_ocr"]["review_receipts_count"] == 24
+    assert previous["user_id"] is not None
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 422
+    with factory() as db:
+        intake = db.get(CashClosureIntake, review["id"])
+        assert (root / "documents" / intake.document.stored_filename).read_bytes() == b"original-image"
+        assert db.scalars(select(DailyCashClosure)).all() == []
+    assert client.patch(
+        url, headers=headers(csrf), json={"closure_number": "123", "total_amount": "309.00"}
+    ).status_code == 200
+    refreshed = client.get(url).json()
+    assert refreshed["receipts_total"] == "303.50"
+    assert refreshed["total_amount"] == "309.00"
+    assert refreshed["status"] == "pending"
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 200
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 409
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
+
+
+def test_reprocess_refuses_stale_preview_and_modified_original(document_environment, monkeypatch):
+    client, factory, ids, root, _app = document_environment
+    monkeypatch.setattr(
+        documents, "extract_text_from_document",
+        lambda *_args: "NUM. CHIUSURA 201\nDATA 14-07-26",
+    )
+    monkeypatch.setattr(documents, "extract_alternate_texts", lambda *_args: iter(()))
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    assert upload(client, csrf, b"source", "cash").status_code == 200
+    intake_id = client.get("/cash-closures/review").json()[0]["id"]
+    url = f"/cash-closures/review/{intake_id}"
+    preview = client.post(f"{url}/reprocess/preview", headers=headers(csrf)).json()
+    payload = {key: preview[key] for key in ("review_version", "extraction_version")}
+    assert client.patch(url, headers=headers(csrf), json={"total_amount": "123.00"}).status_code == 200
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
+    assert client.get(url).json()["total_amount"] == "123.00"
+
+    with factory() as db:
+        filename = db.get(CashClosureIntake, intake_id).document.stored_filename
+    path = root / "documents" / filename
+    path.write_bytes(b"modified")
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 409
+    path.unlink()
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 404
+    target = root / "outside.png"
+    target.write_bytes(b"source")
+    path.symlink_to(target)
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 404
+    assert client.get(url).json()["total_amount"] == "123.00"
+
+
+def test_reprocess_refuses_duplicate_result_generic_image_and_rejected_review(
+    document_environment, monkeypatch
+):
+    client, _factory, ids, _root, _app = document_environment
+    ocr = {"text": "NUM. CHIUSURA 201\nDATA 14-07-26"}
+    monkeypatch.setattr(documents, "extract_text_from_document", lambda *_args: ocr["text"])
+    monkeypatch.setattr(documents, "extract_alternate_texts", lambda *_args: iter(()))
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    assert upload(client, csrf, b"first", "cash").status_code == 200
+    first = client.get("/cash-closures/review").json()[0]
+    ocr["text"] = "NUM. CHIUSURA 202\nDATA 14-07-26"
+    assert upload(client, csrf, b"second", "cash").status_code == 200
+    second = next(item for item in client.get("/cash-closures/review").json() if item["id"] != first["id"])
+    url = f"/cash-closures/review/{second['id']}"
+    ocr["text"] = "NUM. CHIUSURA 201\nDATA 14-07-26"
+    preview = client.post(f"{url}/reprocess/preview", headers=headers(csrf)).json()
+    payload = {key: preview[key] for key in ("review_version", "extraction_version")}
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
+    assert client.get(url).json()["closure_number"] == "202"
+    ocr["text"] = "Una fotografia generica senza chiusura"
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 422
+    assert client.get(url).json()["closure_number"] == "202"
+    assert client.post(f"{url}/reject", headers=headers(csrf)).status_code == 200
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 409
+    assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
+
+
+def test_complete_ocr_requires_review_and_errors_do_not_create_duplicates(document_environment, monkeypatch):
     client, factory, ids, _root, _app = document_environment
     text = (
         "NUM. CHIUSURA 201\nDATA 14-07-26 23:45\n"
@@ -292,12 +454,14 @@ def test_auto_save_and_ocr_error_do_not_create_duplicates(document_environment, 
     assert select_bar(client, ids["bar_one"], csrf).status_code == 200
     response = upload(client, csrf, b"auto", "cash")
     assert response.status_code == 200, response.text
-    assert response.json()["cash_closure_classification"] == "AUTO_SAVE"
+    assert response.json()["cash_closure_classification"] == "SAVE_FOR_REVIEW"
     assert upload(client, csrf, b"auto", "cash").status_code == 409
     with factory() as db:
         intake = db.scalar(select(CashClosureIntake))
-        assert intake.status == "approved"
-        assert intake.bar_id == intake.document.bar_id == intake.closure.bar_id == ids["bar_one"]
+        assert intake.status == "pending"
+        assert intake.closure is None
+        assert intake.bar_id == intake.document.bar_id == ids["bar_one"]
+        assert db.scalars(select(DailyCashClosure)).all() == []
     def fail_ocr(*_args):
         raise DocumentReadError("invalid")
     monkeypatch.setattr(documents, "extract_daily_cash_closure", fail_ocr)
@@ -454,7 +618,139 @@ def test_staff_can_review_but_mutations_require_csrf_and_origin(document_environ
     ).status_code == 403
     assert client.post(f"{url}/approve").status_code == 403
     assert client.patch(url, headers=headers(csrf), json={"total_amount": "100"}).status_code == 200
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 403
+
+
+def test_month_filter_uses_closure_date_and_correction_updates_document_and_dashboard(
+    document_environment,
+):
+    client, factory, ids, _root, _app = document_environment
+    with factory() as db:
+        intakes = []
+        for index, (bar, date) in enumerate((
+            (ids["bar_one"], dt.date(2023, 9, 26)),
+            (ids["bar_one"], dt.date(2026, 11, 3)),
+            (ids["bar_one"], None),
+            (ids["bar_one"], dt.date(2025, 11, 3)),
+            (ids["bar_two"], dt.date(2026, 11, 4)),
+        )):
+            doc = Document(
+                bar_id=bar, month="2026-11", original_filename=f"{index}.png",
+                stored_filename=f"{index}.png", section="cash", document_type="PNG",
+                category="Immagine", result="OCR", status="Da verificare",
+                file_url=f"/uploads/documents/{index}.png", preview_url="",
+            )
+            db.add(doc)
+            db.flush()
+            intake = CashClosureIntake(
+                bar_id=bar, document_id=doc.id, source_sha256=f"{index:064x}",
+                status="pending", classification="SAVE_FOR_REVIEW", date=date,
+                closure_number=str(index + 1), total_amount=Decimal("100.00"),
+                ocr_values={}, anomalies=[],
+            )
+            db.add(intake)
+            db.flush()
+            intakes.append((intake.id, doc.id))
+        db.commit()
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    ids_for = lambda month: {
+        row["id"] for row in client.get("/cash-closures/review", params={"month": month}).json()
+    }
+    assert ids_for("2026-11") == {intakes[1][0]}
+    assert ids_for("2025-11") == {intakes[3][0]}
+    assert ids_for("2023-09") == {intakes[0][0]}
+    september_history = client.get("/documents?month=2023-09").json()
+    old_history = next(row for row in september_history if row["id"] == intakes[0][1])
+    assert old_history["effective_date"] == "2023-09-26"
+    assert intakes[0][1] not in {row["id"] for row in client.get("/documents?month=2026-11").json()}
+    assert client.get("/cash-closures/review?month=2026-13").status_code == 422
+    all_ids = {row["id"] for row in client.get("/cash-closures/review").json()}
+    assert all_ids == {intakes[i][0] for i in range(4)}
+    undated_url = f"/cash-closures/review/{intakes[2][0]}"
+    dated = client.patch(undated_url, headers=headers(csrf), json={"date": "2023-09-10"})
+    assert dated.json()["document"]["month"] == "2023-09"
+    assert ids_for("2023-09") == {intakes[0][0], intakes[2][0]}
+    cleared = client.patch(undated_url, headers=headers(csrf), json={"date": None})
+    assert cleared.json()["date"] is None
+    assert cleared.json()["document"]["month"] == "2023-09"
+    assert ids_for("2023-09") == {intakes[0][0]}
+    assert intakes[2][0] in {row["id"] for row in client.get("/cash-closures/review").json()}
+    assert client.get("/analytics/pnl?month=2024-01").json()["revenue"] == 0
+
+    url = f"/cash-closures/review/{intakes[0][0]}"
+    corrected = client.patch(url, headers=headers(csrf), json={"date": "2024-01-03"})
+    assert corrected.status_code == 200
+    assert corrected.json()["document"]["month"] == "2024-01"
+    assert ids_for("2023-09") == set()
+    assert ids_for("2024-01") == {intakes[0][0]}
+    assert intakes[0][1] in {row["id"] for row in client.get("/documents?month=2024-01").json()}
+    assert intakes[0][1] not in {row["id"] for row in client.get("/documents?month=2026-11").json()}
+    assert client.get("/analytics/pnl?month=2024-01").json()["revenue"] == 0
     assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 200
+    assert ids_for("2024-01") == set()
+    assert client.get("/analytics/pnl?month=2024-01").json()["revenue"] == 100
+    assert client.get("/analytics/pnl?month=2026-11").json()["revenue"] == 0
+    assert client.patch(url, headers=headers(csrf), json={"date": "2026-11-01"}).status_code == 409
+    with factory() as db:
+        assert db.get(Document, intakes[0][1]).month == "2024-01"
+    assert select_bar(client, ids["bar_two"], csrf).status_code == 200
+    assert ids_for("2026-11") == {intakes[4][0]}
+    assert client.get(url).status_code == 404
+
+
+def test_approved_legacy_history_uses_closure_date_without_changing_document(document_environment):
+    client, factory, ids, _root, _app = document_environment
+    with factory() as db:
+        doc = Document(
+            bar_id=ids["bar_one"], month="2026-11", original_filename="legacy.png",
+            stored_filename="legacy.png", section="cash", document_type="PNG",
+            category="Immagine", result="OCR", status="Elaborato",
+            file_url="/uploads/documents/legacy.png", preview_url="",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(DailyCashClosure(
+            bar_id=ids["bar_one"], document_id=doc.id, date=dt.date(2023, 9, 26),
+            closure_number="legacy", total_amount=Decimal("100.00"),
+        ))
+        db.commit()
+        doc_id = doc.id
+    csrf = login(client, "owner@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    assert doc_id in {row["id"] for row in client.get("/documents?month=2023-09").json()}
+    assert doc_id not in {row["id"] for row in client.get("/documents?month=2026-11").json()}
+    with factory() as db:
+        assert db.get(Document, doc_id).month == "2026-11"
+
+
+@pytest.mark.parametrize("role,global_admin,allowed", [
+    ("staff", False, False),
+    ("manager", False, False),
+    ("staff", True, True),
+])
+def test_approval_is_restricted_to_owner_or_global_admin_in_active_bar(
+    document_environment, monkeypatch, role, global_admin, allowed
+):
+    client, factory, ids, _root, _app = document_environment
+    with factory() as db:
+        db.get(User, ids[role]).is_global_admin = global_admin
+        db.commit()
+    monkeypatch.setattr(
+        documents, "extract_text_from_document",
+        lambda *_args: "NUM. CHIUSURA 201\nDATA 14-07-26",
+    )
+    monkeypatch.setattr(documents, "extract_alternate_texts", lambda *_args: iter(()))
+    csrf = login(client, f"{role}@example.test")
+    assert select_bar(client, ids["bar_one"], csrf).status_code == 200
+    assert upload(client, csrf, b"review", "cash").status_code == 200
+    review = client.get("/cash-closures/review").json()[0]
+    assert review["can_approve"] is allowed
+    url = f"/cash-closures/review/{review['id']}"
+    assert client.patch(url, headers=headers(csrf), json={"total_amount": "100"}).status_code == 200
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == (200 if allowed else 403)
+    if global_admin:
+        assert select_bar(client, ids["bar_two"], csrf).status_code == 403
 
 
 @pytest.mark.parametrize("change", ["switch", "revoke"])

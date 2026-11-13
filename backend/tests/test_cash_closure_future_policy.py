@@ -4,18 +4,17 @@ HEAD = "DATA 03/11/2026\nNUM. CHIUSURA 5\n"
 
 
 def _classify(text):
-    from app.services.cash_closure_policy import classify_closure  # noqa: non esiste ancora
+    from app.services.cash_closure_policy import classify_closure
 
     return classify_closure(text)
 
 
-def test_auto_save_complete_and_coherent():
-    assert _classify(HEAD + "TOTALE GIORNALIERO 300,00\nCONTANTI 100,00\nPOS 200,00") == "AUTO_SAVE"
+def test_complete_and_coherent_requires_review():
+    assert _classify(HEAD + "TOTALE GIORNALIERO 300,00\nCONTANTI 100,00\nPOS 200,00") == "SAVE_FOR_REVIEW"
 
 
-def test_auto_save_reliable_total_without_breakdown_keeps_missing_not_zero():
-    # Atteso: contabilizzato col solo totale; cash/card salvati come NULL, non 0.00.
-    assert _classify(HEAD + "TOTALE GIORNALIERO 200,00") == "AUTO_SAVE"
+def test_reliable_total_without_breakdown_requires_review():
+    assert _classify(HEAD + "TOTALE GIORNALIERO 200,00") == "SAVE_FOR_REVIEW"
 
 
 def test_save_for_review_when_breakdown_present_but_unreadable():
@@ -49,7 +48,7 @@ def test_explicit_zeros_are_reliable_values():
             HEAD
             + "TOTALE GIORNALIERO 0,00\nCONTANTI 0,00\nPOS 0,00"
         )
-        == "AUTO_SAVE"
+        == "SAVE_FOR_REVIEW"
     )
 
 
@@ -66,3 +65,17 @@ def test_missing_diagnostics_never_certify_an_automatic_save():
             "total_amount": Decimal("200.00"),
         }
     ) == "SAVE_FOR_REVIEW"
+
+
+def test_management_report_requires_specific_coherent_evidence():
+    text = (
+        "DATA 26/09/2023\nNUMERO SCONTRINI 25\n"
+        "TOTALE SCONTRINI 303,50\nCONTANTI 255,50\nNUMERO AZZERAMENTI 10"
+    )
+    assert _classify(text) == "SAVE_FOR_REVIEW"
+    for unrelated in (
+        "FOTO VACANZE\nDATA 26/09/2023\nCONTANTI 255,50",
+        "FATTURA\nDATA 26/09/2023\nTOTALE 303,50",
+        "DATA 26/09/2023\nSCONTRINI 25",
+    ):
+        assert _classify(unrelated) == "REJECT"

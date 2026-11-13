@@ -14,6 +14,8 @@ import {
 } from "../historyDates.js";
 import {
   buildCashClosureCorrections,
+  CASH_REVIEW_LABELS,
+  cashClosureWarnings,
   createCashClosureReviewForm,
   validateCashClosurePayments,
 } from "../cashClosureReview.js";
@@ -345,28 +347,61 @@ function DocumentPreview({ document }) {
 }
 
 
-function CashClosureReviewCard({
+export function CashClosureReprocessComparison({ preview, busy, onConfirm, onCancel }) {
+  return (
+    <div className="cash-review-anomalies">
+      <strong>Confronta i valori prima di confermare</strong>
+      <p>La conferma sostituisce i valori attuali, incluse eventuali correzioni manuali. I valori precedenti restano nello storico.</p>
+      <div className="cash-review-comparison-scroll">
+      <table className="cash-review-comparison">
+        <thead><tr><th>Campo</th><th>Valore attuale</th><th>Nuova lettura OCR</th></tr></thead>
+        <tbody>
+          {Object.entries(CASH_REVIEW_LABELS).map(([field, label]) => (
+            <tr key={field}>
+              <th scope="row">{label}</th>
+              <td>{preview.previous[field] ?? "Non rilevato"}</td>
+              <td>{preview.proposed[field] ?? "Non rilevato"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      </div>
+      <div className="cash-review-actions">
+        <button type="button" disabled={busy} onClick={onConfirm}>
+          Conferma rielaborazione
+        </button>
+        <button type="button" disabled={busy} onClick={onCancel}>
+          Annulla
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function CashClosureReviewCard({
   review,
   onCorrect,
   onApprove,
   onReject,
+  onReprocess,
 }) {
   const [form, setForm] = useState(() => createCashClosureReviewForm(review));
+  const [baseline, setBaseline] = useState(review);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    setForm(createCashClosureReviewForm(review));
-  }, [review]);
-
-  const corrections = buildCashClosureCorrections(review, form);
+  const corrections = buildCashClosureCorrections(baseline, form);
   const hasChanges = Object.keys(corrections).length > 0;
-  const diagnostics = review.ocr_values?.diagnostics?.fields || {};
-  const uncertainFields = Object.entries(diagnostics).filter(
-    ([, details]) =>
-      details.status !== "ok" ||
-      (Array.isArray(details.competing) && details.competing.length > 1)
-  );
+  const changedExternally = JSON.stringify(review) !== JSON.stringify(baseline);
+  useEffect(() => {
+    if (changedExternally && !hasChanges && !preview && !busy) {
+      setBaseline(review);
+      setForm(createCashClosureReviewForm(review));
+    }
+  }, [review, changedExternally, hasChanges, preview, busy]);
+  const warnings = cashClosureWarnings(review);
   const paymentValidation = validateCashClosurePayments(
     form.total_amount,
     form.cash_amount,
@@ -378,23 +413,54 @@ function CashClosureReviewCard({
   async function submit(action) {
     setBusy(true);
     setError("");
+    setMessage("");
     try {
       if (action === "correct") {
-        await onCorrect(review.id, corrections);
+        const result = await onCorrect(review.id, corrections);
+        setBaseline(result);
+        setForm(createCashClosureReviewForm(result));
+        setMessage("Correzioni salvate. La chiusura rimane in attesa di approvazione.");
       } else if (action === "approve") {
         await onApprove(review.id);
       } else {
         await onReject(review.id);
       }
     } catch (requestError) {
-      setError(requestError.message || "Operazione non riuscita.");
+      setError(requestError instanceof TypeError
+        ? "Impossibile contattare il server. Controlla la connessione e riprova."
+        : requestError.message || "Operazione non riuscita.");
     } finally {
       setBusy(false);
     }
   }
 
   function updateField(field, value) {
+    setPreview(null);
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function reprocess(confirm = false) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await onReprocess(review.id, confirm ? preview : null);
+      if (confirm) {
+        setBaseline(result);
+        setForm(createCashClosureReviewForm(result));
+        setPreview(null);
+        setMessage("Rielaborazione completata. Verifica i dati prima dell'approvazione.");
+      } else {
+        setPreview(result);
+      }
+    } catch (requestError) {
+      setPreview(null);
+      setError(requestError instanceof TypeError
+        ? "Impossibile contattare il server. Controlla la connessione e riprova."
+        : requestError.message || "Rielaborazione non riuscita.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -410,30 +476,19 @@ function CashClosureReviewCard({
         {original.error && <p role="alert">{original.error}</p>}
       </header>
 
-      {uncertainFields.length > 0 ? (
+      {warnings.length > 0 ? (
         <div className="cash-review-anomalies">
           <strong>Campi da controllare</strong>
           <ul>
-            {uncertainFields.map(([field, details]) => (
-              <li key={field}>
-                {field.replaceAll("_", " ")}: {details.status}
-                {details.alternatives?.length
-                  ? ` (${details.alternatives.join(" · ")})`
-                  : ""}
-              </li>
-            ))}
+            {warnings.map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
         </div>
       ) : null}
-      {review.anomalies?.length ? (
-        <div className="cash-review-anomalies">
-          {review.anomalies.map((anomaly) => (
-            <div key={anomaly}>{anomaly}</div>
-          ))}
-        </div>
+      {review.receipts_total != null ? (
+        <p>Totale scontrini rilevato: {review.receipts_total} € (non è il totale complessivo).</p>
       ) : null}
 
-      <div className="cash-review-fields">
+      <fieldset className="cash-review-fields" disabled={busy || !!preview}>
         <label>
           Data
           <input
@@ -479,7 +534,18 @@ function CashClosureReviewCard({
             onChange={(event) => updateField("card_amount", event.target.value)}
           />
         </label>
-      </div>
+        <label>
+          Numero scontrini
+          <input
+            type="number"
+            min="0"
+            max="999999"
+            step="1"
+            value={form.receipts_count}
+            onChange={(event) => updateField("receipts_count", event.target.value)}
+          />
+        </label>
+      </fieldset>
       <p className="cash-review-hint">
         Un campo vuoto significa importo non noto; inserisci 0,00 solo se il documento riporta zero.
       </p>
@@ -501,18 +567,53 @@ function CashClosureReviewCard({
         </div>
       ) : null}
       {error ? <p className="cash-review-error" role="alert">{error}</p> : null}
+      {message ? <p role="status">{message}</p> : null}
+      {busy ? <p role="status">Operazione in corso, attendi...</p> : null}
+      {changedExternally && (hasChanges || preview) && !busy ? (
+        <p className="cash-review-error" role="alert">
+          La scheda è stata aggiornata. Annulla le modifiche o il confronto e verifica i nuovi dati prima di continuare.
+        </p>
+      ) : null}
+      {preview && !changedExternally ? (
+        <CashClosureReprocessComparison
+          preview={preview}
+          busy={busy}
+          onConfirm={() => reprocess(true)}
+          onCancel={() => setPreview(null)}
+        />
+      ) : null}
+      {preview && changedExternally ? (
+        <div className="cash-review-actions">
+          <button type="button" disabled={busy} onClick={() => setPreview(null)}>Annulla confronto</button>
+        </div>
+      ) : null}
+      {hasChanges ? <p className="cash-review-hint">Salva o annulla le modifiche prima di rielaborare l'OCR.</p> : null}
       <div className="cash-review-actions">
+        <button type="button" disabled={busy || hasChanges || !!preview || changedExternally} onClick={() => reprocess()}>
+          Rielabora OCR
+        </button>
         <button
           type="button"
-          disabled={busy || !hasChanges}
+          disabled={busy || !!preview || !hasChanges || changedExternally}
           onClick={() => submit("correct")}
         >
           Salva correzioni
         </button>
+        {hasChanges ? (
+          <button type="button" disabled={busy} onClick={() => {
+            setBaseline(review);
+            setForm(createCashClosureReviewForm(review));
+          }}>
+            Annulla modifiche
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={
             busy ||
+            !review.can_approve ||
+            changedExternally ||
+            !!preview ||
             paymentValidation.exceedsTotal ||
             hasChanges ||
             !form.date ||
@@ -523,10 +624,13 @@ function CashClosureReviewCard({
         >
           Approva
         </button>
+        {!review.can_approve ? (
+          <p className="cash-review-hint">L'approvazione è riservata al proprietario del bar o all'amministratore globale.</p>
+        ) : null}
         <button
           type="button"
           className="cash-review-reject"
-          disabled={busy}
+          disabled={busy || !!preview || changedExternally}
           onClick={() => submit("reject")}
         >
           Rifiuta
@@ -551,9 +655,14 @@ export default function UploadPage({
 
   documents = [],
   cashClosureReviews = [],
+  cashClosureLoading = false,
+  cashClosureLoadError = "",
+  cashClosureRefreshWarning = "",
+  retryCashClosureLoad,
   handleCorrectCashClosure,
   handleApproveCashClosure,
   handleRejectCashClosure,
+  handleReprocessCashClosure,
   handleGenericDocumentUpload,
   handleDeleteDocument,
   documentUploading,
@@ -565,6 +674,7 @@ export default function UploadPage({
   const navigate = useNavigate();
 
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
+  const [cashClosureFilter, setCashClosureFilter] = useState("month");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
   const [selectedInvoiceWithoutDocument, setSelectedInvoiceWithoutDocument] = useState(null);
   const documentPreviewRef = useRef(null);
@@ -1091,21 +1201,56 @@ if (uploaded) setActiveHistoryTab("other");
       <section className="upload-section">
         <div className="upload-history-card">
           <h2>Chiusure da verificare</h2>
+          <fieldset className="cash-review-filter">
+            <legend>Mostra chiusure</legend>
+            <label>
+              <input type="radio" name="cash-closure-filter" checked={cashClosureFilter === "month"}
+                onChange={() => setCashClosureFilter("month")} />
+              Mese selezionato ({month})
+            </label>
+            <label>
+              <input type="radio" name="cash-closure-filter" checked={cashClosureFilter === "all"}
+                onChange={() => setCashClosureFilter("all")} />
+              Tutte le chiusure pendenti
+            </label>
+          </fieldset>
+          {cashClosureFilter === "all" ? (
+            <p>Le chiusure senza data sono disponibili solo in questa vista.</p>
+          ) : null}
+          {cashClosureRefreshWarning ? <p role="alert">{cashClosureRefreshWarning}</p> : null}
+          {cashClosureLoadError ? (
+            <div role="alert">
+              <p>{cashClosureLoadError}</p>
+              <button type="button" onClick={retryCashClosureLoad}>Riprova</button>
+            </div>
+          ) : null}
+          {cashClosureLoading ? <p role="status">Caricamento delle chiusure...</p> : null}
           {cashClosureReviews.length ? (
             <div className="cash-review-list">
               {cashClosureReviews.map((review) => (
-                <CashClosureReviewCard
-                  key={review.id}
-                  review={review}
-                  onCorrect={handleCorrectCashClosure}
-                  onApprove={handleApproveCashClosure}
-                  onReject={handleRejectCashClosure}
-                />
+                <div key={review.id} hidden={
+                  cashClosureFilter === "month" && review.date?.slice(0, 7) !== month
+                }>
+                  <CashClosureReviewCard
+                    review={review}
+                    onCorrect={handleCorrectCashClosure}
+                    onApprove={handleApproveCashClosure}
+                    onReject={handleRejectCashClosure}
+                    onReprocess={handleReprocessCashClosure}
+                  />
+                </div>
               ))}
             </div>
-          ) : (
-            <p>Nessuna chiusura in attesa di verifica.</p>
-          )}
+          ) : null}
+          {!cashClosureLoading && !cashClosureLoadError && (
+            cashClosureFilter === "month"
+              ? !cashClosureReviews.some((review) => review.date?.slice(0, 7) === month)
+              : !cashClosureReviews.length
+          ) ? (
+            <p>{cashClosureFilter === "month"
+              ? "Nessuna chiusura da verificare nel mese selezionato. Seleziona tutte le chiusure pendenti per vedere anche quelle senza data."
+              : "Nessuna chiusura in attesa di verifica."}</p>
+          ) : null}
         </div>
       </section>
 

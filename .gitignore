@@ -21,3 +21,26 @@ dist/
 .uvicorn.pid
 # Local database backups
 backups/
+
+# Local PWA test credentials
+scripts/.pwa-test.env
+
+# Local SQLite databases in runtime locations
+/*.db
+/*.sqlite
+/*.sqlite3
+/backend/*.db
+/backend/*.sqlite
+/backend/*.sqlite3
+
+# Generated test data and screenshots
+/data/01_chiusura_cassa_2026-07-14.png
+/data/02_chiusura_cassa_2026-07-15.png
+/data/09_test_document_link_2026-07.csv
+/frontend/tests/negative-margin-card.png
+
+# Local backups, logs and editor temporary files
+/frontend/vite.config.js.bak
+*.log
+*.tmp
+*.swp

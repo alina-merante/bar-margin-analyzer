@@ -26,6 +26,7 @@ FIELD_NAMES = (
     "cash_amount",
     "card_amount",
     "receipts_count",
+    "receipts_total",
 )
 
 STRONG_TIER = 1
@@ -112,6 +113,14 @@ CARD_LABELS = (
     ),
 )
 
+RECEIPTS_TOTAL_LABELS = (
+    LabelSpec(
+        "totale_scontrini",
+        STRONG_TIER,
+        _c(r"TOT(?:ALE|\.)\s+(?:DEGLI\s+)?SCONTRINI(?![A-Z])"),
+    ),
+)
+
 # Modalità aggiuntive: solo rilevate per spiegare il totale, mai contabilizzate.
 OTHER_PAYMENT_LABELS = (
     ("buoni_pasto", _c(r"(?:BUON[OI]\s+PASTO|TICKET(?:\s+RESTAURANT)?)(?![A-Z])")),
@@ -147,7 +156,7 @@ CLOSURE_LABELS = (
         "rapporto_z",
         WEAK_TIER,
         _c(
-            r"(?:(?:RAPPORTO|REPORT)\s*Z|Z[\s\-]*(?:REPORT|RAPPORTO)|AZZERAMENT[OI])"
+            r"(?:(?:RAPPORTO|REPORT)\s*Z|Z[\s\-]*(?:REPORT|RAPPORTO)|AZZERAMENTO)"
             rf"(?:[ \t]*{_N_MARK})?{_NUMBER_SEP_SAME_LINE}{_NUM_TOKEN}"
         ),
     ),
@@ -374,6 +383,7 @@ def parse_text(text: str) -> ParsedText:
     _scan_dates(normalized, fields["date"])
     _scan_closure_number(normalized, fields["closure_number"])
     fields["total_amount"] = _scan_amounts(lines, TOTAL_LABELS, _TOTAL_EXCLUDE)
+    fields["receipts_total"] = _scan_amounts(lines, RECEIPTS_TOTAL_LABELS, _TOTAL_EXCLUDE)
     fields["cash_amount"] = _scan_amounts(lines, CASH_LABELS, _CASH_EXCLUDE)
     fields["card_amount"] = _scan_amounts(lines, CARD_LABELS, _CARD_EXCLUDE)
     _scan_receipts(normalized, fields["receipts_count"])
@@ -449,6 +459,9 @@ class ClosureExtraction:
         for name in FIELD_NAMES:
             new = _resolution_from_reading(parsed.fields[name], "second_read")
             self.fields[name] = _merge_resolutions(self.fields[name], new)
+            if name in {"receipts_total", "receipts_count"} and len(self.fields[name].competing) > 1:
+                self.fields[name].status = "ambiguous"
+                self.fields[name].values = list(self.fields[name].competing)
         if not self.other_payments:
             self.other_payments = parsed.other_payments
         self.attempts.append(attempt_name)
@@ -536,7 +549,11 @@ class ClosureExtraction:
         values = {name: self.fields[name].value for name in FIELD_NAMES}
         if "date:in_future" in problems:
             values["date"] = None
-        unresolved = [name for name in FIELD_NAMES if values[name] is None]
+        unresolved = [
+            name for name in FIELD_NAMES
+            if values[name] is None
+            and (name != "receipts_total" or self.fields[name].status != "missing")
+        ]
         total = self.fields["total_amount"]
         diagnostics = {
             "second_read": self.second_read,

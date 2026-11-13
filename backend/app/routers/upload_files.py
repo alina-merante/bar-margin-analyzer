@@ -68,7 +68,9 @@ def invoice_url(invoice: Invoice) -> str | None:
     return url
 
 
-def _read_file(directory: str, filename: str) -> StreamingResponse:
+def open_upload_file(directory: str, filename: str):
+    if not safe_filename(filename):
+        raise HTTPException(status_code=404, detail="file not found")
     fd = None
     try:
         directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -90,6 +92,11 @@ def _read_file(directory: str, filename: str) -> StreamingResponse:
             raise HTTPException(status_code=404, detail="file not found") from exc
         logger.exception("Could not open authorized upload")
         raise HTTPException(status_code=500, detail="file could not be opened") from exc
+    return file, file_stat.st_size
+
+
+def _read_file(directory: str, filename: str) -> StreamingResponse:
+    file, file_size = open_upload_file(directory, filename)
 
     def chunks():
         try:
@@ -104,7 +111,7 @@ def _read_file(directory: str, filename: str) -> StreamingResponse:
         chunks(),
         media_type=media_type,
         headers={
-            "Content-Length": str(file_stat.st_size),
+            "Content-Length": str(file_size),
             "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{filename}"',
             "Cache-Control": "private, no-store, max-age=0",
             "Pragma": "no-cache",

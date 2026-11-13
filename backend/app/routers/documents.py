@@ -5,12 +5,13 @@ import logging
 import os
 import re
 import uuid
+from calendar import monthrange
 from io import BytesIO, StringIO
 
 from PIL import Image, ImageDraw, ImageFont
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pdf2image import convert_from_bytes
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -120,7 +121,10 @@ def cash_closure_conflict(
             .replace("X", ".")
         )
         detail += f" – {formatted_amount} €"
-    return HTTPException(status_code=409, detail=detail + ").")
+    return HTTPException(
+        status_code=409,
+        detail=detail + "). Il documento già presente non è stato rielaborato.",
+    )
 
 
 def find_existing_cash_closure(
@@ -401,7 +405,8 @@ def build_cash_closure_warnings(extracted_data: dict) -> list[str]:
     # Il totale può comprendere altre modalità (buoni pasto, ticket...): la
     # differenza è solo segnalata, mai considerata un errore certo.
     if (
-        cash_amount is not None
+        extracted_data["total_amount"] is not None
+        and cash_amount is not None
         and card_amount is not None
         and extracted_data["total_amount"] != cash_amount + card_amount + other_payments_total
     ):
@@ -546,7 +551,10 @@ async def upload_document(
         if duplicate_intake:
             raise HTTPException(
                 status_code=409,
-                detail="Questo documento o questa chiusura è già stata importata.",
+                detail=(
+                    "Questo documento o questa chiusura è già stata importata. "
+                    "Il documento già presente non è stato rielaborato."
+                ),
             )
         cash_warnings = build_cash_closure_warnings(extracted_data)
         if extracted_data.get("date") is not None and extracted_data.get("total_amount") is not None:
@@ -606,11 +614,7 @@ async def upload_document(
             result=result,
             file_url=file_url,
             preview_url=preview_url,
-            status=(
-                "Da verificare"
-                if cash_classification == cash_closure_policy.SAVE_FOR_REVIEW
-                else "Elaborato"
-            ),
+            status="Da verificare" if extracted_data else "Elaborato",
             section=section,
         )
 
@@ -618,31 +622,14 @@ async def upload_document(
         db.flush()
 
         if extracted_data:
-            closure = None
-            intake_status = "pending"
-            if cash_classification == cash_closure_policy.AUTO_SAVE:
-                closure = DailyCashClosure(
-                    bar_id=bar_id,
-                    date=extracted_data["date"],
-                    closure_number=extracted_data["closure_number"],
-                    total_amount=extracted_data["total_amount"],
-                    cash_amount=extracted_data["cash_amount"],
-                    card_amount=extracted_data["card_amount"],
-                    receipts_count=extracted_data["receipts_count"],
-                    document_id=document.id,
-                )
-                db.add(closure)
-                intake_status = "approved"
-
             diagnostics = extracted_data.get("diagnostics") or {}
             db.add(
                 CashClosureIntake(
                     bar_id=bar_id,
                     document_id=document.id,
-                    closure=closure,
                     source_sha256=source_sha256,
-                    classification=cash_classification,
-                    status=intake_status,
+                    classification=cash_closure_policy.SAVE_FOR_REVIEW,
+                    status="pending",
                     date=extracted_data.get("date"),
                     closure_number=extracted_data.get("closure_number"),
                     total_amount=extracted_data.get("total_amount"),
@@ -674,7 +661,10 @@ async def upload_document(
             if duplicate_intake is not None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Questo documento o questa chiusura è già stata importata.",
+                    detail=(
+                        "Questo documento o questa chiusura è già stata importata. "
+                        "Il documento già presente non è stato rielaborato."
+                    ),
                 ) from exc
             if is_unique_violation or (
                 is_unique_violation is None and existing_closure is not None
@@ -704,7 +694,45 @@ def list_documents(
 ) -> list[dict]:
     query = select(Document).where(Document.bar_id == context.bar.id)
 
-    if month:
+    if month and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) and int(month[:4]) > 0:
+        year, month_number = map(int, month.split("-"))
+        start = dt.date(year, month_number, 1)
+        end = dt.date(year, month_number, monthrange(year, month_number)[1])
+        closure_date = (
+            select(DailyCashClosure.date)
+            .where(
+                DailyCashClosure.document_id == Document.id,
+                DailyCashClosure.bar_id == context.bar.id,
+            )
+            .order_by(DailyCashClosure.date)
+            .limit(1)
+            .scalar_subquery()
+        )
+        pending_date = (
+            select(CashClosureIntake.date)
+            .where(
+                CashClosureIntake.document_id == Document.id,
+                CashClosureIntake.bar_id == context.bar.id,
+                CashClosureIntake.status == "pending",
+                CashClosureIntake.closure_id.is_(None),
+            )
+            .scalar_subquery()
+        )
+        effective_cash_date = func.coalesce(closure_date, pending_date)
+        is_cash = Document.section.in_(("cash", "cash_closure"))
+        query = query.where(
+            or_(
+                and_(~is_cash, Document.month == month),
+                and_(
+                    is_cash,
+                    or_(
+                        effective_cash_date.between(start, end),
+                        and_(effective_cash_date.is_(None), Document.month == month),
+                    ),
+                ),
+            )
+        )
+    elif month:
         query = query.where(Document.month == month)
 
     documents = db.scalars(query.order_by(Document.created_at.desc())).all()
@@ -743,6 +771,18 @@ def list_documents(
             .group_by(DailyCashClosure.document_id)
         ).all()
         cash_dates = {document_id: cash_date for document_id, cash_date in cash_rows}
+        pending_rows = db.execute(
+            select(CashClosureIntake.document_id, CashClosureIntake.date)
+            .where(
+                CashClosureIntake.document_id.in_(cash_document_ids),
+                CashClosureIntake.bar_id == context.bar.id,
+                CashClosureIntake.status == "pending",
+                CashClosureIntake.closure_id.is_(None),
+            )
+        ).all()
+        for document_id, cash_date in pending_rows:
+            if document_id not in cash_dates:
+                cash_dates[document_id] = cash_date
 
     return [
         document_to_dict(

@@ -757,14 +757,16 @@ def test_cash_upload_uses_extracted_closure_month_for_document_history():
                     )
                 )
 
-                closure = session.scalar(select(DailyCashClosure))
+                intake = session.scalar(select(CashClosureIntake))
                 context = _test_context(session)
                 july_documents = documents_router.list_documents("2026-07", context, session)
                 september_documents = documents_router.list_documents("2026-09", context, session)
 
-                assert closure is not None
-                assert closure.date == dt.date(2026, 7, 14)
-                assert closure.total_amount == Decimal("945.80")
+                assert intake is not None
+                assert intake.date == dt.date(2026, 7, 14)
+                assert intake.total_amount == Decimal("945.80")
+                assert intake.status == "pending"
+                assert session.scalar(select(DailyCashClosure)) is None
                 assert result["month"] == "2026-07"
                 assert len(july_documents) == 1
                 assert july_documents[0]["id"] == result["id"]
@@ -820,10 +822,7 @@ def test_duplicate_cash_upload_returns_conflict_without_duplicating_revenue():
                     upload()
                 except HTTPException as exc:
                     assert exc.status_code == 409
-                    assert exc.detail == (
-                        "Questa chiusura cassa è già stata caricata "
-                        "(14/07/2026 – chiusura n. 201 – 945,80 €)."
-                    )
+                    assert "non è stato rielaborato" in exc.detail
                 else:
                     raise AssertionError("duplicate cash upload was accepted")
 
@@ -832,10 +831,11 @@ def test_duplicate_cash_upload_returns_conflict_without_duplicating_revenue():
                 revenue = monthly_pnl(session, dt.date(2026, 7, 1), dt.date(2026, 8, 1))
 
                 assert len(documents) == 1
-                assert len(closures) == 1
-                assert closures[0].date == dt.date(2026, 7, 14)
-                assert closures[0].closure_number == "201"
-                assert revenue["revenue"] == Decimal("945.80")
+                assert closures == []
+                intake = session.scalars(select(CashClosureIntake)).one()
+                assert intake.date == dt.date(2026, 7, 14)
+                assert intake.closure_number == "201"
+                assert revenue["revenue"] == Decimal("0.00")
         finally:
             documents_router.extract_daily_cash_closure = original_extractor
             os.chdir(old_cwd)
@@ -907,7 +907,7 @@ def test_cash_upload_failure_after_document_flush_rolls_back_and_removes_files(
         original_add = session.add
 
         def failing_add(instance, *args, **kwargs):
-            if isinstance(instance, DailyCashClosure):
+            if isinstance(instance, CashClosureIntake):
                 raise RuntimeError("closure creation failed")
             return original_add(instance, *args, **kwargs)
 
@@ -942,7 +942,7 @@ def test_cash_upload_commit_failure_rolls_back_and_removes_files(
     assert _list_files("uploads") == []
 
 
-def test_cash_upload_success_persists_document_closure_and_files_with_single_commit(
+def test_cash_upload_success_persists_document_intake_and_files_with_single_commit(
     cash_upload_env,
 ):
     with Session(cash_upload_env) as session:
@@ -956,8 +956,10 @@ def test_cash_upload_success_persists_document_closure_and_files_with_single_com
         closures = session.scalars(select(DailyCashClosure)).all()
 
         assert len(commits) == 1
-        assert len(documents) == 1 and len(closures) == 1
-        assert closures[0].document_id == documents[0].id
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert len(documents) == 1 and closures == []
+        assert intake.document_id == documents[0].id
+        assert intake.status == "pending"
         assert documents[0].month == "2026-07"
         assert payload["id"] == documents[0].id
 
@@ -985,8 +987,9 @@ def test_cash_upload_refresh_failure_after_commit_keeps_records_and_files(
         closures = session.scalars(select(DailyCashClosure)).all()
 
         assert len(commits) == 1
-        assert len(documents) == 1 and len(closures) == 1
-        assert closures[0].document_id == documents[0].id
+        intake = session.scalars(select(CashClosureIntake)).one()
+        assert len(documents) == 1 and closures == []
+        assert intake.document_id == documents[0].id
 
     assert len(_list_files("uploads")) == 3
 
@@ -1082,34 +1085,31 @@ def test_concurrent_duplicate_cash_upload_returns_409_and_cleans_up(
     cash_upload_env, monkeypatch
 ):
     with Session(cash_upload_env) as session:
-        _add_existing_closure(session)
+        _upload_cash_pdf(session)
 
-        # Simulate the race: the pre-check does not see the competing closure,
-        # so the real UNIQUE constraint rejects the insert at commit time.
-        real_find = documents_router.find_existing_cash_closure
+        # Simulate a competing intake missed by the first duplicate check.
+        real_find = documents_router.find_duplicate_cash_intake
         calls = []
 
-        def find_blind_first_time(db, extracted_data, bar_id):
+        def find_blind_first_time(db, source_sha256, extracted_data, bar_id):
             calls.append(1)
-            return None if len(calls) == 1 else real_find(db, extracted_data, bar_id)
+            return None if len(calls) == 1 else real_find(db, source_sha256, extracted_data, bar_id)
 
-        monkeypatch.setattr(documents_router, "find_existing_cash_closure", find_blind_first_time)
+        monkeypatch.setattr(documents_router, "find_duplicate_cash_intake", find_blind_first_time)
 
         with pytest.raises(HTTPException) as exc_info:
             _upload_cash_pdf(session)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail == (
-            "Questa chiusura cassa è già stata caricata "
-            "(14/07/2026 – chiusura n. 301 – 100,00 €)."
-        )
-        assert session.scalars(select(Document)).all() == []
+        assert "non è stato rielaborato" in exc_info.value.detail
+        assert len(session.scalars(select(Document)).all()) == 1
         closures = session.scalars(select(DailyCashClosure)).all()
-        assert len(closures) == 1 and closures[0].total_amount == Decimal("100.00")
+        assert closures == []
+        assert len(session.scalars(select(CashClosureIntake)).all()) == 1
         revenue = monthly_pnl(session, dt.date(2026, 7, 1), dt.date(2026, 8, 1))
-        assert revenue["revenue"] == Decimal("100.00")
+        assert revenue["revenue"] == Decimal("0.00")
 
-    assert _list_files("uploads") == []
+    assert len(_list_files("uploads")) == 3
 
 
 def test_postgres_unique_violation_by_constraint_name_returns_409(
@@ -1151,7 +1151,7 @@ def test_other_integrity_errors_are_not_reported_as_duplicate_closure(
         original_flush = session.flush
 
         def failing_flush(*args, **kwargs):
-            if any(isinstance(item, DailyCashClosure) for item in session.new):
+            if any(isinstance(item, CashClosureIntake) for item in session.new):
                 raise IntegrityError("INSERT", {}, _FakePgError("some_other_constraint"))
             return original_flush(*args, **kwargs)
 
@@ -1369,7 +1369,7 @@ def test_cash_upload_with_explicit_zero_total_is_saved_as_zero(
             monkeypatch,
             "NUM. CHIUSURA 302\nDATA 14-07-26\nAMMONTARE GIORNO 0,00",
         )
-        closure = session.scalars(select(DailyCashClosure)).one()
+        closure = session.scalars(select(CashClosureIntake)).one()
 
     assert closure.total_amount == Decimal("0.00")
     assert closure.cash_amount is None
@@ -1385,7 +1385,7 @@ def test_cash_upload_total_from_corrisp_fallback_with_missing_cash_and_card(
             monkeypatch,
             "NUM. CHIUSURA 303\nDATA 14-07-26\nCORRISP, GIORNALIERO 1.124,20",
         )
-        closure = session.scalars(select(DailyCashClosure)).one()
+        closure = session.scalars(select(CashClosureIntake)).one()
 
     assert closure.total_amount == Decimal("1124.20")
     assert closure.cash_amount is None
@@ -1407,7 +1407,7 @@ def _upload_with_amounts(cash_upload_env, monkeypatch, amounts, closure_number="
     lines += amounts
     payload = _upload_with_ocr_text_session(cash_upload_env, monkeypatch, "\n".join(lines))
     with Session(cash_upload_env) as session:
-        closure = session.scalar(select(DailyCashClosure))
+        closure = session.scalar(select(CashClosureIntake))
         if closure is None:
             return payload, None
         return payload, (closure.total_amount, closure.cash_amount, closure.card_amount)
@@ -1464,7 +1464,7 @@ def test_warning_when_total_differs_from_payments_sum(cash_upload_env, monkeypat
     )
     assert payload["warnings"] == [MISMATCH_WARNING]
     assert payload["cash_closure_classification"] == "SAVE_FOR_REVIEW"
-    assert saved is None
+    assert saved == (Decimal("100.00"), Decimal("30.00"), Decimal("60.00"))
 
 
 def test_no_warning_when_total_matches_payments_sum(cash_upload_env, monkeypatch):
@@ -1606,6 +1606,7 @@ def test_two_closures_same_day_are_saved_and_exact_duplicate_is_rejected(cash_up
 
     assert exc_info.value.status_code == 409
     with Session(cash_upload_env) as session:
-        closures = session.scalars(select(DailyCashClosure)).all()
+        closures = session.scalars(select(CashClosureIntake)).all()
         assert sorted(c.closure_number for c in closures) == ["501", "502"]
+        assert session.scalars(select(DailyCashClosure)).all() == []
         assert len(session.scalars(select(Document)).all()) == 2

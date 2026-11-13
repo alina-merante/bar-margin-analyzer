@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { createServer } from "vite";
+import { uploadErrorFromResponse } from "../src/apiErrors.js";
 
 const FRONTEND_ROOT = new URL("..", import.meta.url).pathname;
 const DUPLICATE_DETAIL =
@@ -14,6 +15,7 @@ let server;
 let AlertBanner;
 let attachAlertDismissalHandlers;
 let UploadPage;
+let CashClosureReprocessComparison;
 let InvoicesPage;
 
 before(async () => {
@@ -27,7 +29,9 @@ before(async () => {
   const alertModule = await server.ssrLoadModule("/src/components/AlertBanner.jsx");
   AlertBanner = alertModule.default;
   attachAlertDismissalHandlers = alertModule.attachAlertDismissalHandlers;
-  UploadPage = (await server.ssrLoadModule("/src/pages/UploadPage.jsx")).default;
+  const uploadPageModule = await server.ssrLoadModule("/src/pages/UploadPage.jsx");
+  UploadPage = uploadPageModule.default;
+  CashClosureReprocessComparison = uploadPageModule.CashClosureReprocessComparison;
   InvoicesPage = (await server.ssrLoadModule("/src/pages/InvoicesPage.jsx")).default;
 });
 
@@ -163,6 +167,7 @@ test("UploadPage shows 422 and 500 errors through the same banner", () => {
       message: "Numero di chiusura non rilevato. Carica un'immagine o un PDF più leggibile.",
     },
   });
+
   const html500 = renderUploadPage({
     uploadError: {
       variant: "error",
@@ -188,6 +193,80 @@ test("UploadPage keeps the error visible on every render until it is dismissed",
     renderUploadPage({ ...props, documentUploadError: null }),
     /Documento già presente/
   );
+});
+
+test("cash upload displays the actual 422 closure recognition error", async () => {
+  const detail = "Il documento non contiene evidenze sufficienti per riconoscere una chiusura di cassa.";
+  const documentUploadError = await uploadErrorFromResponse({
+    status: 422,
+    text: async () => JSON.stringify({ detail }),
+  });
+  const html = renderUploadPage({ documentUploadError });
+  assert.match(html, /role="alert"/);
+  assert.ok(html.includes(detail));
+});
+
+test("review displays the receipt subtotal and count without presenting it as the overall total", () => {
+  const html = renderUploadPage({
+    cashClosureReviews: [{
+      id: 1,
+      date: "2023-09-26",
+      closure_number: null,
+      total_amount: null,
+      cash_amount: "255.50",
+      card_amount: null,
+      receipts_count: 25,
+      receipts_total: "303.50",
+      anomalies: [],
+      ocr_values: {},
+      document: { original_filename: "report.png", file_url: "" },
+    }],
+  });
+  assert.match(html, /Totale scontrini rilevato: 303\.50/);
+  assert.match(html, /non è il totale complessivo/);
+  assert.match(html, /Numero scontrini/);
+  assert.match(html, /value="25"/);
+  assert.match(html, /Numero chiusura/);
+  assert.match(html, /Rielabora OCR/);
+});
+
+test("reprocess comparison shows previous manual values and new OCR values before confirmation", () => {
+  const html = renderToStaticMarkup(createElement(CashClosureReprocessComparison, {
+    preview: {
+      previous: { closure_number: "MANUALE", total_amount: "400.00", receipts_count: 24 },
+      proposed: { closure_number: null, total_amount: null, receipts_count: 25, receipts_total: "303.50" },
+    },
+    busy: false,
+  }));
+  assert.match(html, /correzioni manuali/);
+  assert.match(html, /MANUALE/);
+  assert.match(html, /400\.00/);
+  assert.match(html, /303\.50/);
+  assert.match(html, /Non rilevato/);
+  assert.match(html, /Conferma rielaborazione/);
+  assert.match(html, /Annulla/);
+});
+
+test("review displays translated warnings rather than OCR codes", () => {
+  const html = renderUploadPage({
+    cashClosureReviews: [{
+      id: 1, anomalies: ["total_amount:missing", "closure_number:missing"],
+      ocr_values: {}, document: { original_filename: "report.png", file_url: "" },
+    }],
+  });
+  assert.match(html, /Totale complessivo: non rilevato/);
+  assert.match(html, /Numero chiusura: non rilevato/);
+  assert.doesNotMatch(html, /total_amount:missing|closure_number:missing/);
+});
+
+test("failed or pending review loading does not falsely report an empty list", () => {
+  const loading = renderUploadPage({ cashClosureLoading: true });
+  assert.match(loading, /Caricamento delle chiusure/);
+  assert.doesNotMatch(loading, /Nessuna chiusura in attesa/);
+  const failed = renderUploadPage({ cashClosureLoadError: "Impossibile aggiornare le chiusure." });
+  assert.match(failed, /Impossibile aggiornare le chiusure/);
+  assert.match(failed, /Riprova/);
+  assert.doesNotMatch(failed, /Nessuna chiusura in attesa/);
 });
 
 test("upload error handling is not cleared by generic clicks or timers", async () => {

@@ -90,6 +90,46 @@ def test_missing_cash_is_none_not_zero():
     assert r["cash_amount"] is None and r["card_amount"] is None
 
 
+def test_management_receipts_total_is_not_the_overall_total_or_closure_number():
+    text = (
+        "Data: 26/09/2023\nNumero scontrini: 25\n"
+        "Totale scontrini: 303,50 €\nTotale fatture: 5,50 €\n"
+        "Pagamenti contanti: 255,50 €\nNumero azzeramenti: 10\n"
+        "Dettaglio corrispettivi e aliquote IVA"
+    )
+    result = extract(text)
+    assert result["date"] == dt.date(2023, 9, 26)
+    assert result["receipts_count"] == 25
+    assert result["receipts_total"] == Decimal("303.50")
+    assert result["cash_amount"] == Decimal("255.50")
+    assert result["total_amount"] is None
+    assert result["card_amount"] is None
+    assert result["closure_number"] is None
+
+
+def test_management_receipts_total_is_kept_distinct_from_explicit_overall_total():
+    result = extract("TOTALE SCONTRINI 303,50\nTOTALE INCASSI 309,00")
+    assert result["receipts_total"] == Decimal("303.50")
+    assert result["total_amount"] == Decimal("309.00")
+
+
+@pytest.mark.parametrize("text", ["NUMERO AZZERAMENTI: 10", "AZZERAMENTI 10", "N. AZZERAMENTI 10"])
+def test_reset_count_is_not_closure_identifier(text):
+    assert extract(text)["closure_number"] is None
+
+
+@pytest.mark.parametrize("field, text, alternate", [
+    ("receipts_total", "TOTALE SCONTRINI 303,50\nTOTALE SCONTRINI 304,50", "TOTALE SCONTRINI 303,50"),
+    ("receipts_count", "SCONTRINI 25\nSCONTRINI 26", "SCONTRINI 25"),
+])
+def test_ambiguous_receipt_values_remain_unresolved_across_reads(field, text, alternate):
+    extraction = ClosureExtraction(text)
+    extraction.merge_text(alternate, "alternate")
+    result = extraction.to_result()
+    assert result[field] is None
+    assert result["diagnostics"]["fields"][field]["status"] == "ambiguous"
+
+
 def test_explicit_zero_is_kept():
     r = extract("AMMONTARE GIORNO 10,00\nCONTANTI 0,00\nPOS 10,00")
     assert r["cash_amount"] == Decimal("0.00")
@@ -108,6 +148,12 @@ def test_mismatch_without_explanation_warns():
     r = extract(text)
     warnings = documents_router.build_cash_closure_warnings(r)
     assert any("non coincide" in w for w in warnings)
+
+
+def test_missing_overall_total_is_not_reported_as_payment_mismatch():
+    result = extract("TOTALE SCONTRINI 303,50\nCONTANTI 255,50\nPOS 48,00")
+    assert result["total_amount"] is None
+    assert not any("non coincide" in w for w in documents_router.build_cash_closure_warnings(result))
 
 
 def test_second_read_confirms_and_conflicts():

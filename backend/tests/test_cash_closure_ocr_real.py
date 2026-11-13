@@ -12,6 +12,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from app.routers import documents as documents_router
+from app.services.cash_closure_policy import classify_closure
 
 pytesseract = pytest.importorskip("pytesseract")
 
@@ -66,6 +67,33 @@ def _check(result):
 
 def test_full_image():
     _check(documents_router.extract_daily_cash_closure(_png(_render()), "png"))
+
+
+def test_management_screenshot_needs_review_and_keeps_partial_total_separate():
+    image = _render([
+        "CHIUSURA GIORNALIERA",
+        "DATA 26/09/2023",
+        "NUMERO SCONTRINI 25",
+        "TOTALE SCONTRINI 303,50",
+        "TOTALE FATTURE 5,50",
+        "PAGAMENTI CONTANTI 255,50",
+        "NUMERO AZZERAMENTI 10",
+    ], size=(1600, 800))
+    result = documents_router.extract_daily_cash_closure(_png(image), "png")
+    assert classify_closure(result) == "SAVE_FOR_REVIEW"
+    assert result["date"].isoformat() == "2023-09-26"
+    assert result["receipts_count"] == 25
+    assert result["receipts_total"] == Decimal("303.50")
+    assert result["total_amount"] is None
+    assert result["closure_number"] is None
+    assert result["cash_amount"] == Decimal("255.50")
+    assert result["card_amount"] is None
+
+
+def test_generic_image_with_date_and_cash_is_not_a_closure():
+    image = _render(["FOTO VACANZE", "DATA 26/09/2023", "CONTANTI 255,50"])
+    result = documents_router.extract_daily_cash_closure(_png(image), "png")
+    assert classify_closure(result) == "REJECT"
 
 
 def test_content_in_legacy_crop_margin_is_still_read():

@@ -27,8 +27,8 @@ sys.path.insert(0, "/workspaces/bar-margin-analyzer/backend")
 
 from app.database import Base
 from app.models import CashClosureIntake, DailyCashClosure, Document
-from app.routers import documents as documents_router
-from test_documents_cash_month import upload_for_test
+from app.routers import cash_closures, documents as documents_router
+from test_documents_cash_month import _test_context, upload_for_test
 
 pytesseract = pytest.importorskip("pytesseract")
 
@@ -335,7 +335,8 @@ def test_upload_missing_cash_is_flagged_and_saved_as_null(upload_env):
     image = render(["NUM. CHIUSURA 88", "DATA 03/11/2026", "TOTALE GIORNALIERO 200,00", "POS 200,00"])
     with Session(upload_env) as session:
         payload = _upload_png(session, image)
-        closure = session.scalars(select(DailyCashClosure)).one()
+        closure = session.scalars(select(CashClosureIntake)).one()
+        assert session.scalars(select(DailyCashClosure)).all() == []
     assert "cash_amount" in payload["extraction"]["unresolved_fields"]
     assert any("Contanti non rilevati" in w for w in payload["warnings"])
     assert closure.total_amount == Decimal("200.00")
@@ -365,7 +366,8 @@ def test_upload_same_closure_twice_is_conflict(upload_env):
         with pytest.raises(HTTPException) as error:
             _upload_png(session, image)
         assert error.value.status_code == 409
-        assert len(session.scalars(select(DailyCashClosure)).all()) == 1
+        assert session.scalars(select(DailyCashClosure)).all() == []
+        assert len(session.scalars(select(CashClosureIntake)).all()) == 1
 
 
 def test_upload_same_total_other_number_is_saved_with_duplicate_warning(upload_env):
@@ -377,8 +379,14 @@ def test_upload_same_total_other_number_is_saved_with_duplicate_warning(upload_e
     )
     with Session(upload_env) as session:
         _upload_png(session, first)
+        intake = session.scalars(select(CashClosureIntake)).one()
+        context = _test_context(session)
+        cash_closures.approve_cash_closure_review(
+            intake.id, _auth_session=context.auth_session, context=context, db=session
+        )
         payload = _upload_png(session, second)
-        assert len(session.scalars(select(DailyCashClosure)).all()) == 2
+        assert len(session.scalars(select(DailyCashClosure)).all()) == 1
+        assert len(session.scalars(select(CashClosureIntake)).all()) == 2
     assert any("stesso totale" in w for w in payload["warnings"])
 
 
@@ -440,7 +448,9 @@ def test_upload_total_only_is_saved_with_null_breakdown(upload_env):
     image = render(H51 + ["TOTALE GIORNALIERO 200,00"])
     with Session(upload_env) as session:
         payload = _upload_png(session, image)
-        closure = session.scalars(select(DailyCashClosure)).one()
+        closure = session.scalars(select(CashClosureIntake)).one()
+        assert closure.status == "pending"
+        assert session.scalars(select(DailyCashClosure)).all() == []
     assert closure.total_amount == Decimal("200.00")
     assert {"cash_amount", "card_amount"} <= set(payload["extraction"]["unresolved_fields"])
     assert closure.cash_amount is None

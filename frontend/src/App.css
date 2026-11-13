@@ -4726,7 +4726,23 @@ body {
   margin-top: 18px;
 }
 
+.cash-review-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  border: 0;
+  margin-top: 16px;
+}
+
+.cash-review-filter label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
 .cash-review-card {
+  min-width: 0;
   padding: 20px;
   border: 1px solid #e8c99e;
   border-left: 5px solid #d18a3d;
@@ -4769,7 +4785,34 @@ body {
   padding-left: 20px;
 }
 
+.cash-review-comparison {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+}
+
+.cash-review-comparison-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cash-review-heading h3,
+.cash-review-comparison th,
+.cash-review-comparison td {
+  overflow-wrap: anywhere;
+}
+
+.cash-review-comparison th,
+.cash-review-comparison td {
+  padding: 6px;
+  text-align: left;
+  border-bottom: 1px solid #e8c99e;
+}
+
 .cash-review-fields {
+  min-width: 0;
+  padding: 0;
+  border: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;

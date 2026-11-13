@@ -105,43 +105,30 @@ scripts/verify-clean-bootstrap.sh
 ### Chiusure di cassa
 
 Le chiusure sono caricate da `POST /documents/upload` con `section` `cash` o
-`cash_closure`; i dati sono estratti dal documento via OCR/testo e salvati in
-`DailyCashClosure`, collegata a un `Document`.
+`cash_closure`; i dati estratti via OCR/testo restano in revisione e sono
+salvati in `DailyCashClosure` soltanto dopo approvazione esplicita.
 
 Validazione, prima di scrivere file o record:
 
-- la data è obbligatoria; se non viene rilevata o non è una data di calendario
-  valida (ad esempio `31/02/2026`) l'API risponde HTTP 422. Non esiste un
-  fallback a `date.today()`;
-- il numero di chiusura è obbligatorio; se manca l'API risponde HTTP 422;
-- il totale è obbligatorio; se manca o è ambiguo l'API risponde HTTP 422;
-- contanti ed elettronici non riconosciuti vengono salvati come `0.00` (le
-  colonne sono NOT NULL) con un avviso e con i campi irrisolti elencati in
-  `extraction.unresolved_fields` della risposta.
+- l'API rifiuta con HTTP 422 documenti illeggibili o senza evidenze sufficienti;
+- data, numero e totale mancanti o ambigui possono essere completati in
+  revisione, ma sono obbligatori per l'approvazione;
+- contanti ed elettronici non riconosciuti restano NULL, non zero;
+- il totale scontrini è una lettura separata, non il totale complessivo;
+  il numero di azzeramenti non è un identificativo di chiusura.
 
 Prevenzione dei duplicati:
 
-- pre-check applicativo su (`date`, `closure_number`): se la chiusura esiste già
-  l'API risponde HTTP 409 con il dettaglio della chiusura già caricata;
-- vincolo `UNIQUE(date, closure_number)` (`uq_daily_cash_closures_date_closure_number`,
-  migrazione `20261016_0007`) come difesa per le importazioni concorrenti. Se due
-  richieste superano entrambe il pre-check, la seconda viola il vincolo e riceve
-  anche lei HTTP 409. Su PostgreSQL la violazione è riconosciuta dal nome del
-  vincolo; con altri driver l'API verifica che la chiusura concorrente esista;
-- `closure_number` resta nullable a livello di database ed è obbligatorio solo
-  nel normale flusso di upload. Un inserimento diretto con `closure_number` NULL
-  non è impedito dal database, perché un vincolo UNIQUE non considera uguali i
-  valori NULL.
+- controlli su hash del file e su data e numero nel bar attivo;
+- vincoli univoci per bar sui documenti in revisione e sulle chiusure approvate.
 
 Atomicità dell'import:
 
-- `Document` e `DailyCashClosure` sono creati nella stessa transazione: dopo
-  `db.add(document)` viene eseguito `db.flush()` per ottenere `document.id`, poi
-  la chiusura è aggiunta e c'è un solo `db.commit()`;
+- `Document` e `CashClosureIntake` sono creati nella stessa transazione;
 - se l'errore avviene durante la scrittura del file, la generazione delle
   preview, il flush o il commit, viene eseguito il rollback e vengono rimossi il
   file originale e le preview create da quel tentativo. Non resta quindi un
-  `Document` senza chiusura né file orfani;
+  `Document` senza intake né file orfani;
 - il cleanup non riguarda upload già completati con successo.
 
 Pipeline OCR (`app/services/document_ocr.py`, `cash_closure_parser.py`):
@@ -156,13 +143,12 @@ sono rilevati ma non contabilizzati.
 Limiti noti: accuratezza non verificata su documenti reali di registratori
 diversi (i test OCR usano immagini sintetiche); nessun raddrizzamento di
 inclinazioni piccole; HEIC, CSV e XLSX non supportati per le chiusure; PDF con
-più chiusure rifiutati come ambigui; contanti/elettronici non rilevati non
-sono distinguibili da zero nel database.
+più chiusure rifiutati come ambigui.
 
 ### Revisione e correzione chiusure (SAVE_FOR_REVIEW)
 
-Se l'OCR non riesce a estrarre con sicurezza tutti i campi, l'API salva la
-chiusura con lo stato `SAVE_FOR_REVIEW` nella tabella `cash_closure_intakes`:
+Tutte le chiusure riconosciute sono salvate con lo stato `SAVE_FOR_REVIEW`
+nella tabella `cash_closure_intakes`. La revisione permette di controllare:
 
 - Data ambigua (non è una data di calendario valida)
 - Campi obbligatori mancanti (numero, totale)
@@ -176,8 +162,13 @@ L'interfaccia visualizza:
 - Pulsanti per approvare (collegare a `DailyCashClosure`) o rifiutare
 
 Dopo l'approvazione, i dati corretti vengono salvati in `DailyCashClosure` e
-la riga di revisione è marcata come processata. Le correzioni rimangono
-tracciate e non cancellabili.
+la riga di revisione è marcata come processata. Il numero di scontrini corretto
+è conservato separatamente dal valore OCR originale.
+L'approvazione richiede un proprietario del bar o un amministratore globale
+con accesso al bar attivo. Il filtro mensile usa la data effettiva dell'intake;
+la vista di tutte le chiusure include anche quelle prive di data. Salvare una
+data corretta o rielaborata aggiorna `Document.month`; in assenza di data resta
+il precedente mese archivistico. Non vengono modificati documenti già approvati.
 
 ### Storico documenti
 
@@ -186,13 +177,16 @@ contabile disponibile per il documento:
 
 - BANK: data della Transaction collegata; se le date sono diverse, intervallo
   dalla data minima alla massima.
-- CASH: `DailyCashClosure.date` collegata al documento.
+- CASH: data della chiusura approvata oppure della revisione pendente collegata.
 - Fatture: `Invoice.issue_date`.
 - Altri documenti: `Document.created_at` come fallback.
 
 Per documenti BANK legacy senza Transaction collegate, e documenti CASH senza
-una chiusura collegata, la visualizzazione usa `Document.created_at` come
-fallback.
+una data di chiusura disponibile, la visualizzazione usa `Document.created_at`
+come fallback. Il filtro dei documenti CASH usa la data contabile disponibile,
+anche se il mese archivistico di un record storico differisce; per le chiusure
+senza data usa il mese archivistico. Fatture e documenti bancari conservano le
+regole precedenti.
 
 ### Categorie e regole
 

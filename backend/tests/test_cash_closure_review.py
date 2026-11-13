@@ -226,6 +226,64 @@ def test_approval_requires_date_number_and_total(review_session):
     assert review_session.scalars(select(DailyCashClosure)).all() == []
 
 
+def test_management_upload_requires_manual_completion_and_approval(review_session, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    text = (
+        "Data: 26/09/2023\nNumero scontrini: 25\n"
+        "Totale scontrini: 303,50\nTotale fatture: 5,50\n"
+        "Pagamenti contanti: 255,50\nNumero azzeramenti: 10"
+    )
+    response = asyncio.run(
+        upload_for_test(
+            file=UploadFile(file=BytesIO(text.encode()), filename="management.txt"),
+            month="2023-09",
+            section="cash",
+            db=review_session,
+        )
+    )
+    intake = review_session.scalars(select(CashClosureIntake)).one()
+    assert response["cash_closure_classification"] == "SAVE_FOR_REVIEW"
+    assert intake.status == "pending"
+    assert intake.closure_number is None and intake.total_amount is None
+    assert intake.ocr_values["receipts_total"] == "303.50"
+    assert cash_closures.intake_to_dict(intake)["receipts_count"] == 25
+    assert review_session.scalars(select(DailyCashClosure)).all() == []
+    with pytest.raises(HTTPException) as error:
+        approve_review(intake.id, review_session)
+    assert error.value.status_code == 422
+
+    correct_review(
+        intake.id,
+        cash_closures.CashClosureCorrection(
+            closure_number="VERIFIED-123", total_amount=Decimal("309.00"),
+            receipts_count=24,
+        ),
+        review_session,
+    )
+    result = approve_review(intake.id, review_session)
+    closure = review_session.get(DailyCashClosure, result["closure_id"])
+    assert closure.closure_number == "VERIFIED-123"
+    assert closure.total_amount == Decimal("309.00")
+    assert closure.cash_amount == Decimal("255.50") and closure.card_amount is None
+    assert closure.receipts_count == 24
+    assert intake.ocr_values["receipts_count"] == 25
+
+
+def test_review_can_clear_unreliable_receipt_count(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+    intake.ocr_values = {**intake.ocr_values, "receipts_count": 25}
+    review_session.commit()
+    correct_review(
+        intake.id, cash_closures.CashClosureCorrection(receipts_count=None), review_session
+    )
+    result = approve_review(intake.id, review_session)
+    closure = review_session.get(DailyCashClosure, result["closure_id"])
+    assert closure.receipts_count is None
+    assert intake.ocr_values["receipts_count"] == 25
+    assert result["receipts_count"] is None
+
+
 def test_duplicate_approval_conflicts_with_existing_accounted_closure(review_session):
     document = create_document(review_session)
     intake = create_intake(review_session, document)

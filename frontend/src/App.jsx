@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import Sidebar from "./components/Sidebar";
 import { useTenantApi } from "./ApiContext";
@@ -13,6 +13,11 @@ import {
   uploadErrorFromResponse,
 } from "./apiErrors";
 import { PDFDocument } from "pdf-lib";
+import {
+  createLatestDocumentLoader,
+  reprocessCashClosure,
+  updateCashClosureList,
+} from "./cashClosureReview";
 import {
   formatCivilDateDMY,
   getCalendarDate,
@@ -197,6 +202,29 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
 
   const [documents, setDocuments] = useState([]);
   const [cashClosureReviews, setCashClosureReviews] = useState([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [documentsLoadError, setDocumentsLoadError] = useState("");
+  const [reviewRefreshWarning, setReviewRefreshWarning] = useState("");
+  const currentMonth = useRef(month);
+  currentMonth.current = month;
+  const documentLoader = useRef(null);
+  if (!documentLoader.current) {
+    documentLoader.current = createLatestDocumentLoader(
+      fetchJsonOrThrow,
+      (documentsData, reviewsData, loadedMonth) => {
+        if (loadedMonth !== currentMonth.current) return;
+        setDocuments(safeArray(documentsData));
+        setCashClosureReviews(safeArray(reviewsData));
+        setDocumentsLoaded(true);
+        setDocumentsLoadError("");
+      },
+      (_error, loadedMonth) => {
+        if (loadedMonth !== currentMonth.current) return;
+        setDocumentsLoaded(true);
+        setDocumentsLoadError("Impossibile aggiornare le chiusure e i documenti. Riprova o ricarica la pagina.");
+      }
+    );
+  }
 
   const [documentUploadMessage, setDocumentUploadMessage] = useState("");
   const [documentUploadError, setDocumentUploadError] = useState(null);
@@ -1338,14 +1366,28 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
     }
   }
 
-  async function loadDocuments(selectedMonth = month) {
-  const [documentsData, reviewsData] = await Promise.all([
-    fetchJsonOrThrow(`/api/documents?month=${selectedMonth}`),
-    fetchJsonOrThrow("/api/cash-closures/review"),
-  ]);
+async function loadDocuments(selectedMonth = currentMonth.current) {
+  if (selectedMonth !== currentMonth.current) return;
+  await documentLoader.current.load(selectedMonth);
+}
 
-  setDocuments(safeArray(documentsData));
-  setCashClosureReviews(safeArray(reviewsData));
+function applyCashClosureResult(result) {
+  documentLoader.current.invalidate();
+  setCashClosureReviews((reviews) => updateCashClosureList(reviews, result));
+}
+
+async function refreshAfterCashClosure(result, refreshDashboard = false) {
+  applyCashClosureResult(result);
+  setReviewRefreshWarning("");
+  try {
+    await Promise.all([
+      loadDocuments(),
+      ...(refreshDashboard ? [loadDashboardData(currentMonth.current)] : []),
+    ]);
+  } catch (error) {
+    console.error(error);
+    setReviewRefreshWarning("Operazione salvata, ma aggiornamento dei dati non riuscito. Ricarica la pagina.");
+  }
 }
 
 async function updateCashClosureReview(intakeId, action, payload) {
@@ -1363,7 +1405,7 @@ async function updateCashClosureReview(intakeId, action, payload) {
     }
   );
   const result = await responseJsonOrThrow(response);
-  await Promise.all([loadDocuments(), loadDashboardData(month)]);
+  await refreshAfterCashClosure(result, true);
   return result;
 }
 
@@ -1377,6 +1419,10 @@ function handleApproveCashClosure(intakeId) {
 
 function handleRejectCashClosure(intakeId) {
   return updateCashClosureReview(intakeId, "reject");
+}
+
+async function handleReprocessCashClosure(intakeId, preview) {
+  return reprocessCashClosure(fetch, intakeId, preview, refreshAfterCashClosure);
 }
 
 async function handleGenericDocumentUpload(file, section = "other") {
@@ -1429,7 +1475,9 @@ async function handleGenericDocumentUpload(file, section = "other") {
     const result = await response.json();
 
     setDocumentUploadMessage(
-      `Documento acquisito: ${result.original_filename}`
+      result.cash_closure_classification === "SAVE_FOR_REVIEW"
+        ? `Documento acquisito: ${result.original_filename}. In attesa di revisione e approvazione.`
+        : `Documento acquisito: ${result.original_filename}`
     );
     setDocumentUploadWarnings(
       Array.isArray(result.warnings)
@@ -1629,7 +1677,6 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
             path="/upload"
             element={
               <UploadPage
-                key={month}
                 month={month}
                 handleUpload={handleUpload}
                 uploading={uploading}
@@ -1644,9 +1691,14 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 invoices={invoices}
                 documents={documents}
                 cashClosureReviews={cashClosureReviews}
+                cashClosureLoading={!documentsLoaded}
+                cashClosureLoadError={documentsLoadError}
+                cashClosureRefreshWarning={reviewRefreshWarning}
+                retryCashClosureLoad={() => loadDocuments().catch(() => {})}
                 handleCorrectCashClosure={handleCorrectCashClosure}
                 handleApproveCashClosure={handleApproveCashClosure}
                 handleRejectCashClosure={handleRejectCashClosure}
+                handleReprocessCashClosure={handleReprocessCashClosure}
                 handleGenericDocumentUpload={handleGenericDocumentUpload}
                 handleDeleteDocument={handleDeleteDocument}
                 handleDeleteInvoice={handleDeleteInvoice}

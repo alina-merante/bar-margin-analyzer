@@ -33,6 +33,44 @@ Il devcontainer configura Python 3.12, Node 20, accesso Docker, dipendenze OCR
 e dipendenze frontend. Installa Tesseract, il pacchetto lingua italiana
 `tesseract-ocr-ita`, Poppler e `python3.12-venv`.
 
+### Test PWA privato in Codespaces
+
+Preparare **manualmente** PostgreSQL su `127.0.0.1:5432` con il database
+esclusivo `bar_margin_analyzer_pwa_test`, le migrazioni e un utente applicativo.
+Gli script non creano database né applicano migrazioni. Servono le dipendenze
+backend e frontend già installate, MagicDNS e HTTPS abilitati nella tailnet.
+
+Impostare `DATABASE_URL` nell'ambiente oppure creare il file locale ignorato
+`scripts/.pwa-test.env`, leggibile solo dall'utente (`chmod 600`), contenente
+una singola riga `DATABASE_URL=postgresql+psycopg2://.../bar_margin_analyzer_pwa_test`
+senza virgolette. Usare credenziali proprie o `.pgpass`; codificare eventuali
+caratteri speciali nell'URL. L'URL deve puntare a `localhost` o `127.0.0.1`
+porta 5432 e non può contenere parametri. Non inserire segreti nei file
+versionati. La variabile d'ambiente prevale sul file.
+
+```bash
+./scripts/start-pwa-test.sh
+./scripts/stop-pwa-test.sh
+```
+
+Al primo avvio, aprire il link di autorizzazione Tailscale mostrato nel
+terminale. Lo script usa un daemon userspace dedicato, stato persistente in
+`~/.local/share/tailscale/barmanager-pwa-test` e Serve esclusivamente privato:
+il link HTTPS indicato va aperto da un dispositivo autorizzato nella tailnet.
+Se Tailscale non è installato, scarica i binari ufficiali 1.90.9 e ne verifica
+il checksum SHA-256, senza privilegi amministrativi. Il daemon usa networking
+userspace senza modificare il DNS del Codespace: il nome MagicDNS potrebbe non
+risolversi nel terminale del Codespace anche quando funziona sulla tailnet.
+
+Il backend ascolta solo su `127.0.0.1:8001`, Vite su `127.0.0.1:5174`;
+i log privati e i PID sono in `~/.local/state/barmanager-pwa-test`. Gli upload
+sono isolati in `/tmp/barmanager_pwa_test_uploads`: se la directory esiste già,
+deve appartenere all'utente e avere permessi `700`. Cookie Secure, controlli
+CSRF e isolamento tenant restano attivi. L'arresto conserva database, upload e
+stato Tailscale. Porte o socket già occupati da processi non gestiti producono
+un errore: liberare i conflitti **manualmente**, solo dopo aver identificato
+i processi, senza toccare i servizi principali.
+
 ## Porte e URL
 
 - Frontend: `http://localhost:5173`
@@ -42,6 +80,22 @@ e dipendenze frontend. Installa Tesseract, il pacchetto lingua italiana
 - PostgreSQL: `localhost:5432`
 
 Vite inoltra le richieste `/api/*` a `http://127.0.0.1:8000`.
+
+## Rielaborazione delle chiusure OCR
+
+In **Chiusure da verificare**, usare **Rielabora OCR** per rileggere il
+documento originale di una chiusura ancora pendente. Confrontare i valori
+attuali, comprese eventuali correzioni manuali, con la nuova lettura e confermare
+solo se si desidera sostituirli. I valori precedenti restano nello storico della
+scheda; la chiusura richiede comunque revisione e approvazione esplicita.
+Salvare prima eventuali modifiche non ancora salvate. Il totale scontrini è
+distinto dal totale complessivo e non lo sostituisce.
+La vista predefinita mostra le chiusure con data nel mese selezionato; scegliere
+**Tutte le chiusure pendenti** per vedere anche altri mesi e quelle senza data.
+Una data salvata o rielaborata aggiorna il periodo del documento. Senza data
+resta il mese archivistico precedente, non una data contabile inventata.
+L'approvazione è riservata al proprietario del bar o a un amministratore
+globale con accesso al bar attivo.
 
 ## Migrazioni Alembic
 
@@ -106,17 +160,16 @@ sono rifiutati. Nessun permesso viene assegnato automaticamente. Il catalogo
 distingue documenti propri e di tutti, upload, creazione, modifica, revisione,
 approvazione ed eliminazione dove applicabili, e lettura separata di incassi,
 costi, pagamenti, profitti, margini e analytics. Non contiene un permesso
-delegabile per approvare chiusure di cassa: la regola futura riserva tale
+delegabile per approvare chiusure di cassa: la regola riserva tale
 approvazione all'amministratrice globale o all'owner del bar.
 
 **Questa è soltanto una fondazione, non l'enforcement dei nuovi permessi.**
 Non esistono ancora API di gestione account, assegnazioni o permessi, né un
 bypass operativo per l'amministratrice globale; i router usano ancora la matrice
 owner/manager/staff descritta sotto. Analytics e altre letture economiche sono
-ancora visibili allo staff del bar. Oggi lo staff può anche approvare chiusure
-in revisione e le chiusure `AUTO_SAVE` sono approvate automaticamente durante
-l'upload: entrambi i comportamenti sono criticità da eliminare nel successivo
-intervento di enforcement completo, non protezioni già attive. L'accesso a
+ancora visibili allo staff del bar. L'approvazione delle chiusure è invece
+limitata al proprietario o all'amministratore globale con accesso al bar.
+Le nuove importazioni di cassa richiedono sempre la revisione manuale. L'accesso a
 analytics non dovrà implicare accesso a dati economici non autorizzati, anche
 quando ricavabili da aggregati. La distinzione dei propri documenti richiede
 ancora la registrazione dell'autore e il controllo su API e download.
@@ -169,8 +222,7 @@ modifica dello stato. La riattivazione non ripristina le vecchie sessioni:
 L'amministratrice globale non ha ancora accesso operativo automatico a tutti i
 bar, e i permessi granulari non sono ancora applicati alle API operative. Non
 esistono ancora API di gestione dei permessi dei dipendenti né interfaccia
-amministrativa. Le criticità di lettura economica e approvazione chiusure
-descritte sopra restano aperte.
+amministrativa. Le criticità di lettura economica descritte sopra restano aperte.
 
 La migrazione `20261111_0013` rende per-bar l'unicità di prodotti, categorie,
 chiusure e intake, mantenendo vincoli separati per record legacy con `bar_id`
@@ -343,8 +395,8 @@ Una prova Chromium con viewport e tocco simulati, usando API e file fittizi, ha
 verificato login, cambio bar, dashboard, pagamenti, caricamento, revisione e
 controlli fotocamera. Non verifica fotocamera nativa, OCR reale o installazione
 Android. Touch, orientamento, tastiera, accesso privato e acquisizione vanno
-ancora provati sul tablet. Le regole di approvazione e i permessi granulari
-restano invariati.
+ancora provati sul tablet. I permessi granulari restano da applicare alle API
+operative; l'approvazione delle chiusure segue la restrizione descritta sopra.
 
 ## Clean bootstrap
 
@@ -404,8 +456,11 @@ curl -X POST http://localhost:8000/documents/upload \
 ```
 
 L'endpoint crea `Document` e `CashClosureIntake` nella stessa transazione,
-assegnandoli al bar attivo; una chiusura attendibile viene salvata subito,
-mentre una lettura incerta richiede revisione e approvazione. Risponde:
+assegnandoli al bar attivo. Ogni chiusura riconosciuta resta in attesa di
+revisione e approvazione esplicita, anche se tutti i campi sono stati letti.
+Per approvare servono data, numero di chiusura e totale: se mancanti, inserirli
+solo dopo verifica sul documento. Il totale scontrini è mostrato separatamente
+e non viene considerato il totale complessivo. Risponde:
 
 - HTTP 409 per un documento duplicato o una chiusura con la stessa data e
   numero nello stesso bar;
