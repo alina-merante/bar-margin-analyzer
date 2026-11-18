@@ -563,3 +563,18 @@ Non vengono cancellati socket, stato Tailscale, database o upload.
 
 La procedura è stata verificata anche con un test reale di
 recupero del file PID mancante.
+
+### Clean Bootstrap autenticato
+
+Il workflow GitHub Actions `Clean Bootstrap` verifica le migrazioni
+Alembic, l'avvio del backend, gli endpoint della dashboard e la build
+del frontend in un ambiente PostgreSQL temporaneo.
+
+Gli endpoint protetti sono verificati tramite
+`scripts/verify-clean-bootstrap-auth.py`, che crea un utente e un bar
+di test, effettua il login con protezione CSRF e controlla gli endpoint
+con una sessione autenticata.
+
+Lo script è riservato a GitHub Actions e verifica il nome e l'host del
+database prima di creare dati temporanei. Non utilizza credenziali o
+database dell'ambiente PWA.
