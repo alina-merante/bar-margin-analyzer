@@ -78,7 +78,8 @@ for pair in backend:8001 frontend:5174; do
     fi
 done
 if ! managed_pid tailscaled >/dev/null && [[ -e "$socket" || -L "$socket" ]]; then
-    die "Socket $socket già presente e non gestito; non verrà modificato."
+    recover_managed_tailscaled ||
+        die "Socket $socket già presente e non gestito; non verrà modificato."
 fi
 
 if [[ -e "$upload_dir" || -L "$upload_dir" ]]; then
@@ -141,28 +142,6 @@ done
 echo "Connessione Tailscale: se richiesto, aprire il link di autorizzazione mostrato."
 "$ts" --socket="$socket" up --accept-dns=false
 
-if managed_pid serve >/dev/null; then
-    has_managed_serve=1
-else
-    has_managed_serve=0
-fi
-export has_managed_serve
-if ! "$ts" --socket="$socket" serve status --json | "$python" -c '
-import json, os, sys
-try:
-    config = json.load(sys.stdin) or {}
-    foreground = config.get("Foreground") or {}
-    unsafe = (config.get("TCP") or config.get("Web") or config.get("Services")
-              or any((config.get("AllowFunnel") or {}).values())
-              or (foreground and os.environ["has_managed_serve"] != "1")
-              or any(any((c.get("AllowFunnel") or {}).values()) for c in foreground.values()))
-    sys.exit(bool(unsafe))
-except (ValueError, TypeError, AttributeError):
-    sys.exit(1)
-'; then
-    die "Configurazione Serve preesistente o pubblica rilevata nel daemon dedicato; verificare manualmente prima di procedere."
-fi
-
 hostname="$("$ts" --socket="$socket" status --json | "$python" -c '
 import json, re, sys
 d = json.load(sys.stdin)
@@ -173,6 +152,70 @@ if host not in d.get("CertDomains", []):
     sys.exit(1)
 print(host)
 ')" || die "Hostname HTTPS Tailscale non disponibile; verificare MagicDNS e HTTPS nella tailnet."
+export PWA_TEST_HOSTNAME="$hostname"
+
+if managed_pid serve >/dev/null; then
+    has_managed_serve=1
+else
+    has_managed_serve=0
+fi
+export has_managed_serve
+
+# Read-only validation: never overwrite unknown or public Serve configurations.
+if ! "$ts" --socket="$socket" serve status --json | "$python" -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin) or {}
+    tcp = d.get("TCP") or {}
+    web = d.get("Web") or {}
+    foreground = d.get("Foreground") or {}
+    funnel = d.get("AllowFunnel") or {}
+    services = d.get("Services") or {}
+
+    def valid_proxy(c):
+        return (
+            c.get("TCP") == {"443": {"HTTPS": True}}
+            and len(c.get("Web", {})) == 1
+            and next(iter(c["Web"])).endswith(".ts.net:443")
+            and next(iter(c["Web"].values())) == {
+                "Handlers": {"/": {"Proxy": "http://127.0.0.1:5174"}}
+            }
+            and not c.get("AllowFunnel")
+            and not c.get("Services")
+        )
+
+    expected_host = os.environ["PWA_TEST_HOSTNAME"] + ":443"
+    persistent = bool(tcp or web)
+    safe_persistent = (
+        persistent
+        and valid_proxy(d)
+        and set(web) == {expected_host}
+        and not foreground
+        and not funnel
+        and not services
+    )
+    empty = not (tcp or web or foreground or funnel or services)
+    managed_foreground = (
+        os.environ["has_managed_serve"] == "1"
+        and not persistent
+        and not funnel
+        and not services
+        and all(valid_proxy(c) for c in foreground.values())
+    )
+    sys.exit(0 if empty or safe_persistent or managed_foreground else 1)
+except (ValueError, TypeError, AttributeError, StopIteration, KeyError):
+    sys.exit(1)
+'; then
+    die "Configurazione Serve sconosciuta o pubblica: avvio bloccato per sicurezza."
+fi
+
+# Existing persistent configuration is reused rather than recreated.
+serve_already_configured="$("$ts" --socket="$socket" serve status --json | "$python" -c '
+import json, sys
+d = json.load(sys.stdin) or {}
+print("1" if d.get("TCP") and d.get("Web") else "0")
+')"
+
 export AUTH_ALLOWED_ORIGINS="https://$hostname"
 export AUTH_COOKIE_SECURE=true
 export UPLOAD_BASE_PATH="$upload_dir"
@@ -221,7 +264,7 @@ for ((i=0; i<60; i++)); do
 done
 (( i < 60 )) || die "Servizi PWA non pronti; controllare i log in $runtime_dir."
 
-if ! managed_pid serve >/dev/null; then
+if [[ "$serve_already_configured" != "1" ]] && ! managed_pid serve >/dev/null; then
     start_managed serve env -u DATABASE_URL "$ts" --socket="$socket" serve --https=443 http://127.0.0.1:5174
 fi
 for ((i=0; i<30; i++)); do
@@ -244,7 +287,7 @@ except (ValueError, TypeError, AttributeError):
 '; then
         break
     fi
-    managed_pid serve >/dev/null || die "Tailscale Serve si è arrestato; vedere $runtime_dir/serve.log"
+    [[ "$serve_already_configured" == "1" ]] || managed_pid serve >/dev/null || die "Tailscale Serve si è arrestato; vedere $runtime_dir/serve.log"
     sleep 1
 done
 (( i < 30 )) || die "Proxy Tailscale privato non pronto; vedere $runtime_dir/serve.log."

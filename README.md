@@ -64,7 +64,7 @@ risolversi nel terminale del Codespace anche quando funziona sulla tailnet.
 
 Il backend ascolta solo su `127.0.0.1:8001`, Vite su `127.0.0.1:5174`;
 i log privati e i PID sono in `~/.local/state/barmanager-pwa-test`. Gli upload
-sono isolati in `/tmp/barmanager_pwa_test_uploads`: se la directory esiste già,
+sono isolati in `$HOME/.local/share/barmanager-pwa-test/uploads`: se la directory esiste già,
 deve appartenere all'utente e avere permessi `700`. Cookie Secure, controlli
 CSRF e isolamento tenant restano attivi. L'arresto conserva database, upload e
 stato Tailscale. Porte o socket già occupati da processi non gestiti producono
@@ -521,3 +521,45 @@ Le formule e gli esempi P&L sono descritti in
 - [README_ARCHITECTURE.md](README_ARCHITECTURE.md): stack e struttura reale;
 - [DASHBOARD_CALCULATIONS.md](DASHBOARD_CALCULATIONS.md): formule e specifica dei costi;
 - [frontend/README.md](frontend/README.md): sviluppo e struttura del frontend.
+
+### Ripristino dei documenti originali mancanti
+
+Quando il file originale di una chiusura di cassa già importata non è più
+disponibile, è possibile ricaricare lo stesso documento tramite il normale
+caricamento delle chiusure di cassa.
+
+Il ripristino è consentito esclusivamente se:
+- il documento appartiene al bar attualmente selezionato;
+- esiste una precedente acquisizione con SHA-256 identico;
+- il file originale è effettivamente mancante;
+- l'utente dispone dei permessi necessari per il caricamento.
+
+Il ripristino conserva il documento e la chiusura esistenti, senza creare
+nuovi record o modificare importi, dati OCR e stato di approvazione.
+
+I file esistenti non vengono sovrascritti. I duplicati normali continuano
+a restituire HTTP 409.
+
+Il ripristino utilizza la directory configurata tramite UPLOAD_BASE_PATH.
+Per l'ambiente PWA isolato, gli upload sono conservati nella directory
+persistente definita in scripts/pwa-test-common.sh.
+
+Test dedicati:
+backend/tests/test_missing_cash_document_recovery.py
+
+### Recupero automatico del processo Tailscale
+
+All'avvio dell'ambiente PWA, se il socket Tailscale esiste ma il
+file PID è mancante o non valido, lo script tenta di recuperare
+il processo già attivo.
+
+Il recupero è consentito soltanto quando viene identificato
+un unico processo compatibile con la configurazione BarManager,
+verificando proprietario, eseguibile, argomenti di avvio,
+marcatore `BARMANAGER_PWA_PROCESS=tailscaled` e tempo di avvio.
+
+Se le verifiche falliscono, l'avvio rimane bloccato per sicurezza.
+Non vengono cancellati socket, stato Tailscale, database o upload.
+
+La procedura è stata verificata anche con un test reale di
+recupero del file PID mancante.

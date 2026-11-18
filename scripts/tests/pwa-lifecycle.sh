@@ -17,7 +17,7 @@ trap cleanup EXIT
 mkdir -p "$HOME" "$fixture/scripts" "$fixture/backend/.venv/bin" \
     "$fixture/frontend/node_modules/vite/bin" "$test_dir/bin" "$test_dir/modules/sqlalchemy"
 cp "$root/scripts/"{start-pwa-test.sh,stop-pwa-test.sh,pwa-test-common.sh} "$fixture/scripts/"
-sed -i "s|/tmp/barmanager-tailscale.sock|$test_dir/tailscale.sock|; s|/tmp/barmanager_pwa_test_uploads|$test_dir/uploads|" "$fixture/scripts/pwa-test-common.sh"
+sed -i "s|/tmp/barmanager-tailscale.sock|$test_dir/tailscale.sock|; s|^upload_dir=.*$|upload_dir=\"$test_dir/uploads\"|" "$fixture/scripts/pwa-test-common.sh"
 ln -s "$(command -v python3)" "$fixture/backend/.venv/bin/python"
 touch "$fixture/frontend/node_modules/vite/bin/vite.js"
 export PYTHONPATH="$test_dir/modules"
@@ -94,7 +94,11 @@ case "$1" in
                 echo '{"AllowFunnel":{"test.tail123.ts.net:443":true}}'
                 exit 0
             fi
-            [[ -f "$TEST_AREA/serve-active" ]] || { echo '{}'; exit 0; }
+            if [[ -f "$TEST_AREA/persistent" ]]; then
+               echo '{"TCP":{"443":{"HTTPS":true}},"Web":{"test.tail123.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:5174"}}}}}'
+               exit 0
+           fi
+           [[ -f "$TEST_AREA/serve-active" ]] || { echo '{}'; exit 0; }
             echo '{"Foreground":{"test":{"TCP":{"443":{"HTTPS":true}},"Web":{"test.tail123.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:5174"}}}}}}}'
         else
             touch "$TEST_AREA/serve-active"
@@ -127,9 +131,16 @@ if bash "$fixture/scripts/start-pwa-test.sh" >"$test_dir/public.log" 2>&1; then
     echo "La configurazione pubblica non è stata rifiutata." >&2
     exit 1
 fi
-grep -q 'Configurazione Serve preesistente o pubblica' "$test_dir/public.log"
+grep -q 'Configurazione Serve sconosciuta o pubblica' "$test_dir/public.log"
 [[ ! -e "$test_dir/tailscale.sock" ]]
 rm "$test_dir/public"
+
+# Simulate a private persistent Serve configuration from a previous session.
+touch "$test_dir/persistent"
+bash "$fixture/scripts/start-pwa-test.sh" >"$test_dir/persistent.log"
+grep -q 'https://test.tail123.ts.net' "$test_dir/persistent.log"
+[[ ! -f "$HOME/.local/state/barmanager-pwa-test/serve.pid" ]] || exit 1
+rm "$test_dir/persistent"
 
 bash "$fixture/scripts/start-pwa-test.sh" >"$test_dir/start.log"
 grep -q 'https://test.tail123.ts.net' "$test_dir/start.log"
