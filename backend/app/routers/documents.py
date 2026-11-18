@@ -170,6 +170,77 @@ def find_duplicate_cash_intake(
     )
 
 
+
+def restore_missing_cash_document(
+    db: Session,
+    *,
+    bar_id: int,
+    source_sha256: str,
+    content: bytes,
+) -> bool:
+    """Restore only the exact original bytes of a missing cash document."""
+    from app import config
+    from app.routers.upload_files import open_upload_file, safe_filename
+
+    intake = db.scalar(
+        select(CashClosureIntake).where(
+            CashClosureIntake.bar_id == bar_id,
+            CashClosureIntake.source_sha256 == source_sha256,
+        )
+    )
+    if intake is None or intake.document is None:
+        return False
+
+    document = intake.document
+    filename = document.stored_filename
+
+    if document.bar_id != bar_id or not safe_filename(filename):
+        return False
+
+    expected_url = get_document_url(filename)
+    if document.file_url != expected_url:
+        return False
+
+    if hashlib.sha256(content).hexdigest() != intake.source_sha256:
+        return False
+
+    try:
+        existing, _ = open_upload_file(config.UPLOAD_DOCUMENTS_DIR, filename)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        if os.path.lexists(os.path.join(config.UPLOAD_DOCUMENTS_DIR, filename)):
+            return False
+    else:
+        existing.close()
+        return False
+
+    directory_fd = os.open(
+        config.UPLOAD_DOCUMENTS_DIR,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    try:
+        fd = os.open(
+            filename,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+        except Exception:
+            os.unlink(filename, dir_fd=directory_fd)
+            raise
+    except FileExistsError:
+        return False
+    finally:
+        os.close(directory_fd)
+
+    return True
+
 def json_safe(value):
     if isinstance(value, (dt.date, dt.datetime)):
         return value.isoformat()
@@ -542,6 +613,28 @@ async def upload_document(
                 ),
             )
         revalidate_upload_context(request, db, bar_id)
+        existing_intake = db.scalar(
+            select(CashClosureIntake).where(
+                CashClosureIntake.bar_id == bar_id,
+                CashClosureIntake.source_sha256 == source_sha256,
+            )
+        )
+        if existing_intake is not None:
+            revalidate_upload_context(request, db, bar_id, lock=True)
+            if restore_missing_cash_document(
+                db,
+                bar_id=bar_id,
+                source_sha256=source_sha256,
+                content=content,
+            ):
+                return {
+                    **document_to_dict(
+                        existing_intake.document,
+                        cash_date=existing_intake.date,
+                    ),
+                    "restored_original": True,
+                }
+
         existing_closure = find_existing_cash_closure(db, extracted_data, bar_id)
         if existing_closure:
             raise cash_closure_conflict(extracted_data, existing_closure)
