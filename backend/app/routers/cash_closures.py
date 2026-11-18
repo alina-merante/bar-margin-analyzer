@@ -504,6 +504,11 @@ def reject_cash_closure_review(
     context: BarContext = Depends(review_context),
     db: Session = Depends(get_db),
 ) -> dict:
+    if not can_approve(context):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo il proprietario del bar o un amministratore globale può rifiutare la chiusura.",
+        )
     intake = get_intake_for_bar(
         db,
         intake_id,
