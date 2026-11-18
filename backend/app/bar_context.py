@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_session
 from app.database import get_db
+from app.permissions import DelegablePermission
 from app.models import (
     AuthSession,
     Bar,
@@ -240,3 +241,54 @@ def require_manager_or_owner(
     if context.role not in {MembershipRole.owner, MembershipRole.manager}:
         raise HTTPException(status_code=403, detail="manager role required")
     return context
+
+
+def require_financial_permissions(
+    context: BarContext,
+    *permissions: DelegablePermission,
+) -> None:
+    if context.role == MembershipRole.owner or context.user.is_global_admin:
+        return
+
+    granted = {
+        item.permission
+        for item in context.membership.permissions
+    }
+
+    required = {
+        permission.value
+        for permission in permissions
+    }
+
+    if not required.issubset(granted):
+        raise HTTPException(
+            status_code=403,
+            detail="financial permission denied",
+        )
+
+
+
+def financial_read_scope(
+    context: BarContext,
+    own_permission: DelegablePermission,
+    all_permission: DelegablePermission,
+) -> str:
+    """Return 'all' or 'own'; deny access without read permissions."""
+    if context.role == MembershipRole.owner or context.user.is_global_admin:
+        return "all"
+
+    granted = {
+        item.permission
+        for item in context.membership.permissions
+    }
+
+    if all_permission.value in granted:
+        return "all"
+
+    if own_permission.value in granted:
+        return "own"
+
+    raise HTTPException(
+        status_code=403,
+        detail="financial read permission denied",
+    )

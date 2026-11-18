@@ -19,6 +19,11 @@ class Invoice(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     supplier: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     invoice_number: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     issue_date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)

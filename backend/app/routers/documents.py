@@ -20,6 +20,7 @@ from app.auth import require_session_csrf
 from app.bar_context import (
     BarContext, BarPermission, get_active_bar_context, revalidate_active_bar_context,
     require_bar_permission,
+    financial_read_scope,
 )
 from app.models import AuthSession
 from app.config import (
@@ -28,6 +29,7 @@ from app.config import (
     get_document_url, get_preview_url,
     ensure_upload_dirs
 )
+from app.permissions import DelegablePermission
 from app.models.document import Document
 from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
@@ -379,6 +381,7 @@ def create_bank_document(
     month: str,
     db: Session,
     bar_id: int,
+    created_by_user_id: int | None = None,
 ) -> tuple[Document, list[str]]:
     document_month = single_month_from_bank_csv(content) or month
     stored_filename = f"{uuid.uuid4()}.csv"
@@ -401,6 +404,7 @@ def create_bank_document(
         category, result = classify_document(original_filename)
         document = Document(
             bar_id=bar_id,
+            created_by_user_id=created_by_user_id,
             month=document_month,
             original_filename=original_filename,
             stored_filename=stored_filename,
@@ -699,6 +703,7 @@ async def upload_document(
 
         document = Document(
             bar_id=bar_id,
+            created_by_user_id=context.user.id,
             month=document_month,
             original_filename=file.filename,
             stored_filename=stored_filename,
@@ -785,7 +790,18 @@ def list_documents(
     context: BarContext = Depends(read_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    scope = financial_read_scope(
+        context,
+        DelegablePermission.DOCUMENTS_VIEW_OWN,
+        DelegablePermission.DOCUMENTS_VIEW_ALL,
+    )
+
     query = select(Document).where(Document.bar_id == context.bar.id)
+
+    if scope == "own":
+        query = query.where(
+            Document.created_by_user_id == context.user.id
+        )
 
     if month and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month) and int(month[:4]) > 0:
         year, month_number = map(int, month.split("-"))

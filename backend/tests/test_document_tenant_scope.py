@@ -11,7 +11,7 @@ from app import config
 from app.database import Base, get_db
 from app.models import (
     AuthSession, Bar, CashClosureIntake, DailyCashClosure, Document, Invoice, InvoiceStatus,
-    Payment, Transaction, User, UserBarMembership,
+    MembershipPermission, Payment, Transaction, User, UserBarMembership,
 )
 from app.routers import documents, finance
 from app.services.document_ocr import DocumentReadError
@@ -38,6 +38,31 @@ def document_environment(tmp_path, monkeypatch):
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False)
     ids = seed_bars(factory)
+
+    with factory() as db:
+        memberships = db.scalars(
+            select(UserBarMembership).where(
+                UserBarMembership.bar_id == ids["bar_one"],
+                UserBarMembership.user_id.in_(
+                    [ids["staff"], ids["manager"]]
+                ),
+            )
+        ).all()
+
+        grants = {
+            ids["staff"]: "documents.view_own",
+            ids["manager"]: "documents.view_all",
+        }
+
+        for membership in memberships:
+            db.add(
+                MembershipPermission(
+                    membership_id=membership.id,
+                    permission=grants[membership.user_id],
+                )
+            )
+        db.commit()
+
     app = importlib.import_module("app.main").app
 
     def override_db():

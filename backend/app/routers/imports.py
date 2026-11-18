@@ -166,6 +166,7 @@ def import_bank_csv(
                 month,
                 db,
                 context.bar.id,
+                created_by_user_id=current_context.user.id,
             )
             document_id = document.id
 

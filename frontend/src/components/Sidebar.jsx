@@ -36,7 +36,7 @@ function shiftMonth(month, delta) {
   return `${date.getFullYear()}-${nextMonth}`;
 }
 
-export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout }) {
+export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false }) {
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   const [selectedYear, selectedMonth] = month.split("-").map(Number);
@@ -60,6 +60,7 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
       <nav className="sidebar-nav">
         <div className="nav-label">Principale</div>
 
+        {canViewDashboard && (
         <NavLink
           to="/dashboard"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
@@ -67,6 +68,7 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
           <span className="nav-icon">📊</span>
           Dashboard
         </NavLink>
+        )}
 
         <NavLink
           to="/invoices"

@@ -20,6 +20,9 @@ def _bar_response(bar: Bar, membership: UserBarMembership) -> dict:
         "id": bar.id,
         "name": bar.name,
         "role": membership.role.value,
+        "permissions": sorted(
+            item.permission for item in membership.permissions
+        ),
     }
 
 

@@ -14,14 +14,16 @@ from app import config
 from app.bar_context import (
     BarContext,
     BarPermission,
+    financial_read_scope,
+    get_active_bar_context,
     revalidate_active_bar_context,
-    require_bar_permission,
 )
 from app.database import get_db
 from app.models import Document, Invoice
+from app.permissions import DelegablePermission
 
 router = APIRouter(prefix="/uploads", tags=["protected files"])
-read_context = require_bar_permission(BarPermission.READ_DOCUMENTS)
+
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 logger = logging.getLogger(__name__)
 
@@ -127,7 +129,7 @@ def read_upload(
     kind: str,
     filename: str,
     request: Request,
-    context: BarContext = Depends(read_context),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     if kind not in {"documents", "previews", "invoices"} or not safe_filename(filename):
@@ -135,7 +137,19 @@ def read_upload(
     context = revalidate_active_bar_context(
         request, db, context.bar.id, lock=True
     )
-    read_context(context)
+    scope = financial_read_scope(
+        context,
+        (
+            DelegablePermission.INVOICES_VIEW_OWN
+            if kind == "invoices"
+            else DelegablePermission.DOCUMENTS_VIEW_OWN
+        ),
+        (
+            DelegablePermission.INVOICES_VIEW_ALL
+            if kind == "invoices"
+            else DelegablePermission.DOCUMENTS_VIEW_ALL
+        ),
+    )
     url = f"/uploads/{kind}/{filename}"
 
     if kind == "invoices":
@@ -144,6 +158,11 @@ def read_upload(
             not invoices
             or any(invoice.bar_id != context.bar.id for invoice in invoices)
             or any(invoice_url(invoice) != url for invoice in invoices)
+        ):
+            raise HTTPException(status_code=404, detail="file not found")
+        if scope == "own" and any(
+            invoice.created_by_user_id != context.user.id
+            for invoice in invoices
         ):
             raise HTTPException(status_code=404, detail="file not found")
         directory = config.UPLOAD_INVOICES_DIR
@@ -167,6 +186,11 @@ def read_upload(
                 (url != file_url if kind == "documents" else url not in preview_url.split(","))
                 for file_url, preview_url in (document_urls(document) for document in referenced)
             )
+        ):
+            raise HTTPException(status_code=404, detail="file not found")
+        if scope == "own" and any(
+            document.created_by_user_id != context.user.id
+            for document in referenced
         ):
             raise HTTPException(status_code=404, detail="file not found")
         directory = config.UPLOAD_DOCUMENTS_DIR if kind == "documents" else config.UPLOAD_PREVIEWS_DIR

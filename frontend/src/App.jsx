@@ -170,6 +170,16 @@ async function responseJsonOrThrow(response) {
 
 export default function App({ bars, activeBar, onSelectBar, onLogout }) {
   const { fetch } = useTenantApi();
+
+  const financialPermissions = new Set(activeBar?.permissions ?? []);
+  const canViewDashboard =
+    activeBar?.role === "owner" ||
+    [
+      "analytics.view",
+      "revenue.view",
+      "costs.view",
+      "profit.view",
+    ].every((permission) => financialPermissions.has(permission));
   async function fetchJsonOrThrow(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Errore API (${response.status})`);
@@ -234,6 +244,7 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
   const [documentDeleteError, setDocumentDeleteError] = useState("");
 
   async function loadDashboardData(selectedMonth) {
+    if (!canViewDashboard) return;
     const [
       overviewData,
       invoicesData,
@@ -1624,6 +1635,7 @@ const overdueInvoicesAmount = useMemo(
     <BrowserRouter>
       <div className="dashboard-shell">
         <Sidebar
+          canViewDashboard={canViewDashboard}
           month={month}
           setMonth={setMonth}
           pendingInvoices={pendingInvoices.length}
@@ -1639,6 +1651,7 @@ const overdueInvoicesAmount = useMemo(
           <Route
             path="/dashboard"
             element={
+              canViewDashboard ? (
               <DashboardPage
                 month={month}
                 loading={loading}
@@ -1656,6 +1669,9 @@ const overdueInvoicesAmount = useMemo(
 previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 latestBankTransactionDate={overview?.latest_bank_transaction_date ?? null}
               />
+              ) : (
+                <Navigate to="/upload" replace />
+              )
             }
           />
 

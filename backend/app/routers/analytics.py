@@ -6,7 +6,12 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.bar_context import BarContext, get_active_bar_context
+from app.bar_context import (
+    BarContext,
+    get_active_bar_context,
+    require_financial_permissions,
+)
+from app.permissions import DelegablePermission
 from app.models import (
     DailyCashClosure,
     Invoice,
@@ -249,6 +254,11 @@ def top_products(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ):
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+    )
     return fetch_ranked_products(db, month, order="desc", bar_id=context.bar.id)
 
 
@@ -257,6 +267,11 @@ def bottom_products(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ):
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+    )
     return fetch_ranked_products(db, month, order="asc", bar_id=context.bar.id)
 
 
@@ -265,6 +280,13 @@ def pnl(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PROFIT_VIEW,
+    )
     start, end = parse_month(month)
     current = monthly_pnl(db, start, end, context.bar.id)
 
@@ -292,6 +314,13 @@ def pnl_trend(
     context: BarContext = Depends(analytics_context),
     db: Session = Depends(get_db),
 ) -> list[dict[str, float | str]]:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PROFIT_VIEW,
+    )
     if month:
         current_month_start, _ = parse_month(month)
     else:
@@ -327,6 +356,13 @@ def insights(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PROFIT_VIEW,
+    )
     start, end = parse_month(month)
     prev_start, prev_end = previous_month(start)
 
@@ -389,6 +425,13 @@ def pnl_ytd(
     year: str = Query(..., description="Year in YYYY format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PROFIT_VIEW,
+    )
     start, end = parse_year(year)
     ytd = monthly_pnl(db, start, end, context.bar.id)
 
@@ -425,6 +468,13 @@ def overview(
     context: BarContext = Depends(analytics_context),
     db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.REVENUE_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PROFIT_VIEW,
+    )
     selected_month = month or dt.date.today().strftime("%Y-%m")
     start, end = parse_month(selected_month)
     pnl_summary = monthly_pnl(db, start, end, context.bar.id)
@@ -507,6 +557,11 @@ def expenses_by_category(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.COSTS_VIEW,
+    )
     start, end = parse_month(month)
     rows = db.execute(completed_invoice_expenses_query(start, end, context.bar.id)).all()
     category_totals: dict[str, Decimal] = {}
@@ -533,6 +588,11 @@ def expenses_by_supplier(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.COSTS_VIEW,
+    )
     start, end = parse_month(month)
 
     rows = []
@@ -552,6 +612,12 @@ def expenses_by_supplier(
 def invoices_summary(
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.COSTS_VIEW,
+        DelegablePermission.PAYMENTS_VIEW,
+    )
     total_invoices = db.scalar(
         select(func.count(Invoice.id)).where(Invoice.bar_id == context.bar.id)
     ) or 0
@@ -594,6 +660,11 @@ def payments_by_method(
     month: str = Query(..., description="Month in YYYY-MM format"),
     context: BarContext = Depends(analytics_context), db: Session = Depends(get_db),
 ) -> dict:
+    require_financial_permissions(
+        context,
+        DelegablePermission.ANALYTICS_VIEW,
+        DelegablePermission.PAYMENTS_VIEW,
+    )
     start, end = parse_month(month)
     rows = db.execute(
         select(Payment.method.label("method"), func.coalesce(func.sum(Payment.amount), 0).label("total_amount"))

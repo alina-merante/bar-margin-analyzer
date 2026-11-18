@@ -626,3 +626,134 @@ di staff e manager.
 La disponibilità della fotocamera fisica e il risultato della
 compressione su uno specifico tablet richiedono una prova
 sul dispositivo reale.
+
+### API amministrativa: permessi granulari
+
+L'API amministrativa restituisce `permissions` nelle risposte
+relative alle membership.
+
+Un amministratore globale può assegnare o revocare i permessi
+delegabili mediante:
+
+`PUT /admin/bars/{bar_id}/memberships/{user_id}/permissions`
+
+Esempio di corpo JSON:
+
+`{"permissions": ["revenue.view", "costs.view"]}`
+
+Un elenco vuoto revoca tutti i permessi delegati.
+Le modifiche vengono registrate nell'audit amministrativo.
+Non è possibile modificare i permessi del proprietario.
+
+Nota: la configurazione dei permessi non costituisce ancora
+protezione delle API operative. L'applicazione delle autorizzazioni
+e l'adeguamento del frontend saranno completati nei passaggi
+successivi.
+
+
+### Protezione delle API analytics
+
+Gli 11 endpoint `/analytics` richiedono autorizzazioni granulari
+per gli utenti non proprietari del bar.
+
+I permessi vengono verificati sul backend prima di elaborare i dati.
+Il permesso `analytics.view` non autorizza automaticamente
+la visualizzazione di fatturato, costi, pagamenti o profitti.
+
+Il proprietario conserva l'accesso completo ai dati del proprio bar.
+Le approvazioni delle chiusure di cassa restano separate
+dai permessi di visualizzazione finanziaria.
+
+La protezione delle altre API finanziarie e l'adeguamento
+della dashboard per gli utenti con accesso limitato
+devono ancora essere completati.
+
+I test in `backend/tests/test_financial_permissions.py`
+verificano la logica dei permessi e la presenza dei controlli
+negli endpoint; non sostituiscono i test HTTP di integrazione.
+
+
+### Permessi nel contesto del bar
+
+Le risposte di `/auth/bars` e `/auth/active-bar` includono
+il campo `permissions`, contenente i permessi delegati
+all'utente per il bar selezionato.
+
+La lettura di `/api/payments` richiede `payments.view`
+per gli utenti non proprietari.
+
+Il frontend e gli altri endpoint finanziari devono
+ancora essere adeguati.
+
+
+### Dashboard e permessi frontend
+
+La dashboard completa è visibile ai proprietari e agli utenti
+che possiedono contemporaneamente `analytics.view`,
+`revenue.view`, `costs.view` e `profit.view`.
+
+Per gli altri utenti, la route `/dashboard` reindirizza
+a `/upload` e il caricamento dei dati della dashboard
+viene saltato.
+
+Questa è una prima protezione dell'interfaccia.
+Restano da implementare la visualizzazione parziale
+dei dati, i controlli sulle fatture e i test end-to-end.
+
+
+### Tracciabilità autore fatture e documenti
+
+La migrazione Alembic `20261118_0016` introduce il campo
+`created_by_user_id` nelle tabelle `invoices` e `documents`.
+
+- Il campo è facoltativo per mantenere compatibili i record storici.
+- Le nuove fatture manuali e OCR registrano l'utente autenticato.
+- I nuovi documenti caricati registrano l'utente autenticato.
+- Le importazioni bancarie CSV registrano l'utente autenticato.
+- L'eliminazione dell'utente imposta il riferimento a NULL,
+  senza eliminare automaticamente fatture o documenti.
+- I record storici senza autore non devono essere attribuiti
+  automaticamente a un dipendente.
+- La migrazione deve essere verificata esclusivamente su un
+  database di test prima di qualsiasi applicazione altrove.
+
+**Stato:** modelli e percorsi di creazione aggiornati.
+Migrazione non ancora applicata; autorizzazioni di lettura
+`view_own` e `view_all` ancora da completare.
+
+
+### Permessi granulari di lettura
+
+Gli endpoint `GET /invoices` e `GET /documents`
+applicano i permessi granulari di lettura.
+
+- `view_all`: tutti i record del bar autorizzato.
+- `view_own`: solo record con `created_by_user_id`
+  corrispondente all'utente autenticato.
+- Senza permesso: HTTP 403.
+- Proprietario e amministratrice globale autorizzata:
+  accesso completo.
+- I record storici privi di autore non sono visibili
+  tramite `view_own`.
+- I dettagli dei pagamenti delle fatture richiedono
+  anche `payments.view`.
+
+La migrazione `20261118_0016` deve essere applicata
+esclusivamente al database di test prima dei test
+di integrazione che utilizzano le nuove colonne.
+
+
+### Protezione download granulari
+
+L'endpoint `/uploads/{kind}/{filename}` verifica i permessi
+granulari prima di restituire fatture, documenti e anteprime.
+
+- Fatture: `invoices.view_own` oppure `invoices.view_all`.
+- Documenti e anteprime: `documents.view_own` oppure
+  `documents.view_all`.
+- Con `view_own`, tutti i record associati al file devono
+  appartenere all'utente autenticato.
+- Restano obbligatori i controlli sul bar attivo, sulla
+  validità dei riferimenti e sulla sicurezza del filesystem.
+- I record storici senza autore non sono accessibili
+  tramite `view_own`.

@@ -252,6 +252,7 @@ def test_user_can_select_multiple_bars_with_different_roles(context_environment)
         "id": ids["bar_one"],
         "name": "Bar Uno",
         "role": "owner",
+        "permissions": [],
     }
     assert client.get("/auth/active-bar").json()["id"] == ids["bar_one"]
 
