@@ -123,6 +123,9 @@ def main():
         )
         print("Login e selezione del bar CI: PASS", flush=True)
 
+        # Required by tenant-scoped endpoints after selecting the active bar.
+        opener.addheaders = [("X-Expected-Bar-ID", str(bar_id))]
+
         for round_number in range(1, 4):
             for path in PATHS:
                 request(opener, path)
