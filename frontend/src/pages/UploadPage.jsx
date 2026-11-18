@@ -1,3 +1,4 @@
+import { isOversizedNonImage } from "../documentUploadRules.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -17,6 +18,7 @@ import {
   CASH_REVIEW_LABELS,
   cashClosureWarnings,
   createCashClosureReviewForm,
+  hasMissingCashClosureRequiredFields,
   validateCashClosurePayments,
 } from "../cashClosureReview.js";
 
@@ -488,6 +490,18 @@ export function CashClosureReviewCard({
         <p>Totale scontrini rilevato: {review.receipts_total} € (non è il totale complessivo).</p>
       ) : null}
 
+      {hasMissingCashClosureRequiredFields(form) ? (
+        <div className="cash-review-anomalies" role="status">
+          <strong>Dati della chiusura incompleti</strong>
+          <p>
+            Controlla il documento originale e completa data, numero della chiusura
+            e totale complessivo prima dell'approvazione.
+            Un campo vuoto non equivale a 0,00 €.
+            Non ricavare automaticamente il totale dagli scontrini.
+          </p>
+        </div>
+      ) : null}
+
       <fieldset className="cash-review-fields" disabled={busy || !!preview}>
         <label>
           Data
@@ -627,14 +641,16 @@ export function CashClosureReviewCard({
         {!review.can_approve ? (
           <p className="cash-review-hint">L'approvazione è riservata al proprietario del bar o all'amministratore globale.</p>
         ) : null}
-        <button
-          type="button"
-          className="cash-review-reject"
-          disabled={busy || !!preview || changedExternally}
-          onClick={() => submit("reject")}
-        >
-          Rifiuta
-        </button>
+        {review.can_approve ? (
+          <button
+            type="button"
+            className="cash-review-reject"
+            disabled={busy || !!preview || changedExternally}
+            onClick={() => submit("reject")}
+          >
+            Rifiuta
+          </button>
+        ) : null}
       </div>
     </article>
   );
@@ -868,7 +884,7 @@ async function confirmDeleteDocument() {
   setOtherUploadError("");
   clearDocumentMessages?.();
 
-  if (file.size > 20 * 1024 * 1024) {
+  if (isOversizedNonImage(file)) {
     setCashUploadError(
       `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Va compresso prima di caricarlo.`
     );
@@ -886,7 +902,7 @@ async function handleOtherDocument(file) {
   setOtherUploadError("");
   clearDocumentMessages?.();
 
-  if (file.size > 20 * 1024 * 1024) {
+  if (isOversizedNonImage(file)) {
     setOtherUploadError(
       `Il PDF è troppo grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Va compresso prima di caricarlo.`
     );

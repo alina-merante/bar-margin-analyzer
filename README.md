@@ -578,3 +578,51 @@ con una sessione autenticata.
 Lo script è riservato a GitHub Actions e verifica il nome e l'host del
 database prima di creare dati temporanei. Non utilizza credenziali o
 database dell'ambiente PWA.
+
+### Avvisi per chiusure di cassa incomplete
+
+Nella schermata di revisione OCR, BarManager mostra un avviso
+riepilogativo quando mancano uno o più campi obbligatori:
+data, numero della chiusura o totale complessivo.
+
+L'avviso si aggiorna durante la compilazione e scompare quando
+tutti i campi obbligatori sono valorizzati.
+
+Un campo vuoto rappresenta un dato non noto ed è distinto da
+un valore esplicito pari a zero. Il totale complessivo non viene
+ricavato automaticamente dal totale degli scontrini.
+
+La modifica riguarda esclusivamente l'interfaccia e non altera
+i dati OCR salvati, i controlli del backend o le autorizzazioni
+di approvazione.
+
+Test dedicati:
+`node --test frontend/tests/cashClosureIncomplete.test.js`
+
+
+### Permessi di rifiuto delle chiusure OCR
+
+Le chiusure in attesa possono essere revisionate e corrette da utenti con
+permesso `REVIEW_OCR`. L'approvazione e il rifiuto definitivo sono invece
+riservati al proprietario del bar o all'amministratore globale.
+Il backend applica il controllo a entrambe le operazioni; il frontend
+mostra il pulsante Rifiuta soltanto agli utenti autorizzati.
+Sono previsti test di regressione per il blocco del rifiuto da parte
+di staff e manager.
+
+### Caricamento fotografie da tablet
+
+- Le immagini fino a 20 MB vengono caricate normalmente.
+- Le immagini superiori a 20 MB vengono inviate alla funzione
+  di compressione automatica prima del caricamento.
+- La compressione utilizza un obiettivo di 5 MB e una dimensione
+  massima di 2000 pixel per lato.
+- Se la compressione fallisce, viene mostrato un messaggio
+  comprensibile e il caricamento viene interrotto.
+- I PDF superiori a 20 MB vengono rifiutati con un messaggio
+  che richiede di ridurne la dimensione.
+- Le regole di caricamento sono coperte da test automatici.
+
+La disponibilità della fotocamera fisica e il risultato della
+compressione su uno specifico tablet richiedono una prova
+sul dispositivo reale.

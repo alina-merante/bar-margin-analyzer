@@ -125,6 +125,10 @@ export async function reprocessCashClosure(fetch, intakeId, preview, refresh) {
   return payload;
 }
 
+export function hasMissingCashClosureRequiredFields(form) {
+  return !form.date || !form.closure_number.trim() || form.total_amount === "";
+}
+
 export function createCashClosureReviewForm(review) {
   return {
     date: review.date || "",

@@ -517,3 +517,28 @@ def test_upload_without_closure_evidence_is_rejected_without_persistence(
     assert error.value.status_code == 422
     assert review_session.scalars(select(CashClosureIntake)).all() == []
     assert review_session.scalars(select(Document)).all() == []
+
+
+@pytest.mark.parametrize("role_name", ["staff", "manager"])
+def test_non_owner_cannot_reject_cash_closure(review_session, role_name):
+    from types import SimpleNamespace
+    from app.bar_context import MembershipRole
+
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+    context = SimpleNamespace(
+        role=MembershipRole(role_name),
+        user=SimpleNamespace(is_global_admin=False),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        cash_closures.reject_cash_closure_review(
+            intake.id,
+            _auth_session=None,
+            context=context,
+            db=review_session,
+        )
+
+    assert error.value.status_code == 403
+    review_session.expire_all()
+    assert review_session.get(CashClosureIntake, intake.id).status == "pending"

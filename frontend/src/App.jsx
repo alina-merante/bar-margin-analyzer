@@ -1,3 +1,4 @@
+import { needsImageCompression } from "./documentUploadRules.js";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
@@ -1440,12 +1441,22 @@ async function handleGenericDocumentUpload(file, section = "other") {
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
     if (file.size > maxSizeBytes) {
-      if (file.type.startsWith("image/")) {
-        fileToUpload = await imageCompression(file, {
-          maxSizeMB: 5,
-          maxWidthOrHeight: 2000,
-          useWebWorker: true,
-        });
+      if (needsImageCompression(file)) {
+        try {
+          fileToUpload = await imageCompression(file, {
+            maxSizeMB: 5,
+            maxWidthOrHeight: 2000,
+            useWebWorker: true,
+          });
+        } catch (compressionError) {
+          console.error("Compressione fotografia non riuscita:", compressionError);
+          setDocumentUploadError({
+            variant: "error",
+            title: "Fotografia non comprimibile",
+            message: "Impossibile comprimere la fotografia. Prova a scattarla nuovamente oppure seleziona un'immagine più piccola.",
+          });
+          return false;
+        }
       } else {
         setDocumentUploadError({
           variant: "error",
