@@ -20,6 +20,7 @@ from app.auth import require_session_csrf
 from app.bar_context import (
     BarContext, BarPermission, get_active_bar_context, revalidate_active_bar_context,
     require_bar_permission,
+    require_financial_permissions,
     financial_read_scope,
 )
 from app.models import AuthSession
@@ -549,13 +550,36 @@ def extract_daily_cash_closure(content: bytes, extension: str) -> dict:
     return extraction.to_result()
 
 
+def check_document_upload_permission(
+    context: BarContext, section: str
+) -> None:
+    if section not in {"cash", "cash_closure", "bank", "other"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Sezione documento non valida.",
+        )
+
+    permission = (
+        DelegablePermission.CASH_CLOSURES_UPLOAD
+        if section in {"cash", "cash_closure"}
+        else DelegablePermission.DOCUMENTS_UPLOAD
+    )
+    require_financial_permissions(context, permission)
+
+
 def revalidate_upload_context(
-    request: Request, db: Session, bar_id: int, *, lock: bool = False
+    request: Request,
+    db: Session,
+    bar_id: int,
+    section: str,
+    *,
+    lock: bool = False,
 ) -> None:
     current_context = revalidate_active_bar_context(
         request, db, bar_id, lock=lock
     )
     upload_context(current_context)
+    check_document_upload_permission(current_context, section)
 
 
 @router.post("/upload")
@@ -570,6 +594,7 @@ async def upload_document(
 ) -> dict:
     if "bar_id" in await request.form():
         raise HTTPException(status_code=422, detail="bar_id must not be supplied")
+    check_document_upload_permission(context, section)
     if not file.filename:
         raise HTTPException(status_code=400, detail="file is required")
 
@@ -616,7 +641,7 @@ async def upload_document(
                     "una chiusura di cassa."
                 ),
             )
-        revalidate_upload_context(request, db, bar_id)
+        revalidate_upload_context(request, db, bar_id, section)
         existing_intake = db.scalar(
             select(CashClosureIntake).where(
                 CashClosureIntake.bar_id == bar_id,
@@ -624,7 +649,7 @@ async def upload_document(
             )
         )
         if existing_intake is not None:
-            revalidate_upload_context(request, db, bar_id, lock=True)
+            revalidate_upload_context(request, db, bar_id, section, lock=True)
             if restore_missing_cash_document(
                 db,
                 bar_id=bar_id,
@@ -661,7 +686,7 @@ async def upload_document(
                 )
             )
 
-    revalidate_upload_context(request, db, bar_id)
+    revalidate_upload_context(request, db, bar_id, section)
 
     ensure_upload_dirs()
 
@@ -739,7 +764,7 @@ async def upload_document(
             )
 
         db.flush()
-        revalidate_upload_context(request, db, bar_id, lock=True)
+        revalidate_upload_context(request, db, bar_id, section, lock=True)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -963,6 +988,15 @@ def delete_document(
             CashClosureIntake.bar_id == context.bar.id,
         )
     ).all()
+    if any(intake.status == "approved" for intake in intakes):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Il documento è collegato a una chiusura approvata "
+                "e non può essere eliminato definitivamente."
+            ),
+        )
+
     for intake in intakes:
         db.delete(intake)
 

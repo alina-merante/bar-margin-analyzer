@@ -243,6 +243,17 @@ def require_manager_or_owner(
     return context
 
 
+def require_delegable_permission(permission: DelegablePermission):
+    """Require one explicitly assigned granular permission."""
+    def dependency(
+        context: BarContext = Depends(get_active_bar_context),
+    ) -> BarContext:
+        require_financial_permissions(context, permission)
+        return context
+
+    return dependency
+
+
 def require_financial_permissions(
     context: BarContext,
     *permissions: DelegablePermission,

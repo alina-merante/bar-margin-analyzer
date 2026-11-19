@@ -45,12 +45,49 @@ function renderBanner(props) {
 
 function renderUploadPage(props) {
   return renderToStaticMarkup(
-    createElement(MemoryRouter, null, createElement(UploadPage, { month: "2026-10", ...props }))
+    createElement(MemoryRouter, null, createElement(UploadPage, {
+      month: "2026-10",
+      activeBarPermissions: [
+        "cash_closures.view_all",
+        "cash_closures.upload",
+        "invoices.upload",
+        "documents.upload",
+      ],
+      ...props,
+    }))
   );
 }
 
+test("employee without cash closure read permission cannot see reviews", () => {
+  const html = renderUploadPage({
+    activeBarPermissions: [],
+    cashClosureReviews: [{
+      id: 1,
+      date: "2026-11-19",
+      closure_number: "10",
+    }],
+  });
+
+  assert.doesNotMatch(html, /Chiusure da verificare/);
+  assert.doesNotMatch(html, /cash-review-list/);
+});
+
+test("employee with cash_closures.view_own can see reviews", () => {
+  const html = renderUploadPage({
+    activeBarPermissions: ["cash_closures.view_own"],
+    cashClosureReviews: [],
+  });
+
+  assert.match(html, /Chiusure da verificare/);
+});
+
 test("cash and invoice camera controls remain separate from file upload", () => {
-  const upload = renderUploadPage({});
+  const upload = renderUploadPage({
+    activeBarPermissions: [
+      "cash_closures.upload",
+      "invoices.upload",
+    ],
+  });
   assert.match(upload, /aria-label="Scatta foto chiusura di cassa"/);
   assert.match(upload, /aria-label="Scatta foto fattura"/);
   assert.equal((upload.match(/accept="image\/\*" capture="environment"/g) || []).length, 2);
@@ -210,6 +247,9 @@ test("review displays the receipt subtotal and count without presenting it as th
   const html = renderUploadPage({
     cashClosureReviews: [{
       id: 1,
+      can_edit: true,
+      can_verify: true,
+      verification: null,
       date: "2023-09-26",
       closure_number: null,
       total_amount: null,

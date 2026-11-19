@@ -757,3 +757,135 @@ granulari prima di restituire fatture, documenti e anteprime.
   validità dei riferimenti e sulla sicurezza del filesystem.
 - I record storici senza autore non sono accessibili
   tramite `view_own`.
+
+
+### Permessi granulari per la revisione delle chiusure
+
+Nel branch `feature/granular-permissions` sono stati introdotti
+controlli granulari per le operazioni sulle chiusure di cassa.
+
+- `cash_closures.review`: accesso alla revisione OCR.
+- `cash_closures.edit`: correzione dei valori e rielaborazione OCR.
+- Approvazione e rifiuto definitivi: riservati al proprietario
+  del bar e all'amministratore globale.
+
+La separazione dei permessi di visualizzazione `view_own` e
+`view_all`, la verifica completata e i relativi test di
+autorizzazione sono ancora da implementare.
+
+Le modifiche non richiedono migrazioni del database.
+
+- `cash_closures.view_own`: visualizzazione delle chiusure caricate personalmente.
+- `cash_closures.view_all`: visualizzazione delle chiusure di tutto il bar.
+- L'elenco e il dettaglio applicano i permessi di lettura nel backend.
+
+- Le operazioni di correzione e rielaborazione OCR verificano anche l'accesso alla singola chiusura secondo i permessi `view_own` e `view_all`.
+
+
+### Verifica completata delle chiusure OCR
+
+Endpoint `POST /cash-closures/review/{intake_id}/verify`:
+registra in `ocr_values.verification` l'identificativo
+dell'utente verificatore e la data/ora UTC.
+
+Richiede `cash_closures.review` e il permesso di lettura
+della specifica chiusura. Non approva la chiusura:
+lo stato resta `pending`.
+
+Da completare prima dell'utilizzo operativo:
+invalidazione della verifica dopo correzioni o rielaborazioni,
+test delle transizioni, interfaccia e regole di approvazione.
+
+- Una correzione dei valori o una rielaborazione OCR annulla la verifica precedente: occorre verificare nuovamente la chiusura prima dell'approvazione.
+
+- L'approvazione di una chiusura `pending` richiede una verifica valida registrata in `ocr_values.verification`. L'approvazione rimane riservata al proprietario e all'amministratore globale.
+
+
+### Test di sicurezza verifica chiusure
+
+I test backend verificano registrazione dell'utente e della data,
+rifiuto delle verifiche duplicate, invalidazione dopo correzioni,
+obbligatorietà dei campi e divieto di approvazione per lo staff.
+
+
+### Controlli aggiuntivi OCR e approvazione
+
+Sono stati aggiunti controlli di regressione per la sostituzione
+dei metadati OCR e per il divieto di approvazione da parte dello staff.
+L'approvazione resta riservata al proprietario e all'amministratore globale.
+
+
+### Verifica endpoint HTTP chiusure
+
+Sono presenti test per verificare che l'endpoint POST
+`/cash-closures/review/{intake_id}/verify` sia registrato
+e che una richiesta priva di autenticazione venga rifiutata.
+
+
+### Sicurezza rielaborazione OCR
+
+Dopo la rivalidazione dei permessi, gli endpoint di anteprima
+e conferma OCR ricontrollano l'accesso alla specifica chiusura.
+
+La conferma OCR invalida sempre la verifica precedente,
+anche se i metadati estratti contengono il campo `verification`.
+
+L'approvazione rimane riservata al proprietario del bar
+o all'amministratore globale e richiede una verifica valida.
+
+
+### Verifica e permessi delle chiusure nel frontend
+
+La scheda di revisione espone i permessi `can_edit` e `can_verify`
+restituiti dal backend. I campi sono di sola lettura senza permesso
+di modifica; correzione e rielaborazione OCR sono riservate agli
+utenti autorizzati.
+
+Il pulsante "Verifica completata" invoca l'endpoint di verifica.
+L'approvazione resta riservata al proprietario del bar o
+all'amministratore globale e richiede una verifica precedente.
+
+I controlli frontend non sostituiscono quelli applicati dal backend.
+
+
+### Autorizzazioni granulari per il caricamento documenti
+
+L'endpoint `POST /documents/upload` richiede il permesso
+generale di ruolo `UPLOAD_DOCUMENTS` e il permesso
+granulare relativo alla sezione:
+
+- `cash` e `cash_closure`: `cash_closures.upload`
+- `bank` e `other`: `documents.upload`
+
+Le sezioni non riconosciute vengono rifiutate.
+I permessi sono ricontrollati durante l'elaborazione,
+anche dopo la rivalidazione del contesto utente.
+
+L'approvazione e il rifiuto delle chiusure restano
+riservati al proprietario e all'amministratrice globale.
+
+
+### Eliminazione fatture con permessi granulari
+
+L'endpoint `DELETE /invoices/delete/{invoice_id}` richiede
+il permesso delegabile `invoices.delete`.
+
+Il proprietario del bar e l'amministratore globale sono
+autorizzati automaticamente. Manager e staff devono ricevere
+esplicitamente il permesso.
+
+L'eliminazione è limitata alle fatture del bar attivo.
+Le fatture con pagamenti riconciliati non possono essere eliminate.
+
+Test HTTP: `backend/tests/test_invoice_delete_permissions.py`.
+
+
+### Protezione documenti di chiusure approvate
+
+L'eliminazione di un documento collegato a una
+`CashClosureIntake` con stato `approved` è bloccata
+con HTTP 409.
+
+La chiusura approvata e il documento originale devono
+essere conservati. L'annullamento tracciato sarà
+implementato separatamente.

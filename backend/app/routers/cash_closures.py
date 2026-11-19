@@ -16,6 +16,10 @@ from app import config
 from app.bar_context import (
     BarContext, BarPermission, require_bar_permission, revalidate_active_bar_context,
 )
+from app.bar_context import (
+    get_active_bar_context,
+    financial_read_scope,
+)
 from app.database import get_db
 from app.models import AuthSession, MembershipRole
 from app.models.cash_closure_intake import CashClosureIntake
@@ -25,8 +29,21 @@ from app.routers import documents
 from app.routers.upload_files import document_urls, open_upload_file
 from app.services import cash_closure_policy, document_ocr
 
+from app.bar_context import (
+    require_delegable_permission,
+    financial_read_scope,
+    require_financial_permissions,
+)
+from app.permissions import DelegablePermission
+
 router = APIRouter(prefix="/cash-closures", tags=["cash-closures"])
-review_context = require_bar_permission(BarPermission.REVIEW_OCR)
+review_context = require_delegable_permission(
+    DelegablePermission.CASH_CLOSURES_REVIEW
+)
+
+edit_context = require_delegable_permission(
+    DelegablePermission.CASH_CLOSURES_EDIT
+)
 
 
 class CashClosureCorrection(BaseModel):
@@ -51,6 +68,16 @@ def can_approve(context: BarContext) -> bool:
     return context.role == MembershipRole.owner or context.user.is_global_admin
 
 
+def can_use_closure_permission(context: BarContext, permission: DelegablePermission) -> bool:
+    try:
+        require_financial_permissions(context, permission)
+        return True
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return False
+        raise
+
+
 def intake_to_dict(intake: CashClosureIntake, context: BarContext | None = None) -> dict:
     document = intake.document
     file_url, preview_url = document_urls(document)
@@ -63,7 +90,14 @@ def intake_to_dict(intake: CashClosureIntake, context: BarContext | None = None)
         "id": intake.id,
         "status": intake.status,
         "can_approve": can_approve(context) if context else False,
+        "can_edit": can_use_closure_permission(
+            context, DelegablePermission.CASH_CLOSURES_EDIT
+        ) if context else False,
+        "can_verify": can_use_closure_permission(
+            context, DelegablePermission.CASH_CLOSURES_REVIEW
+        ) if context else False,
         "classification": intake.classification,
+        "verification": (intake.ocr_values or {}).get("verification"),
         "date": intake.date.isoformat() if intake.date else None,
         "closure_number": intake.closure_number,
         "total_amount": str(intake.total_amount) if intake.total_amount is not None else None,
@@ -169,10 +203,33 @@ def validate_payment_breakdown(
         )
 
 
+
+def cash_closure_read_scope(context: BarContext) -> str:
+    return financial_read_scope(
+        context,
+        DelegablePermission.CASH_CLOSURES_VIEW_OWN,
+        DelegablePermission.CASH_CLOSURES_VIEW_ALL,
+    )
+
+
+def check_cash_closure_read_access(
+    context: BarContext,
+    intake: CashClosureIntake,
+) -> None:
+    if (
+        cash_closure_read_scope(context) == "own"
+        and intake.document.created_by_user_id != context.user.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Chiusura da verificare non trovata.",
+        )
+
+
 @router.get("/review")
 def list_cash_closure_reviews(
     month: str | None = Query(default=None, description="Closure month in YYYY-MM format"),
-    context: BarContext = Depends(review_context),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     query = (
@@ -194,6 +251,9 @@ def list_cash_closure_reviews(
             ),
         )
     )
+    if cash_closure_read_scope(context) == "own":
+        query = query.where(Document.created_by_user_id == context.user.id)
+
     if month:
         if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month):
             raise HTTPException(status_code=422, detail="Il mese deve avere il formato AAAA-MM.")
@@ -210,7 +270,7 @@ def list_cash_closure_reviews(
 @router.get("/review/{intake_id}")
 def get_cash_closure_review(
     intake_id: int,
-    context: BarContext = Depends(review_context),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> dict:
     intake = get_intake_for_bar(
@@ -219,6 +279,7 @@ def get_cash_closure_review(
         context.bar.id,
         pending_only=True,
     )
+    check_cash_closure_read_access(context, intake)
     return intake_to_dict(intake, context)
 
 
@@ -227,7 +288,7 @@ def correct_cash_closure_review(
     intake_id: int,
     payload: CashClosureCorrection,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(review_context),
+    context: BarContext = Depends(edit_context),
     db: Session = Depends(get_db),
 ) -> dict:
     intake = get_intake_for_bar(
@@ -237,7 +298,12 @@ def correct_cash_closure_review(
         pending_only=True,
         lock=True,
     )
+    check_cash_closure_read_access(context, intake)
     corrections = payload.model_dump(exclude_unset=True)
+    if corrections and (intake.ocr_values or {}).get("verification"):
+        values = dict(intake.ocr_values)
+        values.pop("verification", None)
+        intake.ocr_values = values
     for field, value in corrections.items():
         if field == "receipts_count":
             intake.ocr_values = {**intake.ocr_values, "review_receipts_count": value}
@@ -335,15 +401,17 @@ def preview_cash_closure_reprocess(
     intake_id: int,
     request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(review_context),
+    context: BarContext = Depends(edit_context),
     db: Session = Depends(get_db),
 ) -> dict:
     intake = get_intake_for_bar(db, intake_id, context.bar.id, pending_only=True)
+    check_cash_closure_read_access(context, intake)
     initial_version = review_version(intake)
     extracted = extract_original(intake)
     refreshed_context = revalidate_active_bar_context(request, db, context.bar.id)
-    review_context(refreshed_context)
+    edit_context(refreshed_context)
     intake = get_intake_for_bar(db, intake_id, context.bar.id, pending_only=True)
+    check_cash_closure_read_access(refreshed_context, intake)
     if review_version(intake) != initial_version:
         raise HTTPException(status_code=409, detail="La scheda è cambiata. Ripeti la rielaborazione.")
     return {
@@ -360,20 +428,22 @@ def confirm_cash_closure_reprocess(
     payload: ReprocessConfirmation,
     request: Request,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(review_context),
+    context: BarContext = Depends(edit_context),
     db: Session = Depends(get_db),
 ) -> dict:
     intake = get_intake_for_bar(db, intake_id, context.bar.id, pending_only=True)
+    check_cash_closure_read_access(context, intake)
     if review_version(intake) != payload.review_version:
         raise HTTPException(status_code=409, detail="La scheda è cambiata. Ripeti la rielaborazione.")
     extracted = extract_original(intake)
     if version_of(extracted) != payload.extraction_version:
         raise HTTPException(status_code=409, detail="Il risultato OCR è cambiato. Ripeti la rielaborazione.")
     refreshed_context = revalidate_active_bar_context(request, db, context.bar.id, lock=True)
-    review_context(refreshed_context)
+    edit_context(refreshed_context)
     intake = get_intake_for_bar(
         db, intake_id, context.bar.id, pending_only=True, lock=True
     )
+    check_cash_closure_read_access(refreshed_context, intake)
     if review_version(intake) != payload.review_version:
         raise HTTPException(status_code=409, detail="La scheda è cambiata. Ripeti la rielaborazione.")
 
@@ -386,6 +456,7 @@ def confirm_cash_closure_reprocess(
             )
 
     previous_ocr = dict(intake.ocr_values)
+    previous_ocr.pop("verification", None)
     history = list(previous_ocr.pop("reprocessing_history", []))
     history.append({
         "at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -396,7 +467,12 @@ def confirm_cash_closure_reprocess(
     })
     for field in REPROCESS_FIELDS[:5]:
         setattr(intake, field, extracted.get(field))
-    intake.ocr_values = {**documents.json_safe(extracted), "reprocessing_history": history}
+    new_ocr = dict(documents.json_safe(extracted))
+    new_ocr.pop("verification", None)
+    intake.ocr_values = {
+        **new_ocr,
+        "reprocessing_history": history,
+    }
     intake.anomalies = list((extracted.get("diagnostics") or {}).get("anomalies") or [])
     intake.classification = cash_closure_policy.SAVE_FOR_REVIEW
     try:
@@ -409,6 +485,49 @@ def confirm_cash_closure_reprocess(
             status_code=409,
             detail="Una chiusura con la stessa data e lo stesso numero è già presente.",
         ) from exc
+    db.refresh(intake)
+    return intake_to_dict(intake, context)
+
+
+@router.post("/review/{intake_id}/verify")
+def verify_cash_closure_review(
+    intake_id: int,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(review_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    intake = get_intake_for_bar(
+        db, intake_id, context.bar.id,
+        pending_only=True, lock=True,
+    )
+    check_cash_closure_read_access(context, intake)
+
+    if intake.date is None or not intake.closure_number or intake.total_amount is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Completa data, numero e totale prima della verifica.",
+        )
+
+    validate_money("total_amount", intake.total_amount)
+    validate_money("cash_amount", intake.cash_amount)
+    validate_money("card_amount", intake.card_amount)
+    validate_payment_breakdown(
+        intake.total_amount, intake.cash_amount, intake.card_amount
+    )
+
+    values = dict(intake.ocr_values or {})
+    if values.get("verification"):
+        raise HTTPException(
+            status_code=409,
+            detail="Chiusura già verificata.",
+        )
+
+    values["verification"] = {
+        "user_id": _auth_session.user_id,
+        "verified_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    intake.ocr_values = values
+    db.commit()
     db.refresh(intake)
     return intake_to_dict(intake, context)
 
@@ -430,6 +549,11 @@ def approve_cash_closure_review(
         return intake_to_dict(intake, context)
     if intake.status != "pending":
         raise HTTPException(status_code=409, detail="La chiusura non è più in attesa di revisione.")
+    if not (intake.ocr_values or {}).get("verification"):
+        raise HTTPException(
+            status_code=409,
+            detail="La chiusura deve essere verificata prima dell'approvazione.",
+        )
     if intake.date is None or not intake.closure_number or intake.total_amount is None:
         raise HTTPException(
             status_code=422,

@@ -57,12 +57,21 @@ export function createLatestDocumentLoader(fetchJson, onSuccess, onError) {
     invalidate() {
       generation += 1;
     },
-    async load(month) {
+    async load(month, options = {}) {
       const current = ++generation;
+      const {
+        includeDocuments = true,
+        includeReviews = true,
+      } = options;
+
       try {
         const [documents, reviews] = await Promise.all([
-          fetchJson(`/api/documents?month=${month}`),
-          fetchJson("/api/cash-closures/review"),
+          includeDocuments
+            ? fetchJson(`/api/documents?month=${month}`)
+            : [],
+          includeReviews
+            ? fetchJson("/api/cash-closures/review")
+            : [],
         ]);
         if (current === generation) onSuccess(documents, reviews, month);
       } catch (error) {

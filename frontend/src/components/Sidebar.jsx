@@ -36,7 +36,7 @@ function shiftMonth(month, delta) {
   return `${date.getFullYear()}-${nextMonth}`;
 }
 
-export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false }) {
+export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false, canViewInvoices = false, canAccessUpload = false }) {
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   const [selectedYear, selectedMonth] = month.split("-").map(Number);
@@ -70,7 +70,7 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
         </NavLink>
         )}
 
-        <NavLink
+        {canViewInvoices && <NavLink
           to="/invoices"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
         >
@@ -80,17 +80,17 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
           {pendingInvoices > 0 && (
             <span className="nav-badge">{pendingInvoices}</span>
           )}
-        </NavLink>
+        </NavLink>}
 
-        <div className="nav-label">Documenti</div>
+        {canAccessUpload && <div className="nav-label">Documenti</div>}
 
-        <NavLink
+        {canAccessUpload && <NavLink
           to="/upload"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
         >
           <span className="nav-icon">⬆️</span>
           Carica file
-        </NavLink>
+        </NavLink>}
       </nav>
 
       <div className="sidebar-bottom">

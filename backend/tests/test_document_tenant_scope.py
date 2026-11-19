@@ -50,17 +50,32 @@ def document_environment(tmp_path, monkeypatch):
         ).all()
 
         grants = {
-            ids["staff"]: "documents.view_own",
-            ids["manager"]: "documents.view_all",
+            ids["staff"]: {
+                "documents.view_own",
+                "documents.upload",
+                "cash_closures.upload",
+                "cash_closures.view_own",
+                "cash_closures.edit",
+                "cash_closures.review",
+            },
+            ids["manager"]: {
+                "documents.view_all",
+                "documents.upload",
+                "cash_closures.upload",
+                "cash_closures.view_all",
+                "cash_closures.edit",
+                "cash_closures.review",
+            },
         }
 
         for membership in memberships:
-            db.add(
-                MembershipPermission(
-                    membership_id=membership.id,
-                    permission=grants[membership.user_id],
+            for permission in grants[membership.user_id]:
+                db.add(
+                    MembershipPermission(
+                        membership_id=membership.id,
+                        permission=permission,
+                    )
                 )
-            )
         db.commit()
 
     app = importlib.import_module("app.main").app
@@ -294,6 +309,11 @@ def test_ocr_review_correction_approval_and_deduplication(document_environment, 
             f"/cash-closures/review/{intake['id']}", headers=headers(csrf), json=correction
         )
         assert corrected.status_code == 200, corrected.text
+        verified = client.post(
+            f"/cash-closures/review/{intake['id']}/verify",
+            headers=headers(csrf),
+        )
+        assert verified.status_code == 200, verified.text
         approved = client.post(
             f"/cash-closures/review/{intake['id']}/approve", headers=headers(csrf)
         )
@@ -389,7 +409,7 @@ def test_reprocess_preview_confirmation_preserves_history_and_tenant_scope(
     assert previous["previous_ocr"]["review_receipts_count"] == 24
     assert previous["user_id"] is not None
     assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
-    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 422
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 409
     with factory() as db:
         intake = db.get(CashClosureIntake, review["id"])
         assert (root / "documents" / intake.document.stored_filename).read_bytes() == b"original-image"
@@ -401,8 +421,8 @@ def test_reprocess_preview_confirmation_preserves_history_and_tenant_scope(
     assert refreshed["receipts_total"] == "303.50"
     assert refreshed["total_amount"] == "309.00"
     assert refreshed["status"] == "pending"
-    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 200
-    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 409
+    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 409
+    assert client.post(f"{url}/reprocess/preview", headers=headers(csrf)).status_code == 200
     assert client.post(f"{url}/reprocess", headers=headers(csrf), json=payload).status_code == 409
 
 
@@ -712,6 +732,8 @@ def test_month_filter_uses_closure_date_and_correction_updates_document_and_dash
     assert intakes[0][1] in {row["id"] for row in client.get("/documents?month=2024-01").json()}
     assert intakes[0][1] not in {row["id"] for row in client.get("/documents?month=2026-11").json()}
     assert client.get("/analytics/pnl?month=2024-01").json()["revenue"] == 0
+    verified = client.post(f"{url}/verify", headers=headers(csrf))
+    assert verified.status_code == 200, verified.text
     assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == 200
     assert ids_for("2024-01") == set()
     assert client.get("/analytics/pnl?month=2024-01").json()["revenue"] == 100
@@ -773,7 +795,12 @@ def test_approval_is_restricted_to_owner_or_global_admin_in_active_bar(
     assert review["can_approve"] is allowed
     url = f"/cash-closures/review/{review['id']}"
     assert client.patch(url, headers=headers(csrf), json={"total_amount": "100"}).status_code == 200
-    assert client.post(f"{url}/approve", headers=headers(csrf)).status_code == (200 if allowed else 403)
+    before_verify = client.post(f"{url}/approve", headers=headers(csrf))
+    assert before_verify.status_code == (409 if allowed else 403)
+    verified = client.post(f"{url}/verify", headers=headers(csrf))
+    assert verified.status_code == 200, verified.text
+    approved = client.post(f"{url}/approve", headers=headers(csrf))
+    assert approved.status_code == (200 if allowed else 403)
     if global_admin:
         assert select_bar(client, ids["bar_two"], csrf).status_code == 403
 

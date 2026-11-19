@@ -215,3 +215,48 @@ test("explicit zero amounts are included in the breakdown", () => {
     unallocatedCents: 20000,
   });
 });
+
+
+test("selective loader requests only authorized resources", async () => {
+  const calls = [];
+  const loader = createLatestDocumentLoader(
+    async (url) => {
+      calls.push(url);
+      return [{ id: 1 }];
+    },
+    (documents, reviews) => {
+      assert.deepEqual(documents, [{ id: 1 }]);
+      assert.deepEqual(reviews, []);
+    },
+    () => assert.fail("unexpected error"),
+  );
+
+  await loader.load("2026-11", {
+    includeDocuments: true,
+    includeReviews: false,
+  });
+
+  assert.deepEqual(calls, ["/api/documents?month=2026-11"]);
+});
+
+test("selective loader can request reviews without documents", async () => {
+  const calls = [];
+  const loader = createLatestDocumentLoader(
+    async (url) => {
+      calls.push(url);
+      return [{ id: 2 }];
+    },
+    (documents, reviews) => {
+      assert.deepEqual(documents, []);
+      assert.deepEqual(reviews, [{ id: 2 }]);
+    },
+    () => assert.fail("unexpected error"),
+  );
+
+  await loader.load("2026-11", {
+    includeDocuments: false,
+    includeReviews: true,
+  });
+
+  assert.deepEqual(calls, ["/api/cash-closures/review"]);
+});

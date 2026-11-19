@@ -25,6 +25,7 @@ from app.bar_context import (
     financial_read_scope,
     revalidate_active_bar_context,
     require_bar_permission,
+    require_delegable_permission,
     require_financial_permissions,
 )
 from app.database import get_db
@@ -51,7 +52,6 @@ router = APIRouter(tags=["invoices", "payments"])
 DUPLICATE_INVOICE_DETAIL = "Esiste già una fattura con questo numero per il fornitore indicato"
 operate_context = require_bar_permission(BarPermission.OPERATE)
 manage_payments_context = require_bar_permission(BarPermission.MANAGE_PAYMENTS)
-delete_records_context = require_bar_permission(BarPermission.DELETE_RECORDS)
 
 
 class InvoiceCreate(BaseModel):
@@ -1272,7 +1272,9 @@ async def extract_invoice(
 def delete_invoice(
     invoice_id: int,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(delete_records_context),
+    context: BarContext = Depends(
+        require_delegable_permission(DelegablePermission.INVOICES_DELETE)
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     invoice = db.scalar(
@@ -1282,6 +1284,7 @@ def delete_invoice(
     )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
+
     if db.scalar(
         select(InvoicePaymentLink.id)
         .where(InvoicePaymentLink.invoice_id == invoice_id)

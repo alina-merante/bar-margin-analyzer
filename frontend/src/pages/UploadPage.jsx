@@ -383,6 +383,7 @@ export function CashClosureReprocessComparison({ preview, busy, onConfirm, onCan
 export function CashClosureReviewCard({
   review,
   onCorrect,
+  onVerify,
   onApprove,
   onReject,
   onReprocess,
@@ -422,6 +423,11 @@ export function CashClosureReviewCard({
         setBaseline(result);
         setForm(createCashClosureReviewForm(result));
         setMessage("Correzioni salvate. La chiusura rimane in attesa di approvazione.");
+      } else if (action === "verify") {
+        const result = await onVerify(review.id);
+        setBaseline(result);
+        setForm(createCashClosureReviewForm(result));
+        setMessage("Verifica completata. La chiusura può essere approvata.");
       } else if (action === "approve") {
         await onApprove(review.id);
       } else {
@@ -502,7 +508,7 @@ export function CashClosureReviewCard({
         </div>
       ) : null}
 
-      <fieldset className="cash-review-fields" disabled={busy || !!preview}>
+      <fieldset className="cash-review-fields" disabled={busy || !!preview || !review.can_edit}>
         <label>
           Data
           <input
@@ -603,16 +609,20 @@ export function CashClosureReviewCard({
       ) : null}
       {hasChanges ? <p className="cash-review-hint">Salva o annulla le modifiche prima di rielaborare l'OCR.</p> : null}
       <div className="cash-review-actions">
-        <button type="button" disabled={busy || hasChanges || !!preview || changedExternally} onClick={() => reprocess()}>
-          Rielabora OCR
-        </button>
-        <button
-          type="button"
-          disabled={busy || !!preview || !hasChanges || changedExternally}
-          onClick={() => submit("correct")}
-        >
-          Salva correzioni
-        </button>
+        {review.can_edit ? (
+          <button type="button" disabled={busy || hasChanges || !!preview || changedExternally} onClick={() => reprocess()}>
+            Rielabora OCR
+          </button>
+        ) : null}
+        {review.can_edit ? (
+          <button
+            type="button"
+            disabled={busy || !!preview || !hasChanges || changedExternally}
+            onClick={() => submit("correct")}
+          >
+            Salva correzioni
+          </button>
+        ) : null}
         {hasChanges ? (
           <button type="button" disabled={busy} onClick={() => {
             setBaseline(review);
@@ -621,10 +631,32 @@ export function CashClosureReviewCard({
             Annulla modifiche
           </button>
         ) : null}
+        {review.verification ? (
+          <p className="cash-review-hint">
+            Verificata il {new Date(review.verification.verified_at).toLocaleString("it-IT")}
+          </p>
+        ) : null}
+        {review.can_verify && !review.verification ? (
+          <button
+            type="button"
+            disabled={
+              busy ||
+              hasChanges ||
+              !!preview ||
+              changedExternally ||
+              hasMissingCashClosureRequiredFields(form) ||
+              paymentValidation.exceedsTotal
+            }
+            onClick={() => submit("verify")}
+          >
+            Verifica completata
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={
             busy ||
+            !review.verification ||
             !review.can_approve ||
             changedExternally ||
             !!preview ||
@@ -657,6 +689,8 @@ export function CashClosureReviewCard({
 }
 
 export default function UploadPage({
+  activeBarPermissions = [],
+  isOwner = false,
   month,
   handleUpload,
   uploading,
@@ -676,6 +710,7 @@ export default function UploadPage({
   cashClosureRefreshWarning = "",
   retryCashClosureLoad,
   handleCorrectCashClosure,
+  handleVerifyCashClosure,
   handleApproveCashClosure,
   handleRejectCashClosure,
   handleReprocessCashClosure,
@@ -688,6 +723,18 @@ export default function UploadPage({
   documentDeleteError,
 }) {
   const navigate = useNavigate();
+
+  const permissions = new Set(activeBarPermissions);
+  const hasPermission = (permission) =>
+    isOwner || permissions.has(permission);
+
+  const canViewCashClosures =
+    hasPermission("cash_closures.view_own") ||
+    hasPermission("cash_closures.view_all");
+
+  const canUploadCash = hasPermission("cash_closures.upload");
+  const canUploadInvoices = hasPermission("invoices.upload");
+  const canUploadDocuments = hasPermission("documents.upload");
 
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [cashClosureFilter, setCashClosureFilter] = useState("month");
@@ -920,10 +967,12 @@ if (uploaded) setActiveHistoryTab("other");
         <p className="upload-page-subtitle"></p>
       </section>
 
+      {(canUploadCash || canUploadDocuments) ? (
       <section className="upload-section">
         <div className="upload-section-label">⚡ Operazioni quotidiane</div>
 
         <div className="upload-primary-grid">
+          {canUploadCash ? (
           <article className="upload-doc-card warm">
             <div className="upload-doc-head">
               <div className="upload-doc-icon">🧾</div>
@@ -977,7 +1026,9 @@ if (uploaded) setActiveHistoryTab("other");
               onCapture={handleCashDocument}
             />
           </article>
+          ) : null}
 
+          {canUploadDocuments ? (
           <article className="upload-doc-card cool">
             <div className="upload-doc-head">
               <div className="upload-doc-icon">🏦</div>
@@ -1019,6 +1070,7 @@ if (uploaded) setActiveHistoryTab("other");
               </div>
             </label>
           </article>
+          ) : null}
         </div>
 
         <div className="upload-feedback-area">
@@ -1092,11 +1144,14 @@ if (uploaded) setActiveHistoryTab("other");
 
         </div>
       </section>
+      ) : null}
 
+      {(canUploadInvoices || canUploadCash || canUploadDocuments) ? (
       <section className="upload-section">
         <div className="upload-section-label">🧾 Documenti contabili</div>
 
         <div className="upload-secondary-grid">
+          {canUploadInvoices ? (
           <article className="upload-mini-card">
             <div className="upload-mini-icon">🧾</div>
             <h3>Fatture fornitori</h3>
@@ -1135,7 +1190,9 @@ if (uploaded) setActiveHistoryTab("other");
               onCapture={uploadInvoiceAndGoToInvoices}
             />
           </article>
+          ) : null}
 
+          {canUploadCash ? (
           <article className="upload-mini-card">
             <div className="upload-mini-icon green">📒</div>
             <h3>Pagamenti in contanti</h3>
@@ -1168,7 +1225,9 @@ if (uploaded) setActiveHistoryTab("other");
               </div>
             </div>
           </article>
+          ) : null}
 
+          {canUploadDocuments ? (
           <article className="upload-mini-card">
             <div className="upload-mini-icon violet">📎</div>
             <h3>Altro documento</h3>
@@ -1211,9 +1270,12 @@ if (uploaded) setActiveHistoryTab("other");
               </AlertBanner>
             ) : null}
           </article>
+          ) : null}
         </div>
       </section>
+      ) : null}
 
+      {canViewCashClosures ? (
       <section className="upload-section">
         <div className="upload-history-card">
           <h2>Chiusure da verificare</h2>
@@ -1250,6 +1312,7 @@ if (uploaded) setActiveHistoryTab("other");
                   <CashClosureReviewCard
                     review={review}
                     onCorrect={handleCorrectCashClosure}
+                    onVerify={handleVerifyCashClosure}
                     onApprove={handleApproveCashClosure}
                     onReject={handleRejectCashClosure}
                     onReprocess={handleReprocessCashClosure}
@@ -1269,6 +1332,7 @@ if (uploaded) setActiveHistoryTab("other");
           ) : null}
         </div>
       </section>
+      ) : null}
 
       <section className="upload-section">
         <div className="upload-history-card">
