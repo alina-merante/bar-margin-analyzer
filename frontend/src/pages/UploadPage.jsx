@@ -736,6 +736,19 @@ export default function UploadPage({
   const canUploadInvoices = hasPermission("invoices.upload");
   const canUploadDocuments = hasPermission("documents.upload");
 
+  const canDeleteHistoryEntry = (entry) => {
+    if (entry.kind === "invoice") {
+      return hasPermission("invoices.delete") && Boolean(handleDeleteInvoice);
+    }
+
+    const isCashDocument = ["cash", "cash_closure"].includes(entry.raw?.section);
+    const requiredPermission = isCashDocument
+      ? "cash_closures.delete"
+      : "documents.delete";
+
+    return hasPermission(requiredPermission) && Boolean(handleDeleteDocument);
+  };
+
   const [activeHistoryTab, setActiveHistoryTab] = useState("all");
   const [cashClosureFilter, setCashClosureFilter] = useState("month");
   const [selectedOtherDocument, setSelectedOtherDocument] = useState(null);
@@ -880,6 +893,8 @@ function openHistoryEntry(entry) {
 }
 
 async function deleteHistoryEntry(entry) {
+  if (!canDeleteHistoryEntry(entry)) return;
+
   if (entry.kind === "invoice") {
     if (!handleDeleteInvoice) return;
     const invoiceNumber = entry.raw.invoice_number?.trim() || "non indicato";
@@ -901,6 +916,10 @@ async function deleteHistoryEntry(entry) {
 
 async function confirmDeleteDocument() {
   if (!documentToDelete || !handleDeleteDocument || deletingDocument) return;
+  if (!canDeleteHistoryEntry({ kind: "document", raw: documentToDelete })) {
+    setDocumentToDelete(null);
+    return;
+  }
 
   try {
     setDeletingDocument(true);
@@ -1425,14 +1444,16 @@ if (uploaded) setActiveHistoryTab("other");
                     </div>
 
                     <div className="upload-history-action-cell">
-                      <button
-                        type="button"
-                        className="invoice-icon-btn delete"
-                        onClick={() => deleteHistoryEntry(entry)}
-                        title={entry.kind === "invoice" ? "Elimina fattura" : "Elimina documento"}
-                      >
-                        🗑️
-                      </button>
+                      {canDeleteHistoryEntry(entry) ? (
+                        <button
+                          type="button"
+                          className="invoice-icon-btn delete"
+                          onClick={() => deleteHistoryEntry(entry)}
+                          title={entry.kind === "invoice" ? "Elimina fattura" : "Elimina documento"}
+                        >
+                          🗑️
+                        </button>
+                      ) : null}
                     </div>
                   </div>
               ))}

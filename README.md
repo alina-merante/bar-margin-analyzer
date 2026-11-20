@@ -889,3 +889,69 @@ con HTTP 409.
 La chiusura approvata e il documento originale devono
 essere conservati. L'annullamento tracciato sarà
 implementato separatamente.
+
+
+### Eliminazione documenti con permessi granulari
+
+L'endpoint `DELETE /documents/{document_id}` applica permessi
+granulari in base alla tipologia del documento:
+
+- `documents.delete` per documenti generici e bancari;
+- `cash_closures.delete` per documenti di cassa;
+- proprietario e amministratore globale autorizzati automaticamente;
+- manager e dipendenti autorizzati solo con permesso esplicito.
+
+La classificazione considera sia la sezione del documento sia
+i collegamenti a `CashClosureIntake` e `DailyCashClosure`.
+
+Restano attivi i controlli di isolamento tra bar e il divieto
+di eliminazione definitiva delle chiusure approvate.
+
+
+### Test di delega eliminazione documenti
+
+I test verificano che il ruolo manager non conferisca
+automaticamente il diritto di eliminare documenti.
+L'operazione è consentita soltanto dopo l'assegnazione
+esplicita del permesso `documents.delete`, mantenendo
+i controlli CSRF e l'isolamento tra bar.
+
+
+### Visibilità eliminazione nello storico documenti
+
+Nello storico della pagina Upload, il pulsante di eliminazione è
+mostrato soltanto se l'utente dispone del permesso delegabile
+corrispondente: `invoices.delete` per le fatture,
+`documents.delete` per documenti generici e bancari,
+`cash_closures.delete` per documenti di cassa.
+
+Il frontend controlla i permessi anche prima di invocare
+le funzioni di eliminazione. Il backend rimane l'autorità
+per autorizzazione, isolamento tenant e protezione delle
+chiusure approvate: queste ultime non possono essere
+eliminate definitivamente, anche quando il pulsante è visibile.
+
+
+### Test automatici dei permessi di eliminazione
+
+La suite backend verifica le autorizzazioni granulari per
+l'eliminazione di fatture, documenti e chiusure di cassa,
+inclusi isolamento tra bar, CSRF e divieto di eliminazione
+definitiva delle chiusure approvate.
+
+La suite frontend include
+`frontend/tests/upload-delete-permissions.test.mjs`,
+eseguita tramite `npm test`, che verifica la funzione
+`canDeleteHistoryEntry` utilizzata nella pagina Upload.
+
+Sono coperti i seguenti casi:
+- utente senza permessi di eliminazione;
+- permesso `documents.delete`;
+- permesso `cash_closures.delete`;
+- permesso `invoices.delete`;
+- proprietario del bar;
+- assenza delle funzioni di eliminazione.
+
+I controlli frontend regolano la visibilità dei pulsanti,
+mentre l'autorizzazione effettiva resta responsabilità
+del backend.

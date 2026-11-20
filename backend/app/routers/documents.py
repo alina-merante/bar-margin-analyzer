@@ -49,7 +49,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
 read_context = require_bar_permission(BarPermission.READ_DOCUMENTS)
 upload_context = require_bar_permission(BarPermission.UPLOAD_DOCUMENTS)
-delete_context = require_bar_permission(BarPermission.DELETE_RECORDS)
 
 
 def classify_document(filename: str) -> tuple[str, str]:
@@ -932,7 +931,7 @@ def list_documents(
 def delete_document(
     document_id: int,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(delete_context),
+    context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> dict:
     document = db.scalar(
@@ -988,6 +987,20 @@ def delete_document(
             CashClosureIntake.bar_id == context.bar.id,
         )
     ).all()
+    is_cash_document = (
+        document.section in {"cash", "cash_closure"}
+        or bool(cash_closures)
+        or bool(intakes)
+    )
+
+    required_permission = (
+        DelegablePermission.CASH_CLOSURES_DELETE
+        if is_cash_document
+        else DelegablePermission.DOCUMENTS_DELETE
+    )
+
+    require_financial_permissions(context, required_permission)
+
     if any(intake.status == "approved" for intake in intakes):
         raise HTTPException(
             status_code=409,

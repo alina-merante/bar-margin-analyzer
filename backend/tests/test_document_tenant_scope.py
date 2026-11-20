@@ -874,7 +874,33 @@ def test_roles_csrf_revocation_and_inactive_bar(document_environment):
         manager_csrf = login(manager, "manager@example.test")
         assert select_bar(manager, ids["bar_one"], manager_csrf).status_code == 200
         assert manager.get(doc["file_url"]).status_code == 200
-        assert manager.delete(f"/documents/{doc['id']}", headers=headers(manager_csrf)).status_code == 200
+
+        # Il ruolo manager da solo non autorizza l'eliminazione.
+        assert manager.delete(
+            f"/documents/{doc['id']}",
+            headers=headers(manager_csrf),
+        ).status_code == 403
+
+        # Il proprietario può delegare esplicitamente documents.delete.
+        with factory() as db:
+            membership = db.scalar(
+                select(UserBarMembership).where(
+                    UserBarMembership.user_id == ids["manager"],
+                    UserBarMembership.bar_id == ids["bar_one"],
+                )
+            )
+            db.add(
+                MembershipPermission(
+                    membership_id=membership.id,
+                    permission="documents.delete",
+                )
+            )
+            db.commit()
+
+        assert manager.delete(
+            f"/documents/{doc['id']}",
+            headers=headers(manager_csrf),
+        ).status_code == 200
         assert manager.get(doc["file_url"]).status_code == 404
         assert (_root / "documents" / doc["stored_filename"]).is_file()
 
