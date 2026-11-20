@@ -51,6 +51,17 @@ class DailyCashClosure(Base):
         index=True,
     )
 
+    annulled_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    annulled_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    annulment_reason: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True
+    )
+
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime,
         default=dt.datetime.utcnow,

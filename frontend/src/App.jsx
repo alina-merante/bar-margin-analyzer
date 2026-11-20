@@ -5,6 +5,8 @@ import "./App.css";
 import Sidebar from "./components/Sidebar";
 import { useTenantApi } from "./ApiContext";
 import UploadPage from "./pages/UploadPage";
+import CashClosureReviewPage from "./pages/CashClosureReviewPage.jsx";
+import CashClosureHistoryPage from "./pages/CashClosureHistoryPage.jsx";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
@@ -1705,6 +1707,8 @@ const overdueInvoicesAmount = useMemo(
           canViewDashboard={canViewDashboard}
           canViewInvoices={canViewInvoices}
           canAccessUpload={canAccessUpload}
+          canViewCashClosures={canReviewCashClosures}
+          cashClosureNavigationEnabled
           month={month}
           setMonth={setMonth}
           pendingInvoices={pendingInvoices.length}
@@ -1812,6 +1816,51 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
               /> : <Navigate to={defaultPage} replace />
             }
           />
+          <Route
+            path="/cash-closures/review"
+            element={
+              canReviewCashClosures ? (
+                <CashClosureReviewPage
+                  month={month}
+                  cashClosureReviews={cashClosureReviews}
+                  cashClosureLoading={!documentsLoaded}
+                  cashClosureLoadError={documentsLoadError}
+                  cashClosureRefreshWarning={reviewRefreshWarning}
+                  retryCashClosureLoad={() => loadDocuments().catch(() => {})}
+                  handleCorrectCashClosure={handleCorrectCashClosure}
+                  handleVerifyCashClosure={handleVerifyCashClosure}
+                  handleApproveCashClosure={handleApproveCashClosure}
+                  handleRejectCashClosure={handleRejectCashClosure}
+                  handleReprocessCashClosure={handleReprocessCashClosure}
+                />
+              ) : (
+                <Navigate to={defaultPage} replace />
+              )
+            }
+          />
+
+          <Route
+            path="/cash-closures/history"
+            element={
+              canReviewCashClosures ? (
+                <CashClosureHistoryPage
+                  month={month}
+                  activeBarId={activeBar?.id}
+                  onHistoryChanged={async () => {
+                    await Promise.all([
+                      loadDocuments(),
+                      ...(canViewDashboard
+                        ? [loadDashboardData(currentMonth.current)]
+                        : []),
+                    ]);
+                  }}
+                />
+              ) : (
+                <Navigate to={defaultPage} replace />
+              )
+            }
+          />
+
           <Route
             path="/no-access"
             element={<p>Non hai permessi per accedere alle sezioni del bar.</p>}

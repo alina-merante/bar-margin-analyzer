@@ -887,8 +887,9 @@ L'eliminazione di un documento collegato a una
 con HTTP 409.
 
 La chiusura approvata e il documento originale devono
-essere conservati. L'annullamento tracciato sarà
-implementato separatamente.
+essere conservati. L'eventuale annullamento avviene tramite
+l'operazione tracciata descritta nella sezione seguente,
+senza eliminazione definitiva.
 
 
 ### Eliminazione documenti con permessi granulari
@@ -955,3 +956,80 @@ Sono coperti i seguenti casi:
 I controlli frontend regolano la visibilità dei pulsanti,
 mentre l'autorizzazione effettiva resta responsabilità
 del backend.
+
+### Storico e annullamento delle chiusure di cassa
+
+Nel branch `feature/granular-permissions` è disponibile una
+pagina dedicata allo storico delle chiusure di cassa, raggiungibile
+dalla navigazione dell'applicazione secondo i permessi previsti.
+
+Lo storico permette di:
+- consultare le chiusure approvate e annullate del mese selezionato;
+- visualizzare data, numero, importi e documento associato;
+- distinguere le chiusure approvate da quelle annullate;
+- annullare una chiusura approvata quando il backend autorizza
+  esplicitamente l'operazione tramite `can_annul`.
+
+L'annullamento:
+- è riservato al proprietario del bar e all'amministratrice globale
+  autorizzata;
+- richiede una motivazione non vuota;
+- utilizza `POST /cash-closures/review/{id}/annul`;
+- è protetto da autenticazione, CSRF e isolamento tra bar;
+- conserva la chiusura e il documento originale;
+- registra le informazioni di annullamento per la tracciabilità;
+- esclude le chiusure annullate dai calcoli analytics pertinenti.
+
+L'endpoint `GET /cash-closures/history?month=YYYY-MM`
+restituisce lo storico del mese nel contesto del bar attivo.
+
+Il frontend impedisce di utilizzare una conferma di annullamento
+aperta per un bar differente. Durante il cambio bar o mese
+non mostra dati del contesto precedente e ignora le risposte
+tardive delle richieste precedenti.
+
+In caso di errore di caricamento dello storico, viene mostrato
+il pulsante **Riprova caricamento**, che ripete la lettura senza
+modificare le chiusure.
+
+Dopo un annullamento riuscito, lo storico viene aggiornato.
+Un eventuale errore nel successivo aggiornamento della dashboard
+non viene presentato come fallimento dell'annullamento.
+
+La migrazione Alembic
+`20261120_0017_add_cash_closure_annulment.py`
+introduce i campi necessari alla tracciabilità.
+Non applicare la migrazione al database originale senza
+una verifica preventiva in ambiente di test e autorizzazione esplicita.
+
+I test frontend sono in
+`frontend/tests/cashClosureHistoryPage.test.mjs`
+e coprono permessi, motivazione obbligatoria, cambio bar,
+risposte tardive, aggiornamento dopo annullamento,
+errori e tentativi di ricaricamento.
+
+I test backend sono in
+`backend/tests/test_cash_closure_annulment.py`.
+
+
+### Acceptance Test
+
+Gli scenari di accettazione manuali sono documentati in `acceptance-tests/scenarios/`, con descrizione, procedura, risultato atteso ed esito effettivo. I report delle esecuzioni sono conservati in `acceptance-tests/reports/`. Le verifiche devono utilizzare un database isolato.
+
+
+### Acceptance test AT-007 - Autenticazione e navigazione
+
+Lo scenario `acceptance-tests/scenarios/AT-007-login-logout-navigation.md`
+documenta la verifica di login, logout, rinnovo CSRF e navigazione.
+
+I test automatici dedicati sono in
+`frontend/tests/authNavigation.test.mjs` e si eseguono con
+`npm --prefix frontend test`.
+
+La verifica manuale preliminare è riuscita. Sono superati
+7 test di regressione frontend e 3 test comportamentali React,
+inclusi i casi di logout riuscito e fallito.
+
+I test non costituiscono ancora una verifica browser end-to-end
+completa; i casi di sessione scaduta e concorrenza tra schede
+restano da coprire.

@@ -24,7 +24,7 @@ class CashClosureIntake(Base):
     __tablename__ = "cash_closure_intakes"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'approved', 'rejected')",
+            "status IN ('pending', 'approved', 'rejected', 'annulled')",
             name="ck_cash_closure_intakes_status",
         ),
         CheckConstraint(

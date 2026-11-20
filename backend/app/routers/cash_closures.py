@@ -21,7 +21,7 @@ from app.bar_context import (
     financial_read_scope,
 )
 from app.database import get_db
-from app.models import AuthSession, MembershipRole
+from app.models import AdminAudit, AuthSession, MembershipRole
 from app.models.cash_closure_intake import CashClosureIntake
 from app.models.daily_cash_closure import DailyCashClosure
 from app.models.document import Document
@@ -55,6 +55,12 @@ class CashClosureCorrection(BaseModel):
     cash_amount: Decimal | None = None
     card_amount: Decimal | None = None
     receipts_count: int | None = Field(default=None, ge=0, le=999999)
+
+
+class CashClosureAnnulment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class ReprocessConfirmation(BaseModel):
@@ -161,7 +167,7 @@ def get_intake_for_bar(
     intake = db.scalar(query)
     if intake is None:
         raise HTTPException(status_code=404, detail="Chiusura da verificare non trovata.")
-    if (intake.status == "approved") != (intake.closure_id is not None):
+    if (intake.status in {"approved", "annulled"}) != (intake.closure_id is not None):
         raise HTTPException(status_code=409, detail="La scheda della chiusura non è coerente.")
     if pending_only and intake.status != "pending":
         raise HTTPException(status_code=409, detail="La chiusura non è più in attesa di revisione.")
@@ -224,6 +230,100 @@ def check_cash_closure_read_access(
             status_code=404,
             detail="Chiusura da verificare non trovata.",
         )
+
+
+
+@router.get("/history")
+def list_cash_closure_history(
+    month: str | None = Query(default=None),
+    context: BarContext = Depends(get_active_bar_context),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    scope = cash_closure_read_scope(context)
+
+    query = (
+        select(CashClosureIntake, DailyCashClosure, Document)
+        .join(
+            DailyCashClosure,
+            DailyCashClosure.id == CashClosureIntake.closure_id,
+        )
+        .join(Document, Document.id == CashClosureIntake.document_id)
+        .where(
+            CashClosureIntake.bar_id == context.bar.id,
+            DailyCashClosure.bar_id == context.bar.id,
+            Document.bar_id == context.bar.id,
+            DailyCashClosure.document_id == Document.id,
+            CashClosureIntake.status.in_(("approved", "annulled")),
+        )
+    )
+
+    if scope == "own":
+        query = query.where(
+            Document.created_by_user_id == context.user.id
+        )
+
+    if month:
+        if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month):
+            raise HTTPException(
+                status_code=422,
+                detail="Il mese deve avere il formato AAAA-MM.",
+            )
+
+        year, month_number = map(int, month.split("-"))
+        start = dt.date(year, month_number, 1)
+        end = dt.date(
+            year, month_number, monthrange(year, month_number)[1]
+        )
+
+        query = query.where(
+            DailyCashClosure.date >= start,
+            DailyCashClosure.date <= end,
+        )
+
+    rows = db.execute(
+        query.order_by(
+            DailyCashClosure.date.desc(),
+            DailyCashClosure.id.desc(),
+        )
+    ).all()
+
+    return [
+        {
+            "id": intake.id,
+            "closure_id": closure.id,
+            "document_id": document.id,
+            "date": closure.date.isoformat(),
+            "closure_number": closure.closure_number,
+            "total_amount": str(closure.total_amount),
+            "cash_amount": (
+                str(closure.cash_amount)
+                if closure.cash_amount is not None else None
+            ),
+            "card_amount": (
+                str(closure.card_amount)
+                if closure.card_amount is not None else None
+            ),
+            "status": intake.status,
+            "can_annul": (
+                intake.status == "approved"
+                and closure.annulled_at is None
+                and can_approve(context)
+            ),
+            "annulled_at": (
+                closure.annulled_at.isoformat()
+                if closure.annulled_at else None
+            ),
+            "annulled_by_user_id": closure.annulled_by_user_id,
+            "annulment_reason": closure.annulment_reason,
+            "document": {
+                "id": document.id,
+                "original_filename": document.original_filename,
+                "file_url": document_urls(document)[0],
+                "preview_url": document_urls(document)[1],
+            },
+        }
+        for intake, closure, document in rows
+    ]
 
 
 @router.get("/review")
@@ -619,6 +719,94 @@ def approve_cash_closure_review(
         ) from exc
     db.refresh(intake)
     return intake_to_dict(intake, context)
+
+
+@router.post("/review/{intake_id}/annul")
+def annul_cash_closure_review(
+    intake_id: int,
+    payload: CashClosureAnnulment,
+    _auth_session: AuthSession = Depends(require_session_csrf),
+    context: BarContext = Depends(get_active_bar_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not can_approve(context):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo il proprietario del bar o un amministratore globale può annullare la chiusura.",
+        )
+
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="La motivazione dell'annullamento è obbligatoria.",
+        )
+
+    intake = get_intake_for_bar(db, intake_id, context.bar.id, lock=True)
+
+    if intake.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="È possibile annullare soltanto una chiusura approvata.",
+        )
+
+    closure = db.scalar(
+        select(DailyCashClosure)
+        .where(
+            DailyCashClosure.id == intake.closure_id,
+            DailyCashClosure.bar_id == context.bar.id,
+            DailyCashClosure.document_id == intake.document_id,
+        )
+        .with_for_update()
+    )
+
+    if closure is None:
+        raise HTTPException(
+            status_code=409,
+            detail="La chiusura contabile collegata non è coerente.",
+        )
+
+    if closure.annulled_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="La chiusura risulta già annullata.",
+        )
+
+    annulled_at = dt.datetime.now(dt.timezone.utc)
+
+    closure.annulled_at = annulled_at
+    closure.annulled_by_user_id = _auth_session.user_id
+    closure.annulment_reason = reason
+    intake.status = "annulled"
+
+    db.add(
+        AdminAudit(
+            actor_id=_auth_session.user_id,
+            action="cash_closure.annul",
+            bar_id=context.bar.id,
+            changes={
+                "intake_id": intake.id,
+                "closure_id": closure.id,
+                "document_id": intake.document_id,
+                "previous_status": "approved",
+                "new_status": "annulled",
+                "reason": reason,
+                "annulled_at": annulled_at.isoformat(),
+            },
+        )
+    )
+
+    db.commit()
+    db.refresh(intake)
+
+    return {
+        "id": intake.id,
+        "closure_id": closure.id,
+        "status": intake.status,
+        "annulled_at": annulled_at.isoformat(),
+        "annulled_by_user_id": _auth_session.user_id,
+        "annulment_reason": reason,
+    }
 
 
 @router.post("/review/{intake_id}/reject")

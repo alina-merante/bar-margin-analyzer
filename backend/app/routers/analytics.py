@@ -83,6 +83,7 @@ def sum_revenue(db: Session, start: dt.date, end: dt.date, bar_id: int) -> Decim
     revenue = db.execute(
         select(func.coalesce(func.sum(DailyCashClosure.total_amount), 0)).where(
             DailyCashClosure.bar_id == bar_id,
+            DailyCashClosure.annulled_at.is_(None),
             DailyCashClosure.date >= start,
             DailyCashClosure.date < end,
         )
@@ -516,10 +517,16 @@ def overview(
     top_suppliers = []
 
     latest_cash_closure_date = db.scalar(
-        select(func.max(DailyCashClosure.date)).where(DailyCashClosure.bar_id == context.bar.id)
+        select(func.max(DailyCashClosure.date)).where(
+            DailyCashClosure.bar_id == context.bar.id,
+            DailyCashClosure.annulled_at.is_(None),
+        )
     )
     latest_cash_closure_uploaded_at = db.scalar(
-        select(func.max(DailyCashClosure.created_at)).where(DailyCashClosure.bar_id == context.bar.id)
+        select(func.max(DailyCashClosure.created_at)).where(
+            DailyCashClosure.bar_id == context.bar.id,
+            DailyCashClosure.annulled_at.is_(None),
+        )
     )
     latest_bank_transaction_date = db.scalar(
         select(func.max(Transaction.date)).where(Transaction.bar_id == context.bar.id)

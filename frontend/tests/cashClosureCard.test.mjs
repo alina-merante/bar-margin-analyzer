@@ -9,7 +9,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 let server;
 let Card;
-let UploadPage;
+let CashClosureReviewPage;
 before(async () => {
   server = await createServer({
     root: new URL("..", import.meta.url).pathname,
@@ -20,7 +20,7 @@ before(async () => {
   });
   const module = await server.ssrLoadModule("/src/pages/UploadPage.jsx");
   Card = module.CashClosureReviewCard;
-  UploadPage = module.default;
+  CashClosureReviewPage = (await server.ssrLoadModule("/src/pages/CashClosureReviewPage.jsx")).default;
 });
 after(async () => { await server?.close(); });
 
@@ -190,13 +190,12 @@ test("monthly filter preserves drafts and OCR comparison across filter and month
   };
   const props = {
     month: "2026-11",
-    activeBarPermissions: ["cash_closures.view_all"],
     cashClosureReviews: [review, november, noDate],
     handleReprocessCashClosure: async () => preview,
   };
-  const page = (values) => React.createElement(MemoryRouter, null, React.createElement(UploadPage, values));
+  const page = (values) => React.createElement(MemoryRouter, null, React.createElement(CashClosureReviewPage, values));
   const card = (id) => renderer.root.findAllByType(Card).find((item) => item.props.review.id === id);
-  const filter = (index) => renderer.root.findAllByProps({ name: "cash-closure-filter" })[index];
+  const filter = (index) => renderer.root.findAllByProps({ name: "cash-review-page-filter" })[index];
   await act(async () => { renderer = TestRenderer.create(page(props)); });
   assert.equal(card(1).parent.props.hidden, true);
   assert.equal(card(2).parent.props.hidden, false);

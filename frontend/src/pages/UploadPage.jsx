@@ -1294,65 +1294,6 @@ if (uploaded) setActiveHistoryTab("other");
       </section>
       ) : null}
 
-      {canViewCashClosures ? (
-      <section className="upload-section">
-        <div className="upload-history-card">
-          <h2>Chiusure da verificare</h2>
-          <fieldset className="cash-review-filter">
-            <legend>Mostra chiusure</legend>
-            <label>
-              <input type="radio" name="cash-closure-filter" checked={cashClosureFilter === "month"}
-                onChange={() => setCashClosureFilter("month")} />
-              Mese selezionato ({month})
-            </label>
-            <label>
-              <input type="radio" name="cash-closure-filter" checked={cashClosureFilter === "all"}
-                onChange={() => setCashClosureFilter("all")} />
-              Tutte le chiusure pendenti
-            </label>
-          </fieldset>
-          {cashClosureFilter === "all" ? (
-            <p>Le chiusure senza data sono disponibili solo in questa vista.</p>
-          ) : null}
-          {cashClosureRefreshWarning ? <p role="alert">{cashClosureRefreshWarning}</p> : null}
-          {cashClosureLoadError ? (
-            <div role="alert">
-              <p>{cashClosureLoadError}</p>
-              <button type="button" onClick={retryCashClosureLoad}>Riprova</button>
-            </div>
-          ) : null}
-          {cashClosureLoading ? <p role="status">Caricamento delle chiusure...</p> : null}
-          {cashClosureReviews.length ? (
-            <div className="cash-review-list">
-              {cashClosureReviews.map((review) => (
-                <div key={review.id} hidden={
-                  cashClosureFilter === "month" && review.date?.slice(0, 7) !== month
-                }>
-                  <CashClosureReviewCard
-                    review={review}
-                    onCorrect={handleCorrectCashClosure}
-                    onVerify={handleVerifyCashClosure}
-                    onApprove={handleApproveCashClosure}
-                    onReject={handleRejectCashClosure}
-                    onReprocess={handleReprocessCashClosure}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {!cashClosureLoading && !cashClosureLoadError && (
-            cashClosureFilter === "month"
-              ? !cashClosureReviews.some((review) => review.date?.slice(0, 7) === month)
-              : !cashClosureReviews.length
-          ) ? (
-            <p>{cashClosureFilter === "month"
-              ? "Nessuna chiusura da verificare nel mese selezionato. Seleziona tutte le chiusure pendenti per vedere anche quelle senza data."
-              : "Nessuna chiusura in attesa di verifica."}</p>
-          ) : null}
-        </div>
-      </section>
-      ) : null}
-
       <section className="upload-section">
         <div className="upload-history-card">
           <h2>Storico documenti caricati</h2>

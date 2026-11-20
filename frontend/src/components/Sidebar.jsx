@@ -36,7 +36,7 @@ function shiftMonth(month, delta) {
   return `${date.getFullYear()}-${nextMonth}`;
 }
 
-export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false, canViewInvoices = false, canAccessUpload = false }) {
+export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false, canViewInvoices = false, canAccessUpload = false, canViewCashClosures = false, cashClosureNavigationEnabled = false }) {
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   const [selectedYear, selectedMonth] = month.split("-").map(Number);
@@ -89,8 +89,28 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
         >
           <span className="nav-icon">⬆️</span>
-          Carica file
+          Caricamenti
         </NavLink>}
+
+        {canViewCashClosures && cashClosureNavigationEnabled && (
+          <>
+            <div className="nav-label">Chiusure di cassa</div>
+            <NavLink
+              to="/cash-closures/review"
+              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+            >
+              <span className="nav-icon">📋</span>
+              Da verificare
+            </NavLink>
+            {<NavLink
+              to="/cash-closures/history"
+              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+            >
+              <span className="nav-icon">🕘</span>
+              Storico
+            </NavLink>}
+          </>
+        )}
       </nav>
 
       <div className="sidebar-bottom">

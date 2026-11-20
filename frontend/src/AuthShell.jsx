@@ -109,6 +109,9 @@ export default function AuthShell() {
       setUser(session.user);
       const accessibleBars = await authRequest("/bars");
       setBars(accessibleBars);
+      // A new login starts a new navigation session.
+      // App redirects "/" to the first page permitted for this user.
+      window.history.replaceState(null, "", "/");
       openContext(accessibleBars.find((item) => item.selected));
     } catch (err) {
       setError(err.status === 401 ? "Email o password non valide." : `Accesso non riuscito: ${err.message}`);
@@ -141,17 +144,22 @@ export default function AuthShell() {
   }
 
   async function logout() {
-    closeContext();
     setBusy(true);
     setError("");
     try {
+      // Refresh the CSRF token before logout because another tab or
+      // session restoration may have rotated the previous token.
+      const refreshed = await authRequest("/csrf");
+      csrf.current = refreshed.csrf_token;
       await authRequest("/logout", {
         method: "POST",
         headers: { "X-CSRF-Token": csrf.current },
       });
+      closeContext();
       csrf.current = "";
       setUser(null);
       setBars([]);
+      window.history.replaceState(null, "", "/");
     } catch (err) {
       setError(`Logout non completato: ${err.message}. Ripristina la sessione e riprova.`);
     } finally {
@@ -192,6 +200,7 @@ export default function AuthShell() {
   }
   return (
     <ApiContext.Provider value={client}>
+      {error && <p role="alert" className="auth-session-error">{error}</p>}
       <App key={bar.id} bars={bars} activeBar={bar} onSelectBar={selectBar} onLogout={logout} />
     </ApiContext.Provider>
   );

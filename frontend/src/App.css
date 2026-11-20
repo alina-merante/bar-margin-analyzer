@@ -5154,3 +5154,199 @@ body {
     width: min(310px, calc(100vw - 32px));
   }
 }
+
+/* === CASH CLOSURE HISTORY === */
+
+.cash-closure-history-page {
+  padding: 34px 42px 60px;
+}
+
+.cash-closure-history-page .upload-history-card {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.cash-closure-history-page .upload-history-card > h1 {
+  font-family: "Playfair Display", serif;
+  font-size: clamp(28px, 3vw, 38px);
+  color: var(--espresso);
+  margin: 0 0 10px;
+}
+
+.cash-history-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.cash-history-item {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: #fffaf3;
+  display: grid;
+  gap: 20px;
+}
+
+.cash-history-item > div:first-child {
+  display: grid;
+  gap: 8px;
+}
+
+.cash-closure-history-page .cash-history-item h2 {
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 1.35;
+  margin: 0;
+  color: var(--espresso);
+}
+
+.cash-closure-history-page .cash-history-item p {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.cash-history-item > div:nth-child(2) {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.cash-history-item > div:nth-child(2) p {
+  display: grid;
+  gap: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--espresso);
+}
+
+.cash-history-item > div:nth-child(2) strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.cash-history-item button {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid #c6a18b;
+  border-radius: 12px;
+  background: white;
+  color: var(--espresso);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.cash-history-item button:hover:not(:disabled) {
+  background: #f4e9dc;
+}
+
+.cash-history-item button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cash-history-item button:focus-visible,
+.cash-history-item textarea:focus-visible {
+  outline: 3px solid #b27a41;
+  outline-offset: 3px;
+}
+
+.cash-history-item textarea {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid #c6a18b;
+  border-radius: 12px;
+  font: inherit;
+  resize: vertical;
+}
+
+.cash-history-item label {
+  display: block;
+  margin: 14px 0;
+  font-weight: 600;
+  color: var(--espresso);
+}
+
+.cash-history-item > div:last-child > button {
+  margin-top: 4px;
+}
+
+.cash-history-item button + button {
+  margin-left: 10px;
+}
+
+@media (max-width: 900px) {
+  .cash-closure-history-page {
+    padding: 24px;
+  }
+
+  .cash-history-item {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 600px) {
+  .cash-closure-history-page {
+    padding: 14px;
+  }
+
+  .cash-closure-history-page .upload-history-card {
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .cash-history-item > div:nth-child(2) {
+    grid-template-columns: 1fr;
+  }
+
+  .cash-history-item button {
+    width: 100%;
+  }
+
+  .cash-history-item button + button {
+    margin: 10px 0 0;
+  }
+}
+
+/* === CASH HISTORY RETRY === */
+
+.cash-history-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.cash-history-error button {
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid #c6a18b;
+  border-radius: 12px;
+  background: #fffaf3;
+  color: var(--espresso);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.cash-history-error button:hover {
+  background: #f4e9dc;
+}
+
+.cash-history-error button:focus-visible {
+  outline: 3px solid #b27a41;
+  outline-offset: 3px;
+}
