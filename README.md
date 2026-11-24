@@ -1030,9 +1030,9 @@ La verifica manuale preliminare è riuscita. Sono superati
 7 test di regressione frontend e 3 test comportamentali React,
 inclusi i casi di logout riuscito e fallito.
 
-I test non costituiscono ancora una verifica browser end-to-end
-completa; i casi di sessione scaduta e concorrenza tra schede
-restano da coprire.
+La verifica automatica browser end-to-end è stata completata
+con Playwright, inclusi sessione scaduta, concorrenza tra schede,
+rinnovo CSRF e cambio di identità nella stessa sessione browser.
 
 ### Accesso PWA di test tramite GitHub Codespaces
 
@@ -1045,3 +1045,24 @@ Quando cambia la configurazione delle origini, arrestare
 l'ambiente con `scripts/stop-pwa-test.sh` e riavviarlo.
 
 Vite autorizza esplicitamente entrambi gli hostname.
+
+
+### Stato validazione - 24 novembre 2026
+
+- Backend: 513 test superati cumulativamente, 5 skipped.
+- Frontend: 236/236 test superati.
+- Build frontend completata.
+- Acceptance test Playwright: 44/44 superati.
+  - Autenticazione e navigazione: 16/16.
+  - Chiusure di cassa e contabilità: 10/10.
+  - Permessi, isolamento e multisessione: 18/18.
+- Database di test e fixture sintetiche ripristinati.
+
+Attività da completare:
+- Verifica manuale delle funzionalità frontend.
+- Tutti i testi visibili all'utente devono essere in italiano,
+  inclusi menu, pulsanti, errori, conferme, notifiche,
+  autorizzazioni e stati di caricamento.
+- Aggiornamento degli esiti di accettazione.
+- Pulizia dei file temporanei e dei report inutili.
+- Validazione finale prima del merge su main.
