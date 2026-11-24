@@ -216,7 +216,17 @@ d = json.load(sys.stdin) or {}
 print("1" if d.get("TCP") and d.get("Web") else "0")
 ')"
 
-export AUTH_ALLOWED_ORIGINS="https://$hostname"
+# Origini HTTPS esplicitamente autorizzate per la PWA di test.
+# Codespaces usa un hostname diverso per ogni ambiente.
+codespaces_origin=""
+if [[ -n "${CODESPACE_NAME:-}" ]]; then
+    codespaces_origin="https://${CODESPACE_NAME}-5174.app.github.dev"
+fi
+
+export AUTH_ALLOWED_ORIGINS="https://$hostname,http://127.0.0.1:5174"
+if [[ -n "$codespaces_origin" ]]; then
+    export AUTH_ALLOWED_ORIGINS="${AUTH_ALLOWED_ORIGINS},${codespaces_origin}"
+fi
 export AUTH_COOKIE_SECURE=true
 export UPLOAD_BASE_PATH="$upload_dir"
 export PWA_TEST_HOSTNAME="$hostname"

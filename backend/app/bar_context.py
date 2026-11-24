@@ -22,7 +22,7 @@ EXPECTED_BAR_HEADER = "X-Expected-Bar-ID"
 @dataclass(frozen=True)
 class BarAccess:
     bar: Bar
-    membership: UserBarMembership
+    membership: UserBarMembership | None
 
 
 @dataclass(frozen=True)
@@ -30,10 +30,17 @@ class BarContext:
     auth_session: AuthSession
     user: User
     bar: Bar
-    membership: UserBarMembership
+    membership: UserBarMembership | None
 
     @property
     def role(self) -> MembershipRole:
+        if self.user.is_global_admin:
+            return MembershipRole.owner
+        if self.membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="active bar access denied",
+            )
         return self.membership.role
 
 
@@ -74,6 +81,18 @@ def get_user_bar_access(
     auth_session: AuthSession = Depends(get_current_session),
     db: Session = Depends(get_db),
 ) -> list[BarAccess]:
+    if auth_session.user.is_global_admin:
+        bars = db.scalars(
+            select(Bar)
+            .where(Bar.is_active.is_(True))
+            .order_by(Bar.name.asc(), Bar.id.asc())
+        ).all()
+
+        return [
+            BarAccess(bar=bar, membership=None)
+            for bar in bars
+        ]
+
     rows = db.execute(
         select(Bar, UserBarMembership)
         .join(UserBarMembership, UserBarMembership.bar_id == Bar.id)
@@ -83,7 +102,10 @@ def get_user_bar_access(
         )
         .order_by(Bar.name.asc(), Bar.id.asc())
     ).all()
-    return [BarAccess(bar=bar, membership=membership) for bar, membership in rows]
+    return [
+        BarAccess(bar=bar, membership=membership)
+        for bar, membership in rows
+    ]
 
 
 def get_expected_bar_id(
@@ -147,6 +169,27 @@ def resolve_active_bar_context(
         raise HTTPException(status_code=409, detail="no active bar selected")
     if expected_bar_id != auth_session.active_bar_id:
         raise HTTPException(status_code=409, detail="active bar does not match request")
+
+    if auth_session.user.is_global_admin:
+        bar = db.scalar(
+            select(Bar).where(
+                Bar.id == expected_bar_id,
+                Bar.is_active.is_(True),
+            )
+        )
+
+        if bar is None:
+            raise HTTPException(
+                status_code=403,
+                detail="active bar access denied",
+            )
+
+        return BarContext(
+            auth_session=auth_session,
+            user=auth_session.user,
+            bar=bar,
+            membership=None,
+        )
 
     access = db.execute(
         select(Bar, UserBarMembership)

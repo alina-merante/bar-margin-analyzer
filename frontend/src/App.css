@@ -5350,3 +5350,28 @@ body {
   outline: 3px solid #b27a41;
   outline-offset: 3px;
 }
+
+
+/* Avviso di protezione degli accessi */
+.auth-lock-warning {
+  padding: 16px;
+  border: 1px solid #e6b66b;
+  border-radius: 12px;
+  background: #fff4e3;
+  color: #805019;
+}
+
+.auth-lock-warning p {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+
+.auth-lock-countdown {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.auth-card button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

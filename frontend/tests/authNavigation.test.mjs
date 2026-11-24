@@ -46,13 +46,31 @@ test("AT-007: logout refreshes CSRF before sending the request", () => {
     authShell.indexOf("if (loading) return", authShell.indexOf("async function logout("))
   );
 
-  const csrfIndex = logout.indexOf('authRequest("/csrf")');
+  const csrfIndex = logout.indexOf('authRequest("/csrf",');
   const logoutIndex = logout.indexOf('authRequest("/logout"');
 
   assert.ok(csrfIndex >= 0, "Manca il rinnovo CSRF");
   assert.ok(logoutIndex > csrfIndex, "Logout eseguito prima del rinnovo CSRF");
-  assert.match(logout, /csrf\.current\s*=\s*refreshed\.csrf_token/);
-  assert.match(logout, /"X-CSRF-Token": csrf\.current/);
+
+  assert.match(
+    logout,
+    /const expectedSessionId = String\(sessionId\.current\)/
+  );
+
+  assert.match(
+    logout,
+    /"X-Expected-Session-ID": expectedSessionId/
+  );
+
+  assert.match(
+    logout,
+    /authRequest\("\/csrf",\s*\{\s*headers\s*\}\)/
+  );
+
+  assert.match(
+    logout,
+    /authRequest\("\/logout",\s*\{\s*method:\s*"POST",\s*headers:\s*\{\s*\.\.\.headers,\s*"X-CSRF-Token": refreshed\.csrf_token/
+  );
 });
 
 test("AT-007: successful logout clears session and resets navigation", () => {
@@ -60,9 +78,30 @@ test("AT-007: successful logout clears session and resets navigation", () => {
     authShell.indexOf("async function logout("),
     authShell.indexOf("if (loading) return", authShell.indexOf("async function logout("))
   );
-  assert.match(logout, /setUser\(null\)/);
-  assert.match(logout, /setBars\(\[\]\)/);
-  assert.match(logout, /window\.history\.replaceState\(null,\s*["']["']?,?\s*["']\/["']\)/);
+
+  const logoutIndex = logout.indexOf('await authRequest("/logout"');
+  const clearIndex = logout.indexOf("clearSession();");
+  const catchIndex = logout.indexOf("catch (err)");
+
+  assert.ok(logoutIndex >= 0);
+  assert.ok(clearIndex > logoutIndex);
+  assert.ok(clearIndex < catchIndex);
+
+  const start = authShell.indexOf("const clearSession = useCallback(");
+  const end = authShell.indexOf("const openContext = useCallback(", start);
+
+  assert.ok(start >= 0);
+  assert.ok(end > start);
+
+  const clearSession = authShell.slice(start, end);
+
+  assert.match(clearSession, /closeContext\(\)/);
+  assert.match(clearSession, /csrf\.current\s*=\s*""/);
+  assert.match(clearSession, /sessionId\.current\s*=\s*null/);
+  assert.match(clearSession, /setUser\(null\)/);
+  assert.match(clearSession, /setBars\(\[\]\)/);
+  assert.match(clearSession, /setPassword\(""\)/);
+  assert.match(clearSession, /window\.history\.replaceState\(null,\s*"",\s*"\/"\)/);
 });
 
 test("AT-007: failed logout remains visible to the user", () => {
@@ -97,4 +136,13 @@ test("AT-007: authentication requests use same-origin credentials", async () => 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+
+test("AT-007: login uses dedicated pre-auth CSRF endpoint", () => {
+  const login = functionBody(authShell, "login", "selectBar");
+
+  assert.match(login, /authRequest\(["']\/login-csrf["']\)/);
+  assert.doesNotMatch(login, /authRequest\(["']\/csrf["']\)/);
+  assert.match(login, /"X-CSRF-Token": preAuth\.csrf_token/);
 });

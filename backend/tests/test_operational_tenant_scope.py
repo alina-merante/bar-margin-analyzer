@@ -30,6 +30,8 @@ from app.models import (
     User,
     UserBarMembership,
 )
+from app.models.membership_permission import MembershipPermission
+from app.permissions import DelegablePermission
 from app.routers.auth import router as auth_router
 from app.routers.bar_context import router as bar_context_router
 from app.routers.cash_closures import router as cash_closures_router
@@ -486,6 +488,12 @@ def test_cash_closure_review_is_scoped_and_unassigned_ocr_data_is_hidden(
         f"/cash-closures/review/{legacy_intake_id}"
     ).status_code == 404
 
+    verify_one = client.post(
+        f"/cash-closures/review/{intake_ids[ids['bar_one']]}/verify",
+        headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf_token},
+    )
+    assert verify_one.status_code == 200, verify_one.text
+
     approve_one = client.post(
         f"/cash-closures/review/{intake_ids[ids['bar_one']]}/approve",
         headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf_token},
@@ -500,6 +508,12 @@ def test_cash_closure_review_is_scoped_and_unassigned_ocr_data_is_hidden(
     reviews_two = client.get("/cash-closures/review")
     assert reviews_two.status_code == 200
     assert [row["id"] for row in reviews_two.json()] == [intake_ids[ids["bar_two"]]]
+    verify_two = client.post(
+        f"/cash-closures/review/{intake_ids[ids['bar_two']]}/verify",
+        headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf_token},
+    )
+    assert verify_two.status_code == 200, verify_two.text
+
     approve_two = client.post(
         f"/cash-closures/review/{intake_ids[ids['bar_two']]}/approve",
         headers={"Origin": ALLOWED_ORIGIN, "X-CSRF-Token": csrf_token},
@@ -528,7 +542,53 @@ def test_role_authentication_csrf_and_active_bar_fail_closed(
         staff_csrf = login(staff_client, "staff@example.test")
         assert select_bar(staff_client, ids["bar_one"], staff_csrf).status_code == 200
         assert staff_client.get("/categories").status_code == 403
-        assert staff_client.get("/cash-closures/review").status_code == 200
+        # Without explicit permissions, access must be denied.
+        assert staff_client.get("/cash-closures/review").status_code == 403
+
+        # Grant cash closure read access to this membership only.
+        with test_sessionmaker() as db:
+            membership = db.scalar(
+                select(UserBarMembership).where(
+                    UserBarMembership.user_id == ids["staff"],
+                    UserBarMembership.bar_id == ids["bar_one"],
+                )
+            )
+            assert membership is not None
+            permission = MembershipPermission(
+                membership_id=membership.id,
+                permission=DelegablePermission.CASH_CLOSURES_VIEW_ALL.value,
+            )
+            db.add(permission)
+            db.commit()
+
+        # The existing session must recognise the new permission.
+        response = staff_client.get("/cash-closures/review")
+        assert response.status_code == 200, response.text
+
+        # Cash closure permissions must not grant access to categories.
+        assert staff_client.get("/categories").status_code == 403
+
+        # Revoke the permission and verify immediate enforcement.
+        with test_sessionmaker() as db:
+            membership = db.scalar(
+                select(UserBarMembership).where(
+                    UserBarMembership.user_id == ids["staff"],
+                    UserBarMembership.bar_id == ids["bar_one"],
+                )
+            )
+            assert membership is not None
+            permission = db.scalar(
+                select(MembershipPermission).where(
+                    MembershipPermission.membership_id == membership.id,
+                    MembershipPermission.permission ==
+                    DelegablePermission.CASH_CLOSURES_VIEW_ALL.value,
+                )
+            )
+            assert permission is not None
+            db.delete(permission)
+            db.commit()
+
+        assert staff_client.get("/cash-closures/review").status_code == 403
         assert upload(
             staff_client,
             "/imports/pos-csv",

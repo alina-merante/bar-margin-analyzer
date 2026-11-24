@@ -802,6 +802,14 @@ def test_approval_is_restricted_to_owner_or_global_admin_in_active_bar(
     approved = client.post(f"{url}/approve", headers=headers(csrf))
     assert approved.status_code == (200 if allowed else 403)
     if global_admin:
+        # Global administrators can access every active bar.
+        assert select_bar(client, ids["bar_two"], csrf).status_code == 200
+
+        # Access to another bar must preserve tenant isolation.
+        response = client.get("/cash-closures/review")
+        assert response.status_code == 200, response.text
+        assert all(row["id"] != review["id"] for row in response.json())
+    else:
         assert select_bar(client, ids["bar_two"], csrf).status_code == 403
 
 

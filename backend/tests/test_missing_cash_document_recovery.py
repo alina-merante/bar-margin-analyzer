@@ -239,6 +239,12 @@ def test_approved_closure_recovery_preserves_accounting(
         intake = db.scalars(select(CashClosureIntake)).one()
         intake_id = intake.id
 
+    verification = client.post(
+        f"/cash-closures/review/{intake_id}/verify",
+        headers=headers(csrf),
+    )
+    assert verification.status_code == 200, verification.text
+
     approval = client.post(
         f"/cash-closures/review/{intake_id}/approve",
         headers=headers(csrf),

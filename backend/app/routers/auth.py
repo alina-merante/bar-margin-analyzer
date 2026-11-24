@@ -13,6 +13,7 @@ from app.auth import (
     get_current_session,
     require_allowed_origin,
     session_is_active,
+    validate_expected_session,
 )
 from app.database import get_db
 from app.models import AuthLoginAttempt, AuthSession, User
@@ -55,6 +56,10 @@ def _csrf_cookie_name() -> str:
     return "barmanager_csrf"
 
 
+def _login_csrf_cookie_name() -> str:
+    return "barmanager_login_csrf"
+
+
 def _set_csrf_cookie(response: Response, token: str, max_age: int) -> None:
     response.set_cookie(
         _csrf_cookie_name(),
@@ -85,7 +90,7 @@ def _clear_auth_cookies(response: Response) -> None:
 
 
 def _validate_pre_auth_csrf(request: Request) -> str:
-    cookie_token = request.cookies.get(_csrf_cookie_name(), "")
+    cookie_token = request.cookies.get(_login_csrf_cookie_name(), "")
     header_token = request.headers.get("x-csrf-token", "")
     if (
         not cookie_token
@@ -108,33 +113,91 @@ def _check_login_rate_limit(
     source_key: str,
     now: dt.datetime,
 ) -> None:
-    cutoff = now - dt.timedelta(seconds=settings.login_attempt_window_seconds)
-    db.execute(
-        delete(AuthLoginAttempt).where(AuthLoginAttempt.attempted_at < cutoff)
+    window = dt.timedelta(
+        seconds=settings.login_attempt_window_seconds
     )
-    email_source_count = db.scalar(
-        select(func.count(AuthLoginAttempt.id)).where(
-            AuthLoginAttempt.attempted_at >= cutoff,
-            AuthLoginAttempt.email_key == email_key,
-            AuthLoginAttempt.source_key == source_key,
+    cutoff = now - window
+
+    db.execute(
+        delete(AuthLoginAttempt).where(
+            AuthLoginAttempt.attempted_at < cutoff
         )
-    ) or 0
-    source_count = db.scalar(
-        select(func.count(AuthLoginAttempt.id)).where(
-            AuthLoginAttempt.attempted_at >= cutoff,
-            AuthLoginAttempt.source_key == source_key,
+    )
+
+    source_filters = (
+        AuthLoginAttempt.attempted_at >= cutoff,
+        AuthLoginAttempt.source_key == source_key,
+    )
+
+    email_filters = (
+        *source_filters,
+        AuthLoginAttempt.email_key == email_key,
+    )
+
+    def remaining_seconds(filters, limit):
+        count = db.scalar(
+            select(func.count(AuthLoginAttempt.id)).where(*filters)
+        ) or 0
+
+        if count < limit:
+            return 0
+
+        threshold = db.scalar(
+            select(AuthLoginAttempt.attempted_at)
+            .where(*filters)
+            .order_by(
+                AuthLoginAttempt.attempted_at.asc(),
+                AuthLoginAttempt.id.asc(),
+            )
+            .offset(count - limit)
+            .limit(1)
         )
-    ) or 0
-    if (
-        email_source_count >= settings.login_attempt_limit
-        or source_count >= settings.login_source_attempt_limit
-    ):
+
+        if threshold is None:
+            return settings.login_attempt_window_seconds
+
+        if threshold.tzinfo is None and now.tzinfo is not None:
+            threshold = threshold.replace(tzinfo=dt.timezone.utc)
+
+        residual = (threshold + window - now).total_seconds()
+
+        # Arrotondamento prudenziale: il limite resta valido
+        # anche nell'istante esatto di scadenza.
+        return max(1, int(residual) + 1)
+
+    retry_after = max(
+        remaining_seconds(
+            email_filters, settings.login_attempt_limit
+        ),
+        remaining_seconds(
+            source_filters, settings.login_source_attempt_limit
+        ),
+    )
+
+    if retry_after > 0:
         db.rollback()
         raise HTTPException(
             status_code=429,
             detail="too many login attempts; try again later",
-            headers={"Retry-After": str(settings.login_attempt_window_seconds)},
+            headers={"Retry-After": str(retry_after)},
         )
+
+
+@router.get("/login-csrf")
+def issue_login_csrf_token(response: Response) -> dict[str, str]:
+    """Issue a pre-authentication token without rotating session CSRF."""
+    csrf_token = create_pre_auth_csrf_token()
+    response.set_cookie(
+        _login_csrf_cookie_name(),
+        csrf_token,
+        max_age=settings.pre_auth_csrf_ttl_seconds,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"csrf_token": csrf_token}
 
 
 @router.get("/csrf")
@@ -145,7 +208,25 @@ def issue_csrf_token(
 ) -> dict[str, str]:
     response.headers["Cache-Control"] = "no-store"
     auth_session = find_session(request, db)
-    if auth_session is not None and session_is_active(auth_session):
+
+    if request.headers.get("X-Expected-Session-ID") is not None:
+        if (
+            auth_session is None
+            or not session_is_active(auth_session)
+            or not auth_session.user.is_active
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="authentication required",
+            )
+
+        validate_expected_session(request, auth_session)
+
+    if (
+        auth_session is not None
+        and session_is_active(auth_session)
+        and auth_session.user.is_active
+    ):
         csrf_token = secrets.token_urlsafe(32)
         auth_session.csrf_token_hash = token_hash(csrf_token)
         db.commit()
@@ -153,6 +234,15 @@ def issue_csrf_token(
     else:
         csrf_token = create_pre_auth_csrf_token()
         _set_csrf_cookie(response, csrf_token, settings.pre_auth_csrf_ttl_seconds)
+        response.set_cookie(
+            _login_csrf_cookie_name(),
+            csrf_token,
+            max_age=settings.pre_auth_csrf_ttl_seconds,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite="lax",
+            path="/",
+        )
     return {"csrf_token": csrf_token}
 
 
@@ -213,6 +303,7 @@ def login(
     response.headers["Cache-Control"] = "no-store"
     return {
         "user": {"id": user.id, "email": user.email},
+        "session_id": auth_session.id,
         "expires_at": expires_at.isoformat(),
         "csrf_token": csrf_token,
     }
@@ -226,6 +317,16 @@ def logout(
 ) -> dict[str, bool]:
     require_allowed_origin(request)
     auth_session = find_session(request, db)
+
+    if request.headers.get("X-Expected-Session-ID") is not None:
+        if auth_session is None:
+            raise HTTPException(
+                status_code=401,
+                detail="authentication required",
+            )
+
+        validate_expected_session(request, auth_session)
+
     if auth_session is not None and session_is_active(auth_session):
         csrf_cookie = request.cookies.get(_csrf_cookie_name(), "")
         csrf_header = request.headers.get("x-csrf-token", "")
@@ -255,6 +356,13 @@ def logout(
             db.commit()
 
     _clear_auth_cookies(response)
+    response.delete_cookie(
+        _login_csrf_cookie_name(),
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
     response.headers["Cache-Control"] = "no-store"
     return {"logged_out": True}
 
@@ -270,5 +378,6 @@ def current_session(
             "id": auth_session.user.id,
             "email": auth_session.user.email,
         },
+        "session_id": auth_session.id,
         "expires_at": auth_session.expires_at.isoformat(),
     }

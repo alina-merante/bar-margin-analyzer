@@ -381,6 +381,9 @@ def test_upload_same_total_other_number_is_saved_with_duplicate_warning(upload_e
         _upload_png(session, first)
         intake = session.scalars(select(CashClosureIntake)).one()
         context = _test_context(session)
+        cash_closures.verify_cash_closure_review(
+            intake.id, _auth_session=context.auth_session, context=context, db=session
+        )
         cash_closures.approve_cash_closure_review(
             intake.id, _auth_session=context.auth_session, context=context, db=session
         )

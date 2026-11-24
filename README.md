@@ -1033,3 +1033,15 @@ inclusi i casi di logout riuscito e fallito.
 I test non costituiscono ancora una verifica browser end-to-end
 completa; i casi di sessione scaduta e concorrenza tra schede
 restano da coprire.
+
+### Accesso PWA di test tramite GitHub Codespaces
+
+Lo script `scripts/start-pwa-test.sh` autorizza esplicitamente
+sia l'origine HTTPS Tailscale sia l'origine HTTPS della porta 5174
+di GitHub Codespaces, quando `CODESPACE_NAME` è disponibile.
+
+Restano attivi i controlli CSRF e i cookie Secure.
+Quando cambia la configurazione delle origini, arrestare
+l'ambiente con `scripts/stop-pwa-test.sh` e riavviarlo.
+
+Vite autorizza esplicitamente entrambi gli hostname.
