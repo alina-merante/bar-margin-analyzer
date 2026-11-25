@@ -5375,3 +5375,454 @@ body {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+
+/* Sidebar: identità utente */
+
+.sidebar-user {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  min-width: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 168, 90, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-user-label {
+  color: #d6bda6;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.sidebar-user-email {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-user-role {
+  color: #e8a85a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+
+/* Sidebar: selettore bar personalizzato */
+
+.sidebar-nav {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-logo,
+.sidebar-bottom {
+  flex-shrink: 0;
+}
+
+.sidebar-account {
+  min-width: 0;
+}
+
+.bar-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.sidebar-account .bar-picker-trigger,
+.sidebar-account .sidebar-logout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  background: #382517;
+  border: 1px solid #80532d;
+  border-radius: 10px;
+  color: #f8eadc;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#active-bar-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.bar-picker-options {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  padding: 5px;
+  background: #382517;
+  border: 1px solid #80532d;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.bar-picker-options[hidden] {
+  display: none;
+}
+
+.sidebar-account .bar-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin: 2px 0;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #f8eadc;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-account .bar-picker-option:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-account .bar-picker-option[aria-pressed="true"] {
+  background: #c8813a;
+  color: #211207;
+  font-weight: 700;
+}
+
+.sidebar-account .sidebar-logout {
+  justify-content: center;
+  background: transparent;
+}
+
+.sidebar-account .sidebar-logout:hover,
+.sidebar-account .bar-picker-trigger:hover {
+  background: #50351f;
+}
+
+.sidebar-account button:focus-visible {
+  outline: 2px solid #e8a85a;
+  outline-offset: 2px;
+}
+
+@media (max-height: 850px) and (min-width: 901px) {
+  .sidebar-logo {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .sidebar-nav {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .sidebar-bottom {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .sidebar-user {
+    padding: 9px;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+}
+
+
+/* === RESPONSIVE MOBILE NAVIGATION === */
+
+.mobile-menu-toggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .dashboard-shell {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-shell .sidebar {
+    position: relative;
+    width: 100%;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    position: relative;
+    padding: 16px 20px 16px 76px;
+    min-height: 76px;
+    text-align: left;
+  }
+
+  .sidebar-logo .logo-icon {
+    display: none;
+  }
+
+  .mobile-menu-toggle {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #80532d;
+    border-radius: 12px;
+    background: #382517;
+    color: #f8eadc;
+    font-size: 24px;
+    cursor: pointer;
+  }
+
+  .sidebar:not(.mobile-menu-open) .sidebar-nav,
+  .sidebar:not(.mobile-menu-open) .sidebar-user,
+  .sidebar:not(.mobile-menu-open) .sidebar-logout {
+    display: none;
+  }
+
+  .sidebar-nav {
+    flex: none;
+    padding: 8px 12px;
+  }
+
+  .sidebar-bottom {
+    padding: 10px 12px;
+  }
+
+  .sidebar-account {
+    margin-bottom: 8px;
+  }
+
+  .bar-picker-options {
+    top: calc(100% + 6px);
+    bottom: auto;
+  }
+
+  .month-picker-popover {
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(310px, calc(100vw - 32px));
+  }
+
+  .dashboard-shell .main {
+    margin-left: 0;
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+
+/* === RESPONSIVE: PAGINE OPERATIVE === */
+
+@media (max-width: 900px) {
+
+  .dashboard-page,
+  .invoices-dashboard-page,
+  .upload-page,
+  .cash-closure-history-page,
+  .dashboard-shell .main-content {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 24px;
+  }
+
+  .dashboard-header,
+  .invoices-dashboard-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .dashboard-title,
+  .invoices-dashboard-title,
+  .upload-page-title {
+    font-size: clamp(28px, 5vw, 40px);
+    line-height: 1.15;
+  }
+
+  .dashboard-actions,
+  .invoices-dashboard-actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .dashboard-export-btn,
+  .dashboard-upload-btn,
+  .invoice-manual-btn,
+  .invoice-upload-btn {
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 44px;
+    padding: 12px 16px;
+    font-size: 14px;
+    border-radius: 12px;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .dashboard-kpi-grid,
+  .invoice-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .dashboard-kpi-card,
+  .invoice-kpi-card {
+    min-width: 0;
+    min-height: 145px;
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .dashboard-kpi-card .kpi-value,
+  .invoice-kpi-value {
+    font-size: clamp(24px, 4vw, 36px);
+    overflow-wrap: anywhere;
+  }
+
+  .invoice-kpi-card.overdue {
+    grid-column: 1 / -1;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .dashboard-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-content-grid > *,
+  .dashboard-right-column,
+  .upload-history-card {
+    min-width: 0;
+  }
+
+  .daily-reminder-card {
+    padding: 20px;
+  }
+
+  .daily-reminder-head {
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .daily-reminder-head h2 {
+    font-size: 24px;
+    line-height: 1.2;
+  }
+
+  .daily-reminder-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    overflow: visible;
+  }
+
+  .daily-reminder-scroll .daily-reminder-item {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .invoice-modern-table-card,
+  .upload-history-table,
+  .cash-review-comparison-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .cash-review-actions button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 600px) {
+
+  .dashboard-page,
+  .invoices-dashboard-page,
+  .upload-page,
+  .cash-closure-history-page,
+  .dashboard-shell .main-content {
+    padding: 16px;
+  }
+
+  .dashboard-kpi-grid,
+  .daily-reminder-scroll,
+  .upload-primary-grid,
+  .upload-secondary-grid,
+  .cash-review-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-kpi-card {
+    min-height: 130px;
+  }
+
+  .invoice-kpi-card {
+    padding: 12px;
+    min-height: 130px;
+  }
+
+  .invoice-kpi-label {
+    font-size: 11px;
+    letter-spacing: 0.6px;
+  }
+
+  .invoice-kpi-value {
+    font-size: clamp(18px, 5.8vw, 26px);
+    margin-top: 16px;
+  }
+
+  .invoice-kpi-pill {
+    max-width: 100%;
+    white-space: normal;
+    font-size: 11px;
+    padding: 6px 8px;
+    margin-top: 12px;
+  }
+
+  .dashboard-actions > *,
+  .invoices-dashboard-actions > * {
+    flex: 1 1 130px;
+  }
+
+  .daily-reminder-head h2 {
+    font-size: 21px;
+  }
+
+  .daily-reminder-scroll .daily-reminder-item {
+    min-height: 150px;
+  }
+
+  .cash-review-card {
+    padding: 14px;
+  }
+
+  .cash-review-actions button {
+    flex: 1 1 140px;
+  }
+
+  .upload-history-card {
+    padding: 16px;
+  }
+}

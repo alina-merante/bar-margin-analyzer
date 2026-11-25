@@ -170,7 +170,7 @@ async function responseJsonOrThrow(response) {
   return payload;
 }
 
-export default function App({ bars, activeBar, onSelectBar, onLogout }) {
+export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   const { fetch } = useTenantApi();
 
   const financialPermissions = new Set(activeBar?.permissions ?? []);
@@ -1704,6 +1704,7 @@ const overdueInvoicesAmount = useMemo(
     <BrowserRouter>
       <div className="dashboard-shell">
         <Sidebar
+          user={user}
           canViewDashboard={canViewDashboard}
           canViewInvoices={canViewInvoices}
           canAccessUpload={canAccessUpload}

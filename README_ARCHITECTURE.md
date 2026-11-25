@@ -266,3 +266,135 @@ sh scripts/verify-clean-bootstrap.sh
 ```
 
 API: `http://localhost:8000` e `http://localhost:8000/docs`.
+
+## Rielaborazione delle chiusure OCR
+
+In **Chiusure da verificare**, usare **Rielabora OCR** per rileggere il
+documento originale di una chiusura ancora pendente. Confrontare i valori
+attuali, comprese eventuali correzioni manuali, con la nuova lettura e confermare
+solo se si desidera sostituirli. I valori precedenti restano nello storico della
+scheda; la chiusura richiede comunque revisione e approvazione esplicita.
+Salvare prima eventuali modifiche non ancora salvate. Il totale scontrini è
+distinto dal totale complessivo e non lo sostituisce.
+La vista predefinita mostra le chiusure con data nel mese selezionato; scegliere
+**Tutte le chiusure pendenti** per vedere anche altri mesi e quelle senza data.
+Una data salvata o rielaborata aggiorna il periodo del documento. Senza data
+resta il mese archivistico precedente, non una data contabile inventata.
+L'approvazione è riservata al proprietario del bar o a un amministratore
+globale con accesso al bar attivo.
+
+### Ripristino dei documenti originali mancanti
+
+Quando il file originale di una chiusura di cassa già importata non è più
+disponibile, è possibile ricaricare lo stesso documento tramite il normale
+caricamento delle chiusure di cassa.
+
+Il ripristino è consentito esclusivamente se:
+- il documento appartiene al bar attualmente selezionato;
+- esiste una precedente acquisizione con SHA-256 identico;
+- il file originale è effettivamente mancante;
+- l'utente dispone dei permessi necessari per il caricamento.
+
+Il ripristino conserva il documento e la chiusura esistenti, senza creare
+nuovi record o modificare importi, dati OCR e stato di approvazione.
+
+I file esistenti non vengono sovrascritti. I duplicati normali continuano
+a restituire HTTP 409.
+
+Il ripristino utilizza la directory configurata tramite UPLOAD_BASE_PATH.
+Per l'ambiente PWA isolato, gli upload sono conservati nella directory
+persistente definita in scripts/pwa-test-common.sh.
+
+Test dedicati:
+backend/tests/test_missing_cash_document_recovery.py
+
+### Avvisi per chiusure di cassa incomplete
+
+Nella schermata di revisione OCR, BarManager mostra un avviso
+riepilogativo quando mancano uno o più campi obbligatori:
+data, numero della chiusura o totale complessivo.
+
+L'avviso si aggiorna durante la compilazione e scompare quando
+tutti i campi obbligatori sono valorizzati.
+
+Un campo vuoto rappresenta un dato non noto ed è distinto da
+un valore esplicito pari a zero. Il totale complessivo non viene
+ricavato automaticamente dal totale degli scontrini.
+
+La modifica riguarda esclusivamente l'interfaccia e non altera
+i dati OCR salvati, i controlli del backend o le autorizzazioni
+di approvazione.
+
+Test dedicati:
+`node --test frontend/tests/cashClosureIncomplete.test.js`
+
+### Caricamento fotografie da tablet
+
+- Le immagini fino a 20 MB vengono caricate normalmente.
+- Le immagini superiori a 20 MB vengono inviate alla funzione
+  di compressione automatica prima del caricamento.
+- La compressione utilizza un obiettivo di 5 MB e una dimensione
+  massima di 2000 pixel per lato.
+- Se la compressione fallisce, viene mostrato un messaggio
+  comprensibile e il caricamento viene interrotto.
+- I PDF superiori a 20 MB vengono rifiutati con un messaggio
+  che richiede di ridurne la dimensione.
+- Le regole di caricamento sono coperte da test automatici.
+
+La disponibilità della fotocamera fisica e il risultato della
+compressione su uno specifico tablet richiedono una prova
+sul dispositivo reale.
+
+### Storico e annullamento delle chiusure di cassa
+
+Nel branch `feature/granular-permissions` è disponibile una
+pagina dedicata allo storico delle chiusure di cassa, raggiungibile
+dalla navigazione dell'applicazione secondo i permessi previsti.
+
+Lo storico permette di:
+- consultare le chiusure approvate e annullate del mese selezionato;
+- visualizzare data, numero, importi e documento associato;
+- distinguere le chiusure approvate da quelle annullate;
+- annullare una chiusura approvata quando il backend autorizza
+  esplicitamente l'operazione tramite `can_annul`.
+
+L'annullamento:
+- è riservato al proprietario del bar e all'amministratrice globale
+  autorizzata;
+- richiede una motivazione non vuota;
+- utilizza `POST /cash-closures/review/{id}/annul`;
+- è protetto da autenticazione, CSRF e isolamento tra bar;
+- conserva la chiusura e il documento originale;
+- registra le informazioni di annullamento per la tracciabilità;
+- esclude le chiusure annullate dai calcoli analytics pertinenti.
+
+L'endpoint `GET /cash-closures/history?month=YYYY-MM`
+restituisce lo storico del mese nel contesto del bar attivo.
+
+Il frontend impedisce di utilizzare una conferma di annullamento
+aperta per un bar differente. Durante il cambio bar o mese
+non mostra dati del contesto precedente e ignora le risposte
+tardive delle richieste precedenti.
+
+In caso di errore di caricamento dello storico, viene mostrato
+il pulsante **Riprova caricamento**, che ripete la lettura senza
+modificare le chiusure.
+
+Dopo un annullamento riuscito, lo storico viene aggiornato.
+Un eventuale errore nel successivo aggiornamento della dashboard
+non viene presentato come fallimento dell'annullamento.
+
+La migrazione Alembic
+`20261120_0017_add_cash_closure_annulment.py`
+introduce i campi necessari alla tracciabilità.
+Non applicare la migrazione al database originale senza
+una verifica preventiva in ambiente di test e autorizzazione esplicita.
+
+I test frontend sono in
+`frontend/tests/cashClosureHistoryPage.test.mjs`
+e coprono permessi, motivazione obbligatoria, cambio bar,
+risposte tardive, aggiornamento dopo annullamento,
+errori e tentativi di ricaricamento.
+
+I test backend sono in
+`backend/tests/test_cash_closure_annulment.py`.

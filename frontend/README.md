@@ -74,19 +74,17 @@ o PNG. Il backend estrae automaticamente sei campi mediante OCR:
 - Importo carta/POS (in €)
 - Numero scontrini emessi
 
-**Flusso AUTO_SAVE:** Se tutti i campi sono estratti correttamente e coerenti
-(importo totale = contanti + carta), il record viene salvato automaticamente.
+Tutte le chiusure OCR entrano in revisione,
+anche quando i dati estratti sono completi e coerenti.
 
-**Flusso SAVE_FOR_REVIEW:** Se mancano campi, ci sono incoerenze negli importi,
-o la data è ambigua, il record viene messo in revisione. L'operatore può:
+1. Visualizzare il documento originale.
+2. Correggere i campi, se autorizzati.
+3. Registrare la verifica completata.
+4. Approvare o rifiutare secondo le autorizzazioni.
 
-1. Visualizzare l'anteprima dell'immagine
-2. Correggere manualmente i campi non estratti o errati
-3. Approvare e collegare la chiusura ai dati effettivi del registratore
-4. Rifiutare e marcare come non applicabile
-
-I dati estratti e corretti vengono salvati nel database con timestamp e
-tracciamento delle modifiche.
+Una correzione o rielaborazione invalida la verifica precedente.
+L'approvazione e il rifiuto definitivo sono riservati al
+proprietario e all'amministratore globale.
 
 ## Build e lint
 

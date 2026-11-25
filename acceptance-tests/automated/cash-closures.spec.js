@@ -31,10 +31,12 @@ async function login(page) {
   await expect(dashboard).toBeVisible();
 
   await expect(
-    page.locator("#active-bar option:checked")
+    page.locator("#active-bar-name")
   ).toHaveText("Bar Demo PWA");
 
-  await expect(page.locator("#active-bar")).toHaveValue("4");
+  await expect(
+    page.locator('.bar-picker-option[aria-pressed="true"]')
+  ).toHaveAttribute("data-bar-id", "4");
 }
 
 async function navigate(page, path) {

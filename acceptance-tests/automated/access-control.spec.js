@@ -64,20 +64,32 @@ async function login(page, role, bar = primary) {
 
     const id = bar === primary ? "4" : "5";
 
-    if (await selector.inputValue() !== id) {
-        await selector.selectOption(id);
+    const selected = page.locator(
+        '.bar-picker-option[aria-pressed="true"]'
+    );
+
+    if (await selected.getAttribute("data-bar-id") !== id) {
+        await switchBar(page, id);
     }
 
-    await expect(selector).toHaveValue(id);
+    await expect(selected).toHaveAttribute("data-bar-id", id);
     await expect(
-        page.locator("#active-bar option:checked")
+        page.locator("#active-bar-name")
     ).toHaveText(bar);
 }
 
+async function chooseBar(page, id) {
+    await page.locator("#active-bar").click();
+    await page.locator(
+        `.bar-picker-option[data-bar-id="${id}"]`
+    ).click();
+}
+
 async function switchBar(page, id) {
-    await page.locator("#active-bar").selectOption(String(id));
-    await expect(page.locator("#active-bar"))
-        .toHaveValue(String(id));
+    await chooseBar(page, id);
+    await expect(
+        page.locator('.bar-picker-option[aria-pressed="true"]')
+    ).toHaveAttribute("data-bar-id", String(id));
 }
 
 async function apiHeaders(page, barId) {
@@ -256,7 +268,7 @@ test("AT-005.05 - Admin globale senza membership", async ({ page }) => {
     await login(page, "admin");
 
     const options = await page.locator(
-        "#active-bar option"
+        ".bar-picker-option > span:first-child"
     ).allTextContents();
 
     expect(options.sort()).toEqual(
@@ -277,7 +289,7 @@ test("AT-006.01 - Owner visualizza entrambi i bar", async ({ page }) => {
     await login(page, "owner");
 
     const options = await page.locator(
-        "#active-bar option"
+        ".bar-picker-option > span:first-child"
     ).allTextContents();
 
     expect(options.sort()).toEqual(
@@ -330,7 +342,7 @@ test("AT-006.03 - Isolamento ricavi dashboard", async ({ page }) => {
 test("AT-006.04 - Staff non accede al secondo bar", async ({ page }) => {
     await login(page, "staff");
 
-    await expect(page.locator("#active-bar option"))
+    await expect(page.locator(".bar-picker-option > span:first-child"))
         .toHaveCount(1);
 
     const headers = await apiHeaders(page, 4);
@@ -657,14 +669,16 @@ async function openStaffSession(page, current) {
         }).click();
     }
 
-    await expect(selector).toHaveValue("4");
+    await expect(
+        page.locator('.bar-picker-option[aria-pressed="true"]')
+    ).toHaveAttribute("data-bar-id", "4");
 
     await expect(
-        page.locator("#active-bar option:checked")
+        page.locator("#active-bar-name")
     ).toHaveText(primary);
 
     await expect(
-        page.locator('#active-bar option[value="5"]')
+        page.locator('.bar-picker-option[data-bar-id="5"]')
     ).toHaveCount(0);
 
     await expectCurrentIdentity(page, current);
@@ -790,7 +804,7 @@ test("AT-007.19 - Cambio bar bloccato dalla vecchia scheda", async ({ page, cont
                 "/api/auth/active-bar" &&
             response.request().method() === "PUT"
         ),
-        page.locator("#active-bar").selectOption("5")
+        chooseBar(page, 5)
     ]);
 
     expect(response.status()).toBe(409);
@@ -810,7 +824,7 @@ test("AT-007.19 - Cambio bar bloccato dalla vecchia scheda", async ({ page, cont
     await openStaffSession(second, current);
 
     await expect(
-        second.locator('#active-bar option[value="5"]')
+        second.locator('.bar-picker-option[data-bar-id="5"]')
     ).toHaveCount(0);
 });
 
@@ -878,4 +892,98 @@ test("AT-007.20 - Recupero CSRF con sessione invariata", async ({ page, context 
     } finally {
         page.off("response", listener);
     }
+});
+
+
+test("AT-UI.01 - Identità amministratore globale", async ({ page }) => {
+    await login(page, "admin");
+
+    await expect(page.locator(".sidebar-user-email"))
+        .toHaveText(accounts.admin);
+
+    await expect(page.locator(".sidebar-user-role"))
+        .toHaveText("Amministratore globale");
+});
+
+test("AT-UI.02 - Identità proprietario", async ({ page }) => {
+    await login(page, "owner");
+
+    await expect(page.locator(".sidebar-user-email"))
+        .toHaveText(accounts.owner);
+
+    await expect(page.locator(".sidebar-user-role"))
+        .toHaveText("Proprietario");
+});
+
+test("AT-UI.03 - Identità dipendente", async ({ page }) => {
+    await login(page, "staff");
+
+    await expect(page.locator(".sidebar-user-email"))
+        .toHaveText(accounts.staff);
+
+    await expect(page.locator(".sidebar-user-role"))
+        .toHaveText("Dipendente");
+
+    await expect(page.locator(".bar-picker-option"))
+        .toHaveCount(1);
+});
+
+test("AT-UI.04 - Apertura e chiusura del selettore", async ({ page }) => {
+    await login(page, "admin");
+
+    const trigger = page.locator("#active-bar");
+    const options = page.locator("#active-bar-options");
+
+    await expect(options).toBeHidden();
+
+    await trigger.click();
+    await expect(options).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    await trigger.click();
+    await expect(options).toBeHidden();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+test("AT-UI.05 - Accessibilità da tastiera", async ({ page }) => {
+    await login(page, "admin", primary);
+
+    const trigger = page.locator("#active-bar");
+    const options = page.locator("#active-bar-options");
+
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    await expect(options).toBeVisible();
+
+    await page.keyboard.press("Tab");
+    await expect(options.locator("button").first()).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(options).toBeHidden();
+    await expect(trigger).toBeFocused();
+
+    await page.keyboard.press("Enter");
+
+    const secondaryOption = options.locator('[data-bar-id="5"]');
+    await secondaryOption.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator("#active-bar-name"))
+        .toHaveText(secondary);
+
+    await expect(options).toBeHidden();
+});
+
+test("AT-UI.06 - Chiusura cliccando all'esterno", async ({ page }) => {
+    await login(page, "admin");
+
+    await page.locator("#active-bar").click();
+
+    await expect(page.locator("#active-bar-options"))
+        .toBeVisible();
+
+    await page.locator(".sidebar-logo").click();
+
+    await expect(page.locator("#active-bar-options"))
+        .toBeHidden();
 });

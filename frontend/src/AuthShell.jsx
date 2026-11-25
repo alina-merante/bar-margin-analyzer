@@ -421,7 +421,7 @@ export default function AuthShell() {
   return (
     <ApiContext.Provider value={client}>
       {error && <p role="alert" className="auth-session-error">{error}</p>}
-      <App key={bar.id} bars={bars} activeBar={bar} onSelectBar={selectBar} onLogout={logout} />
+      <App key={bar.id} user={user} bars={bars} activeBar={bar} onSelectBar={selectBar} onLogout={logout} />
     </ApiContext.Provider>
   );
 }

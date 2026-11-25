@@ -103,7 +103,7 @@ test.describe("AT-001 - Autenticazione", () => {
     await login(page);
 
     const actual = await page.locator(
-      "#active-bar option"
+      ".bar-picker-option > span:first-child"
     ).allTextContents();
 
     expect(actual.sort()).toEqual(
