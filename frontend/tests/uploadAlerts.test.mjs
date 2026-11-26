@@ -15,6 +15,7 @@ let server;
 let AlertBanner;
 let attachAlertDismissalHandlers;
 let UploadPage;
+let CashClosureReviewPage;
 let CashClosureReprocessComparison;
 let InvoicesPage;
 
@@ -31,6 +32,9 @@ before(async () => {
   attachAlertDismissalHandlers = alertModule.attachAlertDismissalHandlers;
   const uploadPageModule = await server.ssrLoadModule("/src/pages/UploadPage.jsx");
   UploadPage = uploadPageModule.default;
+  CashClosureReviewPage = (
+    await server.ssrLoadModule("/src/pages/CashClosureReviewPage.jsx")
+  ).default;
   CashClosureReprocessComparison = uploadPageModule.CashClosureReprocessComparison;
   InvoicesPage = (await server.ssrLoadModule("/src/pages/InvoicesPage.jsx")).default;
 });
@@ -45,12 +49,57 @@ function renderBanner(props) {
 
 function renderUploadPage(props) {
   return renderToStaticMarkup(
-    createElement(MemoryRouter, null, createElement(UploadPage, { month: "2026-10", ...props }))
+    createElement(MemoryRouter, null, createElement(UploadPage, {
+      month: "2026-10",
+      activeBarPermissions: [
+        "cash_closures.view_all",
+        "cash_closures.upload",
+        "invoices.upload",
+        "documents.upload",
+      ],
+      ...props,
+    }))
   );
 }
 
+function renderCashClosureReviewPage(props) {
+  return renderToStaticMarkup(
+    createElement(CashClosureReviewPage, {
+      month: "2026-10",
+      ...props,
+    })
+  );
+}
+
+test("employee without cash closure read permission cannot see reviews", () => {
+  const html = renderUploadPage({
+    activeBarPermissions: [],
+    cashClosureReviews: [{
+      id: 1,
+      date: "2026-11-19",
+      closure_number: "10",
+    }],
+  });
+
+  assert.doesNotMatch(html, /Chiusure da verificare/);
+  assert.doesNotMatch(html, /cash-review-list/);
+});
+
+test("employee with cash_closures.view_own can see reviews", () => {
+  const html = renderCashClosureReviewPage({
+    cashClosureReviews: [],
+  });
+
+  assert.match(html, /Chiusure da verificare/);
+});
+
 test("cash and invoice camera controls remain separate from file upload", () => {
-  const upload = renderUploadPage({});
+  const upload = renderUploadPage({
+    activeBarPermissions: [
+      "cash_closures.upload",
+      "invoices.upload",
+    ],
+  });
   assert.match(upload, /aria-label="Scatta foto chiusura di cassa"/);
   assert.match(upload, /aria-label="Scatta foto fattura"/);
   assert.equal((upload.match(/accept="image\/\*" capture="environment"/g) || []).length, 2);
@@ -207,9 +256,12 @@ test("cash upload displays the actual 422 closure recognition error", async () =
 });
 
 test("review displays the receipt subtotal and count without presenting it as the overall total", () => {
-  const html = renderUploadPage({
+  const html = renderCashClosureReviewPage({
     cashClosureReviews: [{
       id: 1,
+      can_edit: true,
+      can_verify: true,
+      verification: null,
       date: "2023-09-26",
       closure_number: null,
       total_amount: null,
@@ -248,7 +300,7 @@ test("reprocess comparison shows previous manual values and new OCR values befor
 });
 
 test("review displays translated warnings rather than OCR codes", () => {
-  const html = renderUploadPage({
+  const html = renderCashClosureReviewPage({
     cashClosureReviews: [{
       id: 1, anomalies: ["total_amount:missing", "closure_number:missing"],
       ocr_values: {}, document: { original_filename: "report.png", file_url: "" },
@@ -260,10 +312,10 @@ test("review displays translated warnings rather than OCR codes", () => {
 });
 
 test("failed or pending review loading does not falsely report an empty list", () => {
-  const loading = renderUploadPage({ cashClosureLoading: true });
+  const loading = renderCashClosureReviewPage({ cashClosureLoading: true });
   assert.match(loading, /Caricamento delle chiusure/);
   assert.doesNotMatch(loading, /Nessuna chiusura in attesa/);
-  const failed = renderUploadPage({ cashClosureLoadError: "Impossibile aggiornare le chiusure." });
+  const failed = renderCashClosureReviewPage({ cashClosureLoadError: "Impossibile aggiornare le chiusure." });
   assert.match(failed, /Impossibile aggiornare le chiusure/);
   assert.match(failed, /Riprova/);
   assert.doesNotMatch(failed, /Nessuna chiusura in attesa/);

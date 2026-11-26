@@ -1,0 +1,6 @@
+services:
+  api:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/bar_margin_analyzer_annulment_test
+      AUTH_ALLOWED_ORIGINS: https://congenial-space-capybara-69xpxj65vj473jq7-5173.app.github.dev
+      AUTH_COOKIE_SECURE: 'true'

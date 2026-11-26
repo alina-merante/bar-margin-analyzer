@@ -22,8 +22,11 @@ from app.bar_context import (
     BarContext,
     BarPermission,
     get_active_bar_context,
+    financial_read_scope,
     revalidate_active_bar_context,
     require_bar_permission,
+    require_delegable_permission,
+    require_financial_permissions,
 )
 from app.database import get_db
 from app.config import UPLOAD_INVOICES_DIR, ensure_upload_dirs
@@ -41,13 +44,14 @@ from app.services.invoice_status import get_invoice_payment_status
 from app.routers.upload_files import invoice_url
 
 from pillow_heif import register_heif_opener
+
+from app.permissions import DelegablePermission
 register_heif_opener()
 
 router = APIRouter(tags=["invoices", "payments"])
 DUPLICATE_INVOICE_DETAIL = "Esiste già una fattura con questo numero per il fornitore indicato"
 operate_context = require_bar_permission(BarPermission.OPERATE)
 manage_payments_context = require_bar_permission(BarPermission.MANAGE_PAYMENTS)
-delete_records_context = require_bar_permission(BarPermission.DELETE_RECORDS)
 
 
 class InvoiceCreate(BaseModel):
@@ -1129,6 +1133,7 @@ def create_invoice(
 
         invoice = Invoice(
             bar_id=context.bar.id,
+            created_by_user_id=context.user.id,
             supplier=payload.supplier.strip(),
             invoice_number=payload.invoice_number.strip(),
             issue_date=payload.issue_date,
@@ -1239,6 +1244,7 @@ async def extract_invoice(
 
             invoice = Invoice(
                 bar_id=context.bar.id,
+                created_by_user_id=current_context.user.id,
                 supplier=normalized["supplier"],
                 invoice_number=normalized["invoice_number"],
                 issue_date=normalized["issue_date"],
@@ -1266,7 +1272,9 @@ async def extract_invoice(
 def delete_invoice(
     invoice_id: int,
     _auth_session: AuthSession = Depends(require_session_csrf),
-    context: BarContext = Depends(delete_records_context),
+    context: BarContext = Depends(
+        require_delegable_permission(DelegablePermission.INVOICES_DELETE)
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     invoice = db.scalar(
@@ -1276,6 +1284,7 @@ def delete_invoice(
     )
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
+
     if db.scalar(
         select(InvoicePaymentLink.id)
         .where(InvoicePaymentLink.invoice_id == invoice_id)
@@ -1300,7 +1309,16 @@ def list_invoices(
     context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    scope = financial_read_scope(
+        context,
+        DelegablePermission.INVOICES_VIEW_OWN,
+        DelegablePermission.INVOICES_VIEW_ALL,
+    )
+
     stmt = select(Invoice).where(Invoice.bar_id == context.bar.id)
+
+    if scope == "own":
+        stmt = stmt.where(Invoice.created_by_user_id == context.user.id)
 
     if status is not None:
         stmt = stmt.where(Invoice.status == status)
@@ -1390,12 +1408,26 @@ def get_transaction_candidates(
     context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> dict:
+    scope = financial_read_scope(
+        context,
+        DelegablePermission.INVOICES_VIEW_OWN,
+        DelegablePermission.INVOICES_VIEW_ALL,
+    )
+    require_financial_permissions(
+        context,
+        DelegablePermission.PAYMENTS_VIEW,
+    )
+
     invoice = db.scalar(
         select(Invoice).where(
             Invoice.id == invoice_id,
             Invoice.bar_id == context.bar.id,
         )
     )
+
+    if scope == "own" and invoice is not None:
+        if invoice.created_by_user_id != context.user.id:
+            raise HTTPException(status_code=404, detail="invoice not found")
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
     if invoice.status != InvoiceStatus.pending:
@@ -1571,6 +1603,10 @@ def list_payments(
     context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> list[dict]:
+    require_financial_permissions(
+        context,
+        DelegablePermission.PAYMENTS_VIEW,
+    )
     stmt = (
         select(Payment)
         .outerjoin(Transaction, Transaction.id == Payment.transaction_id)
@@ -1693,12 +1729,26 @@ def list_invoice_payments(
     context: BarContext = Depends(get_active_bar_context),
     db: Session = Depends(get_db),
 ) -> dict:
+    scope = financial_read_scope(
+        context,
+        DelegablePermission.INVOICES_VIEW_OWN,
+        DelegablePermission.INVOICES_VIEW_ALL,
+    )
+    require_financial_permissions(
+        context,
+        DelegablePermission.PAYMENTS_VIEW,
+    )
+
     invoice = db.scalar(
         select(Invoice).where(
             Invoice.id == invoice_id,
             Invoice.bar_id == context.bar.id,
         )
     )
+
+    if scope == "own" and invoice is not None:
+        if invoice.created_by_user_id != context.user.id:
+            raise HTTPException(status_code=404, detail="invoice not found")
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice not found")
 
@@ -1834,3 +1884,5 @@ def unlink_invoice_payment(
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail="payment unlink failed") from exc
+
+from app.bar_context import require_financial_permissions

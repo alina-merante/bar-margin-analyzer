@@ -306,8 +306,13 @@ def test_roles_revocation_and_deactivated_bar(analytics_environment):
             csrf = login(client, f"{role}@example.test")
             assert select_bar(client, ids["bar_one"], csrf).status_code == 200
             for endpoint in ENDPOINTS:
-                assert client.get(endpoint).status_code == 200, (role, endpoint)
-            assert client.get("/analytics/pnl?month=2026-07").json()["revenue"] == 1000
+                expected_status = 200 if role == "owner" else 403
+                response = client.get(endpoint)
+                assert response.status_code == expected_status, (
+                    role, endpoint, response.text
+                )
+            if role == "owner":
+                assert client.get("/analytics/pnl?month=2026-07").json()["revenue"] == 1000
     with TestClient(api) as staff:
         csrf = login(staff, "staff@example.test")
         assert select_bar(staff, ids["bar_one"], csrf).status_code == 200

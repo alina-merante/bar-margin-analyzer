@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_session
 from app.database import get_db
+from app.permissions import DelegablePermission
 from app.models import (
     AuthSession,
     Bar,
@@ -21,7 +22,7 @@ EXPECTED_BAR_HEADER = "X-Expected-Bar-ID"
 @dataclass(frozen=True)
 class BarAccess:
     bar: Bar
-    membership: UserBarMembership
+    membership: UserBarMembership | None
 
 
 @dataclass(frozen=True)
@@ -29,10 +30,17 @@ class BarContext:
     auth_session: AuthSession
     user: User
     bar: Bar
-    membership: UserBarMembership
+    membership: UserBarMembership | None
 
     @property
     def role(self) -> MembershipRole:
+        if self.user.is_global_admin:
+            return MembershipRole.owner
+        if self.membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="active bar access denied",
+            )
         return self.membership.role
 
 
@@ -73,6 +81,18 @@ def get_user_bar_access(
     auth_session: AuthSession = Depends(get_current_session),
     db: Session = Depends(get_db),
 ) -> list[BarAccess]:
+    if auth_session.user.is_global_admin:
+        bars = db.scalars(
+            select(Bar)
+            .where(Bar.is_active.is_(True))
+            .order_by(Bar.name.asc(), Bar.id.asc())
+        ).all()
+
+        return [
+            BarAccess(bar=bar, membership=None)
+            for bar in bars
+        ]
+
     rows = db.execute(
         select(Bar, UserBarMembership)
         .join(UserBarMembership, UserBarMembership.bar_id == Bar.id)
@@ -82,7 +102,10 @@ def get_user_bar_access(
         )
         .order_by(Bar.name.asc(), Bar.id.asc())
     ).all()
-    return [BarAccess(bar=bar, membership=membership) for bar, membership in rows]
+    return [
+        BarAccess(bar=bar, membership=membership)
+        for bar, membership in rows
+    ]
 
 
 def get_expected_bar_id(
@@ -146,6 +169,27 @@ def resolve_active_bar_context(
         raise HTTPException(status_code=409, detail="no active bar selected")
     if expected_bar_id != auth_session.active_bar_id:
         raise HTTPException(status_code=409, detail="active bar does not match request")
+
+    if auth_session.user.is_global_admin:
+        bar = db.scalar(
+            select(Bar).where(
+                Bar.id == expected_bar_id,
+                Bar.is_active.is_(True),
+            )
+        )
+
+        if bar is None:
+            raise HTTPException(
+                status_code=403,
+                detail="active bar access denied",
+            )
+
+        return BarContext(
+            auth_session=auth_session,
+            user=auth_session.user,
+            bar=bar,
+            membership=None,
+        )
 
     access = db.execute(
         select(Bar, UserBarMembership)
@@ -240,3 +284,65 @@ def require_manager_or_owner(
     if context.role not in {MembershipRole.owner, MembershipRole.manager}:
         raise HTTPException(status_code=403, detail="manager role required")
     return context
+
+
+def require_delegable_permission(permission: DelegablePermission):
+    """Require one explicitly assigned granular permission."""
+    def dependency(
+        context: BarContext = Depends(get_active_bar_context),
+    ) -> BarContext:
+        require_financial_permissions(context, permission)
+        return context
+
+    return dependency
+
+
+def require_financial_permissions(
+    context: BarContext,
+    *permissions: DelegablePermission,
+) -> None:
+    if context.role == MembershipRole.owner or context.user.is_global_admin:
+        return
+
+    granted = {
+        item.permission
+        for item in context.membership.permissions
+    }
+
+    required = {
+        permission.value
+        for permission in permissions
+    }
+
+    if not required.issubset(granted):
+        raise HTTPException(
+            status_code=403,
+            detail="financial permission denied",
+        )
+
+
+
+def financial_read_scope(
+    context: BarContext,
+    own_permission: DelegablePermission,
+    all_permission: DelegablePermission,
+) -> str:
+    """Return 'all' or 'own'; deny access without read permissions."""
+    if context.role == MembershipRole.owner or context.user.is_global_admin:
+        return "all"
+
+    granted = {
+        item.permission
+        for item in context.membership.permissions
+    }
+
+    if all_permission.value in granted:
+        return "all"
+
+    if own_permission.value in granted:
+        return "own"
+
+    raise HTTPException(
+        status_code=403,
+        detail="financial read permission denied",
+    )

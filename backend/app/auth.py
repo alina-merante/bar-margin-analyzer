@@ -38,6 +38,24 @@ def session_is_active(auth_session: AuthSession, now: dt.datetime | None = None)
     return auth_session.revoked_at is None and expires_at > current_time
 
 
+def validate_expected_session(
+    request: Request,
+    auth_session: AuthSession,
+) -> None:
+    expected_session_id = request.headers.get("X-Expected-Session-ID")
+
+    if expected_session_id is not None:
+        if (
+            not expected_session_id.isascii()
+            or not expected_session_id.isdecimal()
+            or expected_session_id != str(auth_session.id)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="authenticated session changed",
+            )
+
+
 def get_current_session(
     request: Request,
     db: Session = Depends(get_db),
@@ -47,6 +65,7 @@ def get_current_session(
         raise HTTPException(status_code=401, detail="authentication required")
     if not auth_session.user.is_active:
         raise HTTPException(status_code=401, detail="authentication required")
+    validate_expected_session(request, auth_session)
     return auth_session
 
 
@@ -66,6 +85,7 @@ def require_session_csrf(
     request: Request,
     auth_session: AuthSession = Depends(get_current_session),
 ) -> AuthSession:
+    validate_expected_session(request, auth_session)
     csrf_cookie = request.cookies.get("barmanager_csrf", "")
     csrf_header = request.headers.get("x-csrf-token", "")
     if (

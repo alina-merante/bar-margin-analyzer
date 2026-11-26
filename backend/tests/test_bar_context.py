@@ -252,6 +252,7 @@ def test_user_can_select_multiple_bars_with_different_roles(context_environment)
         "id": ids["bar_one"],
         "name": "Bar Uno",
         "role": "owner",
+        "permissions": [],
     }
     assert client.get("/auth/active-bar").json()["id"] == ids["bar_one"]
 
@@ -446,3 +447,197 @@ def test_role_permissions_match_owner_manager_and_staff(context_environment):
     finally:
         manager_client.close()
         staff_client.close()
+
+
+def seed_global_admin(sessionmaker_for_test):
+    with sessionmaker_for_test() as db:
+        admin = User(
+            email="global-admin@example.test",
+            password_hash=hash_password(TEST_PASSWORD),
+            is_global_admin=True,
+        )
+        db.add(admin)
+        db.flush()
+        admin_id = admin.id
+        db.commit()
+        return admin_id
+
+
+def test_global_admin_access_without_memberships(context_environment):
+    client, _engine, sessions, _api = context_environment
+    ids = seed_memberships(sessions)
+    admin_id = seed_global_admin(sessions)
+
+    csrf = login(client, "global-admin@example.test")
+
+    response = client.get("/auth/bars")
+    assert response.status_code == 200
+
+    bars = response.json()
+
+    assert {bar["id"] for bar in bars} == {
+        ids["bar_one"], ids["bar_two"]
+    }
+
+    assert all(bar["is_global_admin"] for bar in bars)
+    assert all(bar["role"] == "owner" for bar in bars)
+
+    for bar_id in (ids["bar_one"], ids["bar_two"]):
+        response = select_bar(client, bar_id, csrf)
+        assert response.status_code == 200
+        assert response.json()["is_global_admin"] is True
+
+        active = client.get("/auth/active-bar")
+        assert active.status_code == 200
+        assert active.json()["id"] == bar_id
+
+        for endpoint in (
+            "/test/owner",
+            "/test/manager",
+            "/test/operate",
+            "/test/users",
+            "/test/documents",
+            "/test/upload",
+            "/test/ocr",
+            "/test/delete",
+            "/test/payments",
+        ):
+            assert client.get(endpoint).status_code == 200
+
+    with sessions() as db:
+        memberships = db.scalars(
+            select(UserBarMembership).where(
+                UserBarMembership.user_id == admin_id
+            )
+        ).all()
+
+        assert memberships == []
+
+
+def test_global_admin_automatically_accesses_new_bar(context_environment):
+    client, _engine, sessions, _api = context_environment
+
+    seed_memberships(sessions)
+    seed_global_admin(sessions)
+
+    csrf = login(client, "global-admin@example.test")
+
+    with sessions() as db:
+        bar = Bar(name="Nuovo bar")
+        db.add(bar)
+        db.flush()
+        bar_id = bar.id
+        db.commit()
+
+    response = client.get("/auth/bars")
+    assert response.status_code == 200
+    assert bar_id in {bar["id"] for bar in response.json()}
+
+    assert select_bar(client, bar_id, csrf).status_code == 200
+    assert client.get("/test/owner").status_code == 200
+
+
+def test_global_admin_cannot_select_inactive_bar(context_environment):
+    client, _engine, sessions, _api = context_environment
+    ids = seed_memberships(sessions)
+    seed_global_admin(sessions)
+
+    csrf = login(client, "global-admin@example.test")
+
+    assert select_bar(
+        client, ids["inactive_bar"], csrf
+    ).status_code == 403
+
+    assert select_bar(
+        client, ids["bar_one"], csrf
+    ).status_code == 200
+
+    with sessions() as db:
+        bar = db.get(Bar, ids["bar_one"])
+        bar.is_active = False
+        db.commit()
+
+    assert client.get("/auth/active-bar").status_code == 403
+    assert client.get("/test/owner").status_code == 403
+
+
+def test_global_admin_revocation_blocks_access(context_environment):
+    client, _engine, sessions, _api = context_environment
+    ids = seed_memberships(sessions)
+    admin_id = seed_global_admin(sessions)
+
+    csrf = login(client, "global-admin@example.test")
+
+    assert select_bar(
+        client, ids["bar_one"], csrf
+    ).status_code == 200
+
+    assert client.get("/test/owner").status_code == 200
+
+    with sessions() as db:
+        admin = db.get(User, admin_id)
+        admin.is_global_admin = False
+        db.commit()
+
+    response = client.get("/auth/bars")
+    assert response.status_code == 200
+    assert response.json() == []
+
+    assert client.get("/auth/active-bar").status_code == 403
+    assert client.get("/test/owner").status_code == 403
+
+    assert select_bar(
+        client, ids["bar_two"], csrf
+    ).status_code == 403
+
+
+def test_global_admin_requires_matching_active_bar(context_environment):
+    client, _engine, sessions, _api = context_environment
+    ids = seed_memberships(sessions)
+    seed_global_admin(sessions)
+
+    csrf = login(client, "global-admin@example.test")
+
+    assert select_bar(
+        client, ids["bar_one"], csrf
+    ).status_code == 200
+
+    assert client.get(
+        "/test/owner",
+        headers={"X-Expected-Bar-ID": str(ids["bar_two"])}
+    ).status_code == 409
+
+    assert client.get(
+        "/test/owner",
+        headers={"X-Expected-Bar-ID": ""}
+    ).status_code == 428
+
+    assert client.get("/test/owner").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "email",
+    ["staff@example.test", "manager@example.test", "owner@example.test"]
+)
+def test_non_admin_cannot_access_new_unassigned_bar(
+    context_environment, email
+):
+    client, _engine, sessions, _api = context_environment
+    seed_memberships(sessions)
+
+    with sessions() as db:
+        bar = Bar(name="Bar non assegnato")
+        db.add(bar)
+        db.flush()
+        bar_id = bar.id
+        db.commit()
+
+    csrf = login(client, email)
+
+    response = client.get("/auth/bars")
+    assert response.status_code == 200
+    assert bar_id not in {
+        bar["id"] for bar in response.json()
+    }
+
+    assert select_bar(client, bar_id, csrf).status_code == 403

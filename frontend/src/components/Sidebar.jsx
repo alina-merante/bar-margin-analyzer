@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 const MONTHS = [
@@ -36,8 +36,49 @@ function shiftMonth(month, delta) {
   return `${date.getFullYear()}-${nextMonth}`;
 }
 
-export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout }) {
+export default function Sidebar({ user, month, setMonth, pendingInvoices = 0, bars, activeBar, onSelectBar, onLogout, canViewDashboard = false, canViewInvoices = false, canAccessUpload = false, canViewCashClosures = false, cashClosureNavigationEnabled = false }) {
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [barPickerOpen, setBarPickerOpen] = useState(false);
+  const barPickerRef = useRef(null);
+  const barButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (!barPickerOpen) return;
+
+    function closeOutside(event) {
+      if (!barPickerRef.current?.contains(event.target)) {
+        setBarPickerOpen(false);
+      }
+    }
+
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        setBarPickerOpen(false);
+        barButtonRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [barPickerOpen]);
+
+  const roleLabels = {
+    owner: "Proprietario",
+    manager: "Responsabile",
+    staff: "Dipendente",
+  };
+
+  const accountRole =
+    user?.is_global_admin === true ||
+    activeBar?.is_global_admin === true
+      ? "Amministratore globale"
+      : roleLabels[activeBar?.role] ?? "Ruolo non disponibile";
 
   const [selectedYear, selectedMonth] = month.split("-").map(Number);
 
@@ -50,16 +91,37 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${mobileMenuOpen ? "mobile-menu-open" : ""}`}>
       <div className="sidebar-logo">
+        <button
+          type="button"
+          className="mobile-menu-toggle"
+          aria-label={mobileMenuOpen ? "Chiudi menu" : "Apri menu"}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="sidebar-navigation"
+          onClick={() => setMobileMenuOpen(open => !open)}
+        >
+          {mobileMenuOpen ? "✕" : "☰"}
+        </button>
         <div className="logo-icon">☕</div>
         <div className="logo-text">BarManager</div>
         <div className="logo-sub">Gestione margini</div>
       </div>
 
-      <nav className="sidebar-nav">
-        <div className="nav-label">Principale</div>
+      <nav
+        id="sidebar-navigation"
+        className="sidebar-nav"
+        onClick={(event) => {
+          if (event.target.closest("a")) {
+            setMobileMenuOpen(false);
+          }
+        }}
+      >
+        {(canViewDashboard || canViewInvoices) && (
+          <div className="nav-label">Principale</div>
+        )}
 
+        {canViewDashboard && (
         <NavLink
           to="/dashboard"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
@@ -67,8 +129,9 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
           <span className="nav-icon">📊</span>
           Dashboard
         </NavLink>
+        )}
 
-        <NavLink
+        {canViewInvoices && <NavLink
           to="/invoices"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
         >
@@ -78,26 +141,110 @@ export default function Sidebar({ month, setMonth, pendingInvoices = 0, bars, ac
           {pendingInvoices > 0 && (
             <span className="nav-badge">{pendingInvoices}</span>
           )}
-        </NavLink>
+        </NavLink>}
 
-        <div className="nav-label">Documenti</div>
+        {canAccessUpload && <div className="nav-label">Documenti</div>}
 
-        <NavLink
+        {canAccessUpload && <NavLink
           to="/upload"
           className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
         >
           <span className="nav-icon">⬆️</span>
-          Carica file
-        </NavLink>
+          Caricamenti
+        </NavLink>}
+
+        {canViewCashClosures && cashClosureNavigationEnabled && (
+          <>
+            <div className="nav-label">Chiusure di cassa</div>
+            <NavLink
+              to="/cash-closures/review"
+              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+            >
+              <span className="nav-icon">📋</span>
+              Da verificare
+            </NavLink>
+            {<NavLink
+              to="/cash-closures/history"
+              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+            >
+              <span className="nav-icon">🕘</span>
+              Storico
+            </NavLink>}
+          </>
+        )}
       </nav>
 
       <div className="sidebar-bottom">
         <div className="sidebar-account">
-          <label htmlFor="active-bar">Bar attivo</label>
-          <select id="active-bar" value={activeBar.id} onChange={(event) => onSelectBar(event.target.value)}>
-            {bars.map((bar) => <option key={bar.id} value={bar.id}>{bar.name}</option>)}
-          </select>
-          <button type="button" onClick={onLogout}>Esci</button>
+          <div className="sidebar-user">
+            <span className="sidebar-user-label">
+              Utente collegato
+            </span>
+            <div className="sidebar-user-email">
+              {user?.email ?? "Email non disponibile"}
+            </div>
+            <div className="sidebar-user-role">
+              {accountRole}
+            </div>
+          </div>
+          <span id="active-bar-label">Bar attivo</span>
+
+          <div className="bar-picker" ref={barPickerRef}>
+            <button
+              id="active-bar"
+              ref={barButtonRef}
+              type="button"
+              className="bar-picker-trigger"
+              aria-labelledby="active-bar-label active-bar-name"
+              aria-expanded={barPickerOpen}
+              aria-controls="active-bar-options"
+              onClick={() => setBarPickerOpen((open) => !open)}
+            >
+              <span id="active-bar-name">{activeBar.name}</span>
+              <span aria-hidden="true">
+                {barPickerOpen ? "▴" : "▾"}
+              </span>
+            </button>
+
+            <div
+              id="active-bar-options"
+              className="bar-picker-options"
+              role="group"
+              aria-label="Bar disponibili"
+              hidden={!barPickerOpen}
+            >
+              {bars.map((bar) => (
+                <button
+                  key={bar.id}
+                  type="button"
+                  className="bar-picker-option"
+                  aria-pressed={bar.id === activeBar.id}
+                  data-bar-id={bar.id}
+                  onClick={() => {
+                    setBarPickerOpen(false);
+                    barButtonRef.current?.focus();
+                    if (bar.id !== activeBar.id) {
+                      onSelectBar(String(bar.id));
+                    }
+                  }}
+                >
+                  <span>{bar.name}</span>
+                  {bar.id === activeBar.id && (
+                    <span aria-hidden="true">✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="sidebar-logout"
+            onClick={onLogout}
+          >
+            <span aria-hidden="true">↪</span>
+            Esci
+          </button>
         </div>
         <div className="month-selector">
           <button

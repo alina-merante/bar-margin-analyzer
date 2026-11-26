@@ -643,3 +643,501 @@ def test_auth_migration_0011_on_temporary_postgresql_16_if_configured():
         } == before
     finally:
         engine.dispose()
+
+
+def test_login_from_second_tab_with_existing_session(auth_test_environment):
+    """A second-tab login must work while another tab is authenticated."""
+    client, _engine, factory = auth_test_environment
+    create_owner(factory)
+
+    first_csrf = csrf_for_login(client)
+    first_login = login(client, first_csrf)
+    assert first_login.status_code == 200
+
+    # Both browser tabs share the authentication cookies.
+    # Requesting a login token must not rotate the active session token.
+    first_session_csrf = first_login.json()["csrf_token"]
+
+    second_csrf_response = client.get("/auth/login-csrf")
+    assert second_csrf_response.status_code == 200
+    second_csrf = second_csrf_response.json()["csrf_token"]
+
+    assert client.cookies.get("barmanager_csrf") == first_session_csrf
+
+    protected_response = client.post(
+        "/protected",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": first_session_csrf,
+        },
+    )
+    assert protected_response.status_code == 200
+
+    second_login = login(client, second_csrf)
+
+    assert second_login.status_code == 200, (
+        f"Second-tab login failed: {second_login.status_code} "
+        f"{second_login.json()}"
+    )
+
+
+
+def test_multitab_session_csrf_rotation_invalidates_stale_token(
+    auth_test_environment,
+):
+    """Verify stale CSRF rejection after another tab rotates the token."""
+    client, _engine, factory = auth_test_environment
+    create_owner(factory)
+
+    first_login = login(client, csrf_for_login(client))
+    assert first_login.status_code == 200
+
+    first_token = first_login.json()["csrf_token"]
+
+    second_response = client.get("/auth/csrf")
+    assert second_response.status_code == 200
+
+    second_token = second_response.json()["csrf_token"]
+    assert second_token != first_token
+
+    stale_request = client.post(
+        "/protected",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": first_token,
+        },
+    )
+    assert stale_request.status_code == 403
+
+    fresh_request = client.post(
+        "/protected",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": second_token,
+        },
+    )
+    assert fresh_request.status_code == 200
+
+
+
+def test_session_id_identifies_login_and_changes_on_new_login(
+    auth_test_environment,
+):
+    client, _engine, factory = auth_test_environment
+    create_owner(factory)
+
+    first_login = login(client, csrf_for_login(client))
+    assert first_login.status_code == 200
+
+    first_id = first_login.json()["session_id"]
+    assert isinstance(first_id, int)
+
+    current = client.get("/auth/session")
+    assert current.status_code == 200
+    assert current.json()["session_id"] == first_id
+
+    pre_auth = client.get("/auth/login-csrf")
+    assert pre_auth.status_code == 200
+
+    second_login = login(
+        client,
+        pre_auth.json()["csrf_token"],
+    )
+    assert second_login.status_code == 200
+
+    second_id = second_login.json()["session_id"]
+    assert second_id != first_id
+
+    current = client.get("/auth/session")
+    assert current.status_code == 200
+    assert current.json()["session_id"] == second_id
+
+    assert "token" not in current.json()
+    assert "token_hash" not in current.json()
+
+
+
+def test_expected_session_id_rejects_mismatched_mutations(
+    auth_test_environment,
+):
+    client, _engine, factory = auth_test_environment
+    create_owner(factory)
+
+    response = login(client, csrf_for_login(client))
+    assert response.status_code == 200
+
+    session_id = response.json()["session_id"]
+    csrf = response.json()["csrf_token"]
+
+    headers = {
+        "Origin": ALLOWED_ORIGIN,
+        "X-CSRF-Token": csrf,
+        "X-Expected-Session-ID": str(session_id),
+    }
+
+    valid = client.post("/protected", headers=headers)
+    assert valid.status_code == 200
+
+    wrong = client.post(
+        "/protected",
+        headers={
+            **headers,
+            "X-Expected-Session-ID": str(session_id + 1),
+        },
+    )
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"] == "authenticated session changed"
+
+    malformed = client.post(
+        "/protected",
+        headers={
+            **headers,
+            "X-Expected-Session-ID": "invalid",
+        },
+    )
+    assert malformed.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "email_ages,other_ages,expected",
+    [
+        ([0, 0, 0], [], 901),
+        ([660, 660, 660], [], 241),
+        ([800, 700, 600, 500], [], 201),
+        ([800, 800, 800], [100, 100, 100, 100, 100], 801),
+        ([901, 901, 901], [], None),
+        ([900, 900, 900], [], 1),
+        ([100, 100], [], None),
+        ([], [300, 300, 300, 300, 300], 601),
+    ],
+)
+def test_login_rate_limit_residual_time(
+    auth_test_environment,
+    monkeypatch,
+    email_ages,
+    other_ages,
+    expected,
+):
+    from fastapi import HTTPException
+    from app.routers.auth import _check_login_rate_limit
+
+    from dataclasses import replace
+    from importlib import import_module
+
+    auth_module = import_module("app.routers.auth")
+
+    test_settings = replace(
+        settings,
+        login_attempt_limit=3,
+        login_source_attempt_limit=5,
+        login_attempt_window_seconds=900,
+    )
+
+    monkeypatch.setattr(auth_module, "settings", test_settings)
+
+    _, _, test_sessionmaker = auth_test_environment
+
+    now = dt.datetime(2026, 11, 24, 10, 0, tzinfo=dt.timezone.utc)
+
+    with test_sessionmaker() as db:
+        for age in email_ages:
+            db.add(AuthLoginAttempt(
+                email_key="a" * 64,
+                source_key="b" * 64,
+                attempted_at=now - dt.timedelta(seconds=age),
+            ))
+
+        for age in other_ages:
+            db.add(AuthLoginAttempt(
+                email_key="c" * 64,
+                source_key="b" * 64,
+                attempted_at=now - dt.timedelta(seconds=age),
+            ))
+
+        db.commit()
+
+        if expected is None:
+            _check_login_rate_limit(
+                db, "a" * 64, "b" * 64, now
+            )
+        else:
+            with pytest.raises(HTTPException) as exc:
+                _check_login_rate_limit(
+                    db, "a" * 64, "b" * 64, now
+                )
+
+            assert exc.value.status_code == 429
+            assert int(exc.value.headers["Retry-After"]) == expected
+
+
+@pytest.fixture
+def replaced_browser_session(auth_test_environment):
+    client, engine, factory = auth_test_environment
+
+    create_owner(factory)
+
+    with factory() as db:
+        second_user = User(
+            email="second@example.test",
+            password_hash=hash_password(
+                "correct horse battery"
+            ),
+        )
+        db.add(second_user)
+        db.commit()
+
+    first = login(client, csrf_for_login(client))
+    assert first.status_code == 200
+
+    pre_auth = client.get("/auth/login-csrf")
+    assert pre_auth.status_code == 200
+
+    second = login(
+        client,
+        pre_auth.json()["csrf_token"],
+        email="second@example.test",
+    )
+
+    assert second.status_code == 200
+
+    old = first.json()
+    current = second.json()
+
+    assert old["session_id"] != current["session_id"]
+    assert old["user"]["id"] != current["user"]["id"]
+
+    return client, factory, old, current
+
+
+def test_bound_session_read_accepts_current_identity(
+    replaced_browser_session,
+):
+    client, factory, old, current = replaced_browser_session
+
+    response = client.get(
+        "/auth/session",
+        headers={
+            "X-Expected-Session-ID": str(
+                current["session_id"]
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"] == current["user"]
+    assert response.json()["session_id"] == current["session_id"]
+
+
+def test_bound_session_read_rejects_previous_identity(
+    replaced_browser_session,
+):
+    client, factory, old, current = replaced_browser_session
+
+    response = client.get(
+        "/auth/session",
+        headers={
+            "X-Expected-Session-ID": str(
+                old["session_id"]
+            ),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "authenticated session changed"
+    )
+    assert "user" not in response.json()
+
+    assert client.get("/auth/session").json()[
+        "session_id"
+    ] == current["session_id"]
+
+
+def test_bound_csrf_rejects_previous_session_without_rotation(
+    replaced_browser_session,
+):
+    client, factory, old, current = replaced_browser_session
+
+    original_cookie = client.cookies.get(
+        "barmanager_csrf"
+    )
+
+    response = client.get(
+        "/auth/csrf",
+        headers={
+            "X-Expected-Session-ID": str(
+                old["session_id"]
+            ),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "authenticated session changed"
+    )
+
+    assert "csrf_token" not in response.json()
+    assert "set-cookie" not in response.headers
+
+    assert client.cookies.get(
+        "barmanager_csrf"
+    ) == original_cookie
+
+    with factory() as db:
+        session = db.get(
+            AuthSession,
+            current["session_id"],
+        )
+
+        assert session.csrf_token_hash == token_hash(
+            current["csrf_token"]
+        )
+
+    valid = client.get(
+        "/auth/csrf",
+        headers={
+            "X-Expected-Session-ID": str(
+                current["session_id"]
+            ),
+        },
+    )
+
+    assert valid.status_code == 200
+    assert valid.json()["csrf_token"] != original_cookie
+
+
+def test_bound_logout_cannot_revoke_replacement_session(
+    replaced_browser_session,
+):
+    client, factory, old, current = replaced_browser_session
+
+    original_cookie = client.cookies.get(
+        settings.cookie_name
+    )
+
+    response = client.post(
+        "/auth/logout",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": current["csrf_token"],
+            "X-Expected-Session-ID": str(
+                old["session_id"]
+            ),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "authenticated session changed"
+    )
+
+    assert "set-cookie" not in response.headers
+
+    assert client.cookies.get(
+        settings.cookie_name
+    ) == original_cookie
+
+    with factory() as db:
+        session = db.get(
+            AuthSession,
+            current["session_id"],
+        )
+
+        assert session.revoked_at is None
+
+    active = client.get("/auth/session")
+
+    assert active.status_code == 200
+    assert active.json()["user"] == current["user"]
+
+    valid_logout = client.post(
+        "/auth/logout",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "X-CSRF-Token": current["csrf_token"],
+            "X-Expected-Session-ID": str(
+                current["session_id"]
+            ),
+        },
+    )
+
+    assert valid_logout.status_code == 200
+    assert client.get("/auth/session").status_code == 401
+
+    with factory() as db:
+        assert db.get(
+            AuthSession,
+            current["session_id"],
+        ).revoked_at is not None
+
+
+def test_bound_mutation_rejects_replaced_session(
+    replaced_browser_session,
+):
+    client, factory, old, current = replaced_browser_session
+
+    headers = {
+        "Origin": ALLOWED_ORIGIN,
+        "X-CSRF-Token": current["csrf_token"],
+        "X-Expected-Session-ID": str(
+            old["session_id"]
+        ),
+    }
+
+    response = client.post(
+        "/protected",
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "authenticated session changed"
+    )
+
+    headers["X-Expected-Session-ID"] = str(
+        current["session_id"]
+    )
+
+    valid = client.post(
+        "/protected",
+        headers=headers,
+    )
+
+    assert valid.status_code == 200
+
+
+def test_bound_csrf_rejects_expired_session(
+    auth_test_environment,
+):
+    client, engine, factory = auth_test_environment
+
+    create_owner(factory)
+
+    response = login(client, csrf_for_login(client))
+    assert response.status_code == 200
+
+    session_id = response.json()["session_id"]
+
+    with factory() as db:
+        session = db.get(AuthSession, session_id)
+
+        session.expires_at = (
+            dt.datetime.now(dt.timezone.utc)
+            - dt.timedelta(seconds=1)
+        )
+
+        db.commit()
+
+    headers = {
+        "X-Expected-Session-ID": str(session_id),
+    }
+
+    for endpoint in ("/auth/session", "/auth/csrf"):
+        expired = client.get(
+            endpoint,
+            headers=headers,
+        )
+
+        assert expired.status_code == 401
+        assert "csrf_token" not in expired.json()
+        assert "set-cookie" not in expired.headers

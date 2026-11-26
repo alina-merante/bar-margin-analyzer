@@ -11,6 +11,11 @@ class Document(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     bar_id: Mapped[int | None] = mapped_column(ForeignKey("bars.id"), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     month: Mapped[str] = mapped_column(String(7), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -5,6 +5,8 @@ import "./App.css";
 import Sidebar from "./components/Sidebar";
 import { useTenantApi } from "./ApiContext";
 import UploadPage from "./pages/UploadPage";
+import CashClosureReviewPage from "./pages/CashClosureReviewPage.jsx";
+import CashClosureHistoryPage from "./pages/CashClosureHistoryPage.jsx";
 import InvoicesPage from "./pages/InvoicesPage";
 import DashboardPage from "./pages/DashboardPage";
 import imageCompression from "browser-image-compression";
@@ -168,8 +170,54 @@ async function responseJsonOrThrow(response) {
   return payload;
 }
 
-export default function App({ bars, activeBar, onSelectBar, onLogout }) {
+export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   const { fetch } = useTenantApi();
+
+  const financialPermissions = new Set(activeBar?.permissions ?? []);
+  const canViewDashboard =
+    activeBar?.role === "owner" ||
+    [
+      "analytics.view",
+      "revenue.view",
+      "costs.view",
+      "profit.view",
+    ].every((permission) => financialPermissions.has(permission));
+  const canViewInvoices =
+    activeBar?.role === "owner" ||
+    financialPermissions.has("invoices.view_own") ||
+    financialPermissions.has("invoices.view_all");
+
+  const isOwner = activeBar?.role === "owner";
+  const hasPermission = (permission) =>
+    isOwner || financialPermissions.has(permission);
+
+  const canUploadFiles = [
+    "invoices.upload",
+    "cash_closures.upload",
+    "documents.upload",
+  ].some(hasPermission);
+
+  const canReadDocuments =
+    hasPermission("documents.view_own") ||
+    hasPermission("documents.view_all");
+
+  const canReviewCashClosures =
+    hasPermission("cash_closures.view_own") ||
+    hasPermission("cash_closures.view_all");
+
+  const canAccessUpload =
+    canUploadFiles ||
+    canReadDocuments ||
+    canReviewCashClosures;
+
+  const defaultPage = canViewDashboard
+    ? "/dashboard"
+    : canViewInvoices
+      ? "/invoices"
+      : canAccessUpload
+        ? "/upload"
+        : "/no-access";
+
   async function fetchJsonOrThrow(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Errore API (${response.status})`);
@@ -234,6 +282,7 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
   const [documentDeleteError, setDocumentDeleteError] = useState("");
 
   async function loadDashboardData(selectedMonth) {
+    if (!canViewDashboard && !canViewInvoices) return;
     const [
       overviewData,
       invoicesData,
@@ -244,14 +293,28 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
       expensesBySupplierData,
       insightsData,
     ] = await Promise.all([
-      fetchJsonOrThrow(`/api/analytics/overview?month=${selectedMonth}`),
-      fetchJsonOrThrow("/api/invoices"),
-      fetchJsonOrThrow("/api/categories"),
-      fetchJsonOrThrow(`/api/analytics/pnl/trend?months=6&month=${selectedMonth}`),
-      fetchJsonOrThrow(`/api/analytics/top-products?month=${selectedMonth}`),
-      fetchJsonOrThrow(`/api/analytics/expenses-by-category?month=${selectedMonth}`),
-      fetchJsonOrThrow(`/api/analytics/expenses-by-supplier?month=${selectedMonth}`),
-      fetchJsonOrThrow(`/api/analytics/insights?month=${selectedMonth}`),
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/overview?month=${selectedMonth}`)
+        : null,
+      canViewInvoices ? fetchJsonOrThrow("/api/invoices") : [],
+      canViewInvoices && ["owner", "manager"].includes(activeBar?.role)
+        ? fetchJsonOrThrow("/api/categories")
+        : [],
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/pnl/trend?months=6&month=${selectedMonth}`)
+        : [],
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/top-products?month=${selectedMonth}`)
+        : null,
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/expenses-by-category?month=${selectedMonth}`)
+        : null,
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/expenses-by-supplier?month=${selectedMonth}`)
+        : null,
+      canViewDashboard
+        ? fetchJsonOrThrow(`/api/analytics/insights?month=${selectedMonth}`)
+        : null,
     ]);
 
     setOverview(
@@ -1369,7 +1432,20 @@ export default function App({ bars, activeBar, onSelectBar, onLogout }) {
 
 async function loadDocuments(selectedMonth = currentMonth.current) {
   if (selectedMonth !== currentMonth.current) return;
-  await documentLoader.current.load(selectedMonth);
+  // Le autorizzazioni sono calcolate dai permessi granulari
+  // dell'utente, indipendentemente dal solo ruolo.
+  if (!canReadDocuments && !canReviewCashClosures) {
+    documentLoader.current.invalidate();
+    setDocuments([]);
+    setCashClosureReviews([]);
+    setDocumentsLoaded(true);
+    setDocumentsLoadError("");
+    return;
+  }
+  await documentLoader.current.load(selectedMonth, {
+    includeDocuments: canReadDocuments,
+    includeReviews: canReviewCashClosures,
+  });
 }
 
 function applyCashClosureResult(result) {
@@ -1412,6 +1488,10 @@ async function updateCashClosureReview(intakeId, action, payload) {
 
 function handleCorrectCashClosure(intakeId, corrections) {
   return updateCashClosureReview(intakeId, "corrections", corrections);
+}
+
+function handleVerifyCashClosure(intakeId) {
+  return updateCashClosureReview(intakeId, "verify");
 }
 
 function handleApproveCashClosure(intakeId) {
@@ -1624,6 +1704,12 @@ const overdueInvoicesAmount = useMemo(
     <BrowserRouter>
       <div className="dashboard-shell">
         <Sidebar
+          user={user}
+          canViewDashboard={canViewDashboard}
+          canViewInvoices={canViewInvoices}
+          canAccessUpload={canAccessUpload}
+          canViewCashClosures={canReviewCashClosures}
+          cashClosureNavigationEnabled
           month={month}
           setMonth={setMonth}
           pendingInvoices={pendingInvoices.length}
@@ -1634,11 +1720,12 @@ const overdueInvoicesAmount = useMemo(
         />
 
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to={defaultPage} replace />} />
 
           <Route
             path="/dashboard"
             element={
+              canViewDashboard ? (
               <DashboardPage
                 month={month}
                 loading={loading}
@@ -1656,13 +1743,16 @@ const overdueInvoicesAmount = useMemo(
 previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 latestBankTransactionDate={overview?.latest_bank_transaction_date ?? null}
               />
+              ) : (
+                <Navigate to={defaultPage} replace />
+              )
             }
           />
 
           <Route
             path="/invoices"
             element={
-              <InvoicesPage
+              canViewInvoices ? <InvoicesPage
                 month={month}
                 setMonth={setMonth}
                 invoices={invoices}
@@ -1680,14 +1770,16 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 handleDeleteInvoice={handleDeleteInvoice}
                 invoiceDeleteError={invoiceDeleteError}
                 handleCreateManualInvoice={handleCreateManualInvoice}
-              />
+              /> : <Navigate to={defaultPage} replace />
             }
           />
 
           <Route
             path="/upload"
             element={
-              <UploadPage
+              canAccessUpload ? <UploadPage
+                activeBarPermissions={activeBar?.permissions ?? []}
+                isOwner={isOwner}
                 month={month}
                 handleUpload={handleUpload}
                 uploading={uploading}
@@ -1707,6 +1799,7 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 cashClosureRefreshWarning={reviewRefreshWarning}
                 retryCashClosureLoad={() => loadDocuments().catch(() => {})}
                 handleCorrectCashClosure={handleCorrectCashClosure}
+                handleVerifyCashClosure={handleVerifyCashClosure}
                 handleApproveCashClosure={handleApproveCashClosure}
                 handleRejectCashClosure={handleRejectCashClosure}
                 handleReprocessCashClosure={handleReprocessCashClosure}
@@ -1721,8 +1814,57 @@ previousOverdueInvoicesAmount={overdueInvoicesAmount}
                 documentUploadError={documentUploadError}
                 documentUploadWarnings={documentUploadWarnings}
                 documentDeleteError={documentDeleteError}
-              />
+              /> : <Navigate to={defaultPage} replace />
             }
+          />
+          <Route
+            path="/cash-closures/review"
+            element={
+              canReviewCashClosures ? (
+                <CashClosureReviewPage
+                  month={month}
+                  cashClosureReviews={cashClosureReviews}
+                  cashClosureLoading={!documentsLoaded}
+                  cashClosureLoadError={documentsLoadError}
+                  cashClosureRefreshWarning={reviewRefreshWarning}
+                  retryCashClosureLoad={() => loadDocuments().catch(() => {})}
+                  handleCorrectCashClosure={handleCorrectCashClosure}
+                  handleVerifyCashClosure={handleVerifyCashClosure}
+                  handleApproveCashClosure={handleApproveCashClosure}
+                  handleRejectCashClosure={handleRejectCashClosure}
+                  handleReprocessCashClosure={handleReprocessCashClosure}
+                />
+              ) : (
+                <Navigate to={defaultPage} replace />
+              )
+            }
+          />
+
+          <Route
+            path="/cash-closures/history"
+            element={
+              canReviewCashClosures ? (
+                <CashClosureHistoryPage
+                  month={month}
+                  activeBarId={activeBar?.id}
+                  onHistoryChanged={async () => {
+                    await Promise.all([
+                      loadDocuments(),
+                      ...(canViewDashboard
+                        ? [loadDashboardData(currentMonth.current)]
+                        : []),
+                    ]);
+                  }}
+                />
+              ) : (
+                <Navigate to={defaultPage} replace />
+              )
+            }
+          />
+
+          <Route
+            path="/no-access"
+            element={<p>Non hai permessi per accedere alle sezioni del bar.</p>}
           />
         </Routes>
       </div>

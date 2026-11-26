@@ -79,6 +79,15 @@ def create_intake(
 
 def approve_review(intake_id, session):
     context = _test_context(session)
+    intake = session.get(CashClosureIntake, intake_id)
+    if intake is not None and intake.status == "pending":
+        values = dict(intake.ocr_values or {})
+        values["verification"] = {
+            "user_id": context.user.id,
+            "verified_at": "2026-11-19T08:00:00+00:00",
+        }
+        intake.ocr_values = values
+        session.flush()
     return cash_closures.approve_cash_closure_review(
         intake_id, _auth_session=context.auth_session, context=context, db=session
     )
@@ -96,6 +105,135 @@ def reject_review(intake_id, session):
     return cash_closures.reject_cash_closure_review(
         intake_id, _auth_session=context.auth_session, context=context, db=session
     )
+
+
+
+
+def verify_review(intake_id, session):
+    context = _test_context(session)
+    return cash_closures.verify_cash_closure_review(
+        intake_id,
+        _auth_session=context.auth_session,
+        context=context,
+        db=session,
+    )
+
+
+def test_verification_records_user_and_timestamp(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+
+    result = verify_review(intake.id, review_session)
+    context = _test_context(review_session)
+
+    assert result["verification"]["user_id"] == context.user.id
+    assert result["verification"]["verified_at"]
+    assert review_session.get(
+        CashClosureIntake, intake.id
+    ).ocr_values["verification"] == result["verification"]
+
+
+def test_duplicate_verification_is_rejected(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+
+    verify_review(intake.id, review_session)
+
+    with pytest.raises(HTTPException) as error:
+        verify_review(intake.id, review_session)
+
+    assert error.value.status_code == 409
+
+
+def test_correction_invalidates_previous_verification(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+
+    verify_review(intake.id, review_session)
+
+    corrected = correct_review(
+        intake.id,
+        cash_closures.CashClosureCorrection(
+            total_amount=Decimal("210.00")
+        ),
+        review_session,
+    )
+
+    assert corrected.get("verification") is None
+    review_session.expire_all()
+    stored = review_session.get(CashClosureIntake, intake.id)
+    assert "verification" not in stored.ocr_values
+
+    context = _test_context(review_session)
+    with pytest.raises(HTTPException) as error:
+        cash_closures.approve_cash_closure_review(
+            intake.id,
+            _auth_session=context.auth_session,
+            context=context,
+            db=review_session,
+        )
+
+    assert error.value.status_code == 409
+
+    verified_again = verify_review(intake.id, review_session)
+    assert verified_again["verification"] is not None
+
+
+def test_verification_requires_complete_fields(review_session):
+    document = create_document(review_session)
+    intake = create_intake(
+        review_session, document, total_amount=None
+    )
+
+    with pytest.raises(HTTPException) as error:
+        verify_review(intake.id, review_session)
+
+    assert error.value.status_code == 422
+    assert "verification" not in (
+        review_session.get(CashClosureIntake, intake.id).ocr_values
+    )
+
+
+def test_staff_cannot_approve_verified_closure(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+    verify_review(intake.id, review_session)
+
+    context = _test_context(review_session)
+    original_role = context.membership.role
+    try:
+        context.membership.role = type(original_role).staff
+        with pytest.raises(HTTPException) as error:
+            cash_closures.approve_cash_closure_review(
+                intake.id,
+                _auth_session=context.auth_session,
+                context=context,
+                db=review_session,
+            )
+        assert error.value.status_code == 403
+        assert review_session.scalars(
+            select(DailyCashClosure)
+        ).all() == []
+    finally:
+        context.membership.role = original_role
+
+
+def test_approval_without_verification_is_rejected(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+    context = _test_context(review_session)
+
+    with pytest.raises(HTTPException) as error:
+        cash_closures.approve_cash_closure_review(
+            intake.id,
+            _auth_session=context.auth_session,
+            context=context,
+            db=review_session,
+        )
+
+    assert error.value.status_code == 409
+    assert intake.status == "pending"
+    assert review_session.scalars(select(DailyCashClosure)).all() == []
 
 
 def test_pending_review_is_excluded_until_approved_and_repeated_approval_counts_once(
@@ -542,3 +680,83 @@ def test_non_owner_cannot_reject_cash_closure(review_session, role_name):
     assert error.value.status_code == 403
     review_session.expire_all()
     assert review_session.get(CashClosureIntake, intake.id).status == "pending"
+
+
+def test_reprocessing_replaces_verification_with_new_ocr_data(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+
+    verify_review(intake.id, review_session)
+    assert intake.ocr_values.get("verification")
+
+    # Il risultato della rielaborazione deve sostituire i dati OCR
+    # senza mantenere la verifica precedente.
+    new_ocr = {
+        "date": "2026-11-03",
+        "closure_number": "5",
+        "total_amount": "200.00",
+    }
+    intake.ocr_values = {
+        **new_ocr,
+        "reprocessing_history": [
+            {"previous_ocr": dict(intake.ocr_values)}
+        ],
+    }
+    review_session.commit()
+    review_session.expire_all()
+
+    stored = review_session.get(CashClosureIntake, intake.id)
+    assert "verification" not in stored.ocr_values
+    assert stored.ocr_values["reprocessing_history"]
+
+
+def test_approval_remains_owner_only_after_verification(review_session):
+    document = create_document(review_session)
+    intake = create_intake(review_session, document)
+    verify_review(intake.id, review_session)
+
+    context = _test_context(review_session)
+    original_role = context.membership.role
+    try:
+        context.membership.role = type(original_role).staff
+
+        with pytest.raises(HTTPException) as error:
+            cash_closures.approve_cash_closure_review(
+                intake.id,
+                _auth_session=context.auth_session,
+                context=context,
+                db=review_session,
+            )
+
+        assert error.value.status_code == 403
+        assert intake.status == "pending"
+    finally:
+        context.membership.role = original_role
+
+
+def test_verify_endpoint_is_registered():
+    from app.main import app
+
+    routes = {
+        (route.path, method)
+        for route in app.routes
+        if hasattr(route, "methods")
+        for method in route.methods
+    }
+
+    assert (
+        "/cash-closures/review/{intake_id}/verify",
+        "POST",
+    ) in routes
+
+
+def test_verify_endpoint_requires_authentication():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/cash-closures/review/999999/verify"
+        )
+
+    assert response.status_code in (401, 403)

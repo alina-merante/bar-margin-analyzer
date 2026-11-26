@@ -9,7 +9,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 let server;
 let Card;
-let UploadPage;
+let CashClosureReviewPage;
 before(async () => {
   server = await createServer({
     root: new URL("..", import.meta.url).pathname,
@@ -20,7 +20,7 @@ before(async () => {
   });
   const module = await server.ssrLoadModule("/src/pages/UploadPage.jsx");
   Card = module.CashClosureReviewCard;
-  UploadPage = module.default;
+  CashClosureReviewPage = (await server.ssrLoadModule("/src/pages/CashClosureReviewPage.jsx")).default;
 });
 after(async () => { await server?.close(); });
 
@@ -28,6 +28,9 @@ const review = {
   id: 1, date: "2023-09-26", closure_number: "10", total_amount: null,
   cash_amount: "255.50", card_amount: null, receipts_count: 25,
   receipts_total: null, anomalies: [], ocr_values: {},
+  can_edit: true,
+  can_verify: true,
+  verification: null,
   created_at: "2026-11-13T14:41:51",
   document: { id: 9, original_filename: "report.png", file_url: "" },
 };
@@ -135,7 +138,16 @@ test("reprocess failure remains visible and restores controls", async () => {
 
 test("approve is enabled only when the server grants approval", async () => {
   let renderer;
-  const ready = { ...review, total_amount: "100.00", cash_amount: null, can_approve: false };
+  const ready = {
+    ...review,
+    total_amount: "100.00",
+    cash_amount: null,
+    can_approve: false,
+    verification: {
+      user_id: 1,
+      verified_at: "2026-11-19T08:00:00Z",
+    },
+  };
   await act(async () => { renderer = TestRenderer.create(React.createElement(Card, { review: ready })); });
   assert.equal(button(renderer, "Approva").props.disabled, true);
   assert.match(JSON.stringify(renderer.toJSON()), /approvazione è riservata/);
@@ -177,12 +189,13 @@ test("monthly filter preserves drafts and OCR comparison across filter and month
     document: { ...review.document, id: 11, original_filename: "senza-data.png" },
   };
   const props = {
-    month: "2026-11", cashClosureReviews: [review, november, noDate],
+    month: "2026-11",
+    cashClosureReviews: [review, november, noDate],
     handleReprocessCashClosure: async () => preview,
   };
-  const page = (values) => React.createElement(MemoryRouter, null, React.createElement(UploadPage, values));
+  const page = (values) => React.createElement(MemoryRouter, null, React.createElement(CashClosureReviewPage, values));
   const card = (id) => renderer.root.findAllByType(Card).find((item) => item.props.review.id === id);
-  const filter = (index) => renderer.root.findAllByProps({ name: "cash-closure-filter" })[index];
+  const filter = (index) => renderer.root.findAllByProps({ name: "cash-review-page-filter" })[index];
   await act(async () => { renderer = TestRenderer.create(page(props)); });
   assert.equal(card(1).parent.props.hidden, true);
   assert.equal(card(2).parent.props.hidden, false);
@@ -203,5 +216,57 @@ test("monthly filter preserves drafts and OCR comparison across filter and month
   await act(async () => { filter(1).props.onChange(); });
   assert.equal(card(1).findAllByType("input")[1].props.value, "manuale");
   assert.ok(card(2).findAllByType("button").some((item) => item.children.includes("Conferma rielaborazione")));
+  await act(async () => { renderer.unmount(); });
+});
+
+
+test("granular permissions hide unauthorized closure actions", async () => {
+  let renderer;
+  const restricted = {
+    ...review,
+    can_edit: false,
+    can_verify: false,
+    can_approve: false,
+  };
+
+  await act(async () => {
+    renderer = TestRenderer.create(
+      React.createElement(Card, { review: restricted })
+    );
+  });
+
+  assert.equal(renderer.root.findByType("fieldset").props.disabled, true);
+  assert.equal(button(renderer, "Rielabora OCR"), undefined);
+  assert.equal(button(renderer, "Salva correzioni"), undefined);
+  assert.equal(button(renderer, "Verifica completata"), undefined);
+  assert.equal(button(renderer, "Approva").props.disabled, true);
+
+  await act(async () => { renderer.unmount(); });
+});
+
+test("verification is required before approval", async () => {
+  let renderer;
+
+  const ready = {
+    ...review,
+    closure_number: "10",
+    total_amount: "100.00",
+    cash_amount: null,
+    card_amount: null,
+    can_edit: true,
+    can_verify: true,
+    can_approve: true,
+    verification: null,
+  };
+
+  await act(async () => {
+    renderer = TestRenderer.create(
+      React.createElement(Card, { review: ready })
+    );
+  });
+
+  assert.equal(button(renderer, "Approva").props.disabled, true);
+  assert.equal(button(renderer, "Verifica completata").props.disabled, false);
+
   await act(async () => { renderer.unmount(); });
 });

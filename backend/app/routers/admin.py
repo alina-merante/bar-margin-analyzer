@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_session, require_global_admin, require_session_csrf
 from app.database import get_db
 from app.models import AdminAudit, AdminWriteLock, AuthSession, Bar, MembershipRole, User, UserBarMembership
+from app.permissions import DelegablePermission
+from app.models import MembershipPermission
 from app.security import hash_password
 
 
@@ -101,6 +103,10 @@ class MembershipUpdate(StrictInput):
     role: AssignableRole
 
 
+class MembershipPermissionsUpdate(StrictInput):
+    permissions: list[DelegablePermission]
+
+
 def admin_read(
     response: Response,
     actor: User = Depends(require_global_admin),
@@ -175,6 +181,7 @@ def membership_response(membership: UserBarMembership) -> dict:
     return {
         "id": membership.id, "bar_id": membership.bar_id,
         "user_id": membership.user_id, "role": membership.role.value,
+        "permissions": sorted(item.permission for item in membership.permissions),
     }
 
 
@@ -359,6 +366,50 @@ def update_membership(bar_id: int, user_id: int, payload: MembershipUpdate,
         membership.permissions.clear()
         audit(db, actor, "membership.role", bar_id=bar_id, user_id=user_id,
               changes={"role": {"from": old_role, "to": payload.role.value}})
+    db.commit()
+    return membership_response(membership)
+
+
+@router.put("/bars/{bar_id}/memberships/{user_id}/permissions")
+def update_membership_permissions(
+    bar_id: int,
+    user_id: int,
+    payload: MembershipPermissionsUpdate,
+    actor: User = Depends(admin_write),
+    db: Session = Depends(get_db),
+) -> dict:
+    get_user(db, user_id, lock=True)
+    get_bar(db, bar_id, lock=True)
+    membership = get_membership(db, bar_id, user_id, lock=True)
+
+    if membership.role == MembershipRole.owner:
+        raise HTTPException(
+            status_code=403,
+            detail="Owner permissions cannot be delegated or restricted.",
+        )
+
+    requested = {permission.value for permission in payload.permissions}
+    previous = {item.permission for item in membership.permissions}
+
+    if requested != previous:
+        membership.permissions = [
+            MembershipPermission(permission=permission)
+            for permission in sorted(requested)
+        ]
+        audit(
+            db,
+            actor,
+            "membership.permissions",
+            bar_id=bar_id,
+            user_id=user_id,
+            changes={
+                "permissions": {
+                    "from": sorted(previous),
+                    "to": sorted(requested),
+                }
+            },
+        )
+
     db.commit()
     return membership_response(membership)
 

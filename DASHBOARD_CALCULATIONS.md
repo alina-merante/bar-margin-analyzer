@@ -5,7 +5,7 @@ applicativo del P&L.
 
 ## 1. Ricavi
 
-I ricavi sono la somma delle chiusure di cassa comprese nel periodo selezionato.
+I ricavi sono la somma delle chiusure di cassa approvate, non annullate, del bar attivo comprese nel periodo selezionato.
 
 - Fonte: `DailyCashClosure.total_amount` (estratta via OCR dal documento di
   chiusura).
@@ -75,7 +75,7 @@ il mese selezionato.
 
 Ogni mese applica le stesse regole:
 
-- `Revenue = somma delle chiusure cassa del mese`;
+- `Revenue = somma delle chiusure approvate e non annullate del bar nel mese`;
 - `Expenses = somma di Invoice.total` delle sole fatture paid e riconciliate
   rilevanti nel mese;
 - `Profit = Revenue - Expenses`.

@@ -20,6 +20,7 @@ from app.models import (
     Invoice,
     InvoicePaymentLink,
     InvoiceStatus,
+    MembershipPermission,
     MembershipRole,
     Payment,
     PaymentMethod,
@@ -114,6 +115,27 @@ def finance_environment(tmp_path, monkeypatch):
                 ),
             ]
         )
+        db.flush()
+
+        staff_membership = db.scalar(
+            select(UserBarMembership).where(
+                UserBarMembership.user_id == staff.id,
+                UserBarMembership.bar_id == bar_one.id,
+            )
+        )
+        assert staff_membership is not None
+
+        db.add_all([
+            MembershipPermission(
+                membership_id=staff_membership.id,
+                permission="invoices.view_all",
+            ),
+            MembershipPermission(
+                membership_id=staff_membership.id,
+                permission="payments.view",
+            ),
+        ])
+
         db.commit()
         ids = {
             "bar_one": bar_one.id,

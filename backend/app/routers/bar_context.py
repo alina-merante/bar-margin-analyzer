@@ -7,6 +7,7 @@ from app.auth import get_current_session, require_session_csrf
 from app.bar_context import get_user_bar_access
 from app.database import get_db
 from app.models import AuthSession, Bar, UserBarMembership
+from app.permissions import DelegablePermission
 
 router = APIRouter(prefix="/auth", tags=["bar context"])
 
@@ -15,11 +16,37 @@ class ActiveBarRequest(BaseModel):
     bar_id: int
 
 
-def _bar_response(bar: Bar, membership: UserBarMembership) -> dict:
+def _bar_response(
+    bar: Bar,
+    membership: UserBarMembership | None,
+    *,
+    is_global_admin: bool = False,
+) -> dict:
+    if is_global_admin:
+        return {
+            "id": bar.id,
+            "name": bar.name,
+            "role": "owner",
+            "permissions": sorted(
+                permission.value
+                for permission in DelegablePermission
+            ),
+            "is_global_admin": True,
+        }
+
+    if membership is None:
+        raise HTTPException(
+            status_code=403,
+            detail="bar access denied",
+        )
+
     return {
         "id": bar.id,
         "name": bar.name,
         "role": membership.role.value,
+        "permissions": sorted(
+            item.permission for item in membership.permissions
+        ),
     }
 
 
@@ -32,7 +59,11 @@ def list_accessible_bars(
     response.headers["Cache-Control"] = "no-store"
     return [
         {
-            **_bar_response(access.bar, access.membership),
+            **_bar_response(
+                access.bar,
+                access.membership,
+                is_global_admin=auth_session.user.is_global_admin,
+            ),
             "selected": access.bar.id == auth_session.active_bar_id,
         }
         for access in accesses
@@ -46,6 +77,30 @@ def select_active_bar(
     auth_session: AuthSession = Depends(require_session_csrf),
     db: Session = Depends(get_db),
 ) -> dict:
+    if auth_session.user.is_global_admin:
+        bar = db.scalar(
+            select(Bar).where(
+                Bar.id == payload.bar_id,
+                Bar.is_active.is_(True),
+            )
+        )
+
+        if bar is None:
+            raise HTTPException(
+                status_code=403,
+                detail="bar access denied",
+            )
+
+        auth_session.active_bar_id = bar.id
+        db.commit()
+        response.headers["Cache-Control"] = "no-store"
+
+        return _bar_response(
+            bar,
+            None,
+            is_global_admin=True,
+        )
+
     access = db.execute(
         select(Bar, UserBarMembership)
         .join(UserBarMembership, UserBarMembership.bar_id == Bar.id)
@@ -77,5 +132,9 @@ def read_active_bar(
 
     for access in accesses:
         if access.bar.id == auth_session.active_bar_id:
-            return _bar_response(access.bar, access.membership)
+            return _bar_response(
+                access.bar,
+                access.membership,
+                is_global_admin=auth_session.user.is_global_admin,
+            )
     raise HTTPException(status_code=403, detail="active bar access denied")

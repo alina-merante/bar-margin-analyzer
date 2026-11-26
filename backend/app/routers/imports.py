@@ -17,6 +17,8 @@ from app.bar_context import (
     revalidate_active_bar_context,
     require_bar_permission,
 )
+from app.permissions import DelegablePermission
+from app.bar_context import require_financial_permissions
 from app.database import get_db
 from app.models import (
     AuthSession,
@@ -129,6 +131,10 @@ def import_bank_csv(
     document_id: Annotated[int | None, Form()] = None,
     month: Annotated[str | None, Form()] = None,
 ) -> dict[str, int]:
+    require_financial_permissions(
+        context, DelegablePermission.DOCUMENTS_UPLOAD
+    )
+
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file")
 
@@ -158,6 +164,9 @@ def import_bank_csv(
             request, db, context.bar.id, lock=True
         )
         operational_context(current_context)
+        require_financial_permissions(
+            current_context, DelegablePermission.DOCUMENTS_UPLOAD
+        )
 
         if month:
             document, created_paths = create_bank_document(
@@ -166,6 +175,7 @@ def import_bank_csv(
                 month,
                 db,
                 context.bar.id,
+                created_by_user_id=current_context.user.id,
             )
             document_id = document.id
 
