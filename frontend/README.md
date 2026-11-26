@@ -95,3 +95,14 @@ npm --prefix frontend run lint
 
 Le sezioni analytics relative a categorie, fornitori e alcuni insight sono
 ancora placeholder nel backend e possono quindi apparire vuote nell'interfaccia.
+
+## Layout responsive e sistema grafico
+
+Il file `src/responsive.css` centralizza le regole responsive,
+le proporzioni tipografiche, le spaziature e lo stile delle scrollbar.
+Le tabelle si adattano allo spazio disponibile tramite container queries.
+
+La suite `responsive.spec.js` verifica cinque pagine operative
+su otto risoluzioni, da 320 a 1920 px, includendo contenuti
+sintetici, filtri, modali e schede OCR senza modificare
+i dati contabili del database.

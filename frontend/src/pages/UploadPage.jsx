@@ -843,7 +843,17 @@ export default function UploadPage({
                 effectiveDate || document.created_at,
                 effectiveDate ? HISTORY_DATE_KIND_CIVIL : HISTORY_DATE_KIND_TIMESTAMP
               ),
-        statusLabel: document.status,
+        statusLabel: ({
+          processed: "Elaborato",
+          pending: "In attesa",
+          processing: "In elaborazione",
+          uploaded: "Caricato",
+          approved: "Approvato",
+          rejected: "Rifiutato",
+          failed: "Elaborazione non riuscita",
+          error: "Errore",
+          annulled: "Annullato",
+        })[document.status] || "Stato non disponibile",
         raw: document,
       };
     });

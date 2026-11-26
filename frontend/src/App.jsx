@@ -2,6 +2,7 @@ import { needsImageCompression } from "./documentUploadRules.js";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import "./responsive.css";
 import Sidebar from "./components/Sidebar";
 import { useTenantApi } from "./ApiContext";
 import UploadPage from "./pages/UploadPage";
