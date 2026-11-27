@@ -584,7 +584,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   * { margin:0; padding:0; box-sizing:border-box; }
 
   body {
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Inter', Arial, sans-serif;
     background: #cbd5e1;
     padding: 40px 24px;
     min-height: 100vh;
@@ -600,7 +600,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   }
 
   .screen-title {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 18px;
     color: #334155;
     display: flex;
@@ -624,7 +624,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
     border: none;
     border-radius: 10px;
     padding: 10px 20px;
-    font-family: 'DM Sans', sans-serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -692,7 +692,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   }
 
   .logo-name {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 20px;
     font-weight: 700;
     color: #fff;
@@ -730,7 +730,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   }
 
   .doc-title {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 26px;
     font-weight: 700;
     color: #fff;
@@ -753,7 +753,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   }
 
   .period-value {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 18px;
     font-weight: 700;
     color: var(--crema-light);
@@ -792,7 +792,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   .kpi-box.dark .kpi-box-label { color: rgba(255,255,255,.4); }
 
   .kpi-box-value {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 20px;
     font-weight: 700;
     color: var(--espresso);
@@ -850,7 +850,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
   .m-labels .hi { color: var(--crema-light); font-weight: 600; }
 
   .section-title {
-    font-family: 'Playfair Display', serif;
+    font-family: 'Inter', Arial, sans-serif;
     font-size: 14px;
     font-weight: 700;
     color: var(--espresso);
@@ -930,7 +930,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
     transform: translate(-50%, -50%);
     text-align: center;
   }
-  .dcv { font-family: 'Playfair Display', serif; font-size: 16px; font-weight: 700; color: var(--espresso); }
+  .dcv { font-family: 'Inter', Arial, sans-serif; font-size: 16px; font-weight: 700; color: var(--espresso); }
   .dcl { font-size: 9px; color: var(--text-soft); }
 
   .donut-legend-mini { display: flex; flex-direction: column; gap: 6px; }
@@ -993,7 +993,7 @@ export default function App({ user, bars, activeBar, onSelectBar, onLogout }) {
 
   .footer-left { display: flex; align-items: center; gap: 8px; }
   .footer-logo { font-size: 14px; }
-  .footer-name { font-family: 'Playfair Display', serif; font-size: 12px; color: var(--text-soft); }
+  .footer-name { font-family: 'Inter', Arial, sans-serif; font-size: 12px; color: var(--text-soft); }
   .footer-right { font-size: 10.5px; color: var(--text-soft); text-align: right; }
   .footer-conf {
     display: inline-flex; align-items: center; gap: 5px;

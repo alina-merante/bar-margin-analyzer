@@ -801,7 +801,6 @@
   }
 }
 
-
 /* === DASHBOARD: COMPACT APP DESIGN === */
 .dashboard-right-column {
   align-content: start;
@@ -1410,7 +1409,6 @@
   }
 }
 
-
 /* === COERENZA GRAFICA APP MOBILE === */
 
 @media (max-width: 600px) {
@@ -1909,5 +1907,2146 @@
 
   .main-content .cash-review-fields {
     gap: 8px;
+  }
+}
+
+/* === TABLET VERTICALE: REGOLE ISOLATE === */
+@media (min-width: 601px) and (max-width: 1024px) and (orientation: portrait) {
+
+/* === Tablet verticale: sistema grafico compatto === */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  :root {
+    --bm-page-title: 28px;
+    --bm-section-title: 21px;
+    --bm-card-title: 17px;
+    --bm-kpi-size: 26px;
+    --bm-card-padding: 16px;
+    --bm-card-gap: 12px;
+    --bm-card-radius: 12px;
+  }
+
+  .dashboard-shell .main-content {
+    padding: 16px;
+    min-width: 0;
+  }
+
+  .dashboard-header,
+  .invoices-dashboard-header {
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  /* Dashboard */
+
+  .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .dashboard-kpi-card {
+    min-height: 0;
+    height: auto;
+    padding: 16px;
+  }
+
+  .dashboard-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .dashboard-right-column {
+    gap: 12px;
+  }
+
+  .dashboard-right-column > .card {
+    padding: 16px;
+    border-radius: 12px;
+    min-height: 0;
+  }
+
+  .dashboard-chart-card {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .daily-reminder-card {
+    padding: 16px;
+    border-radius: 12px;
+    margin-top: 12px;
+  }
+
+  .daily-reminder-scroll {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  /* Fatture */
+
+  .invoices-dashboard-page .invoice-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-card.overdue {
+    grid-column: 1 / -1;
+  }
+
+  .invoice-filters-row {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .invoice-status-filter,
+  .invoice-search-box,
+  .invoice-category-dropdown-btn {
+    min-height: 44px;
+    font-size: 14px;
+    border-radius: 10px;
+  }
+
+  .invoice-clean-table-row {
+    row-gap: 10px !important;
+  }
+
+  /* Caricamenti */
+
+  .upload-page {
+    gap: 14px;
+  }
+
+  .upload-page .upload-primary-grid,
+  .upload-page .upload-secondary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .upload-page .upload-doc-card,
+  .upload-page .upload-mini-card {
+    padding: 14px;
+    min-height: 0;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .upload-page .upload-section-label {
+    margin: 4px 0 8px;
+  }
+
+  .upload-page .upload-dropzone,
+  .upload-page .upload-mini-box {
+    min-height: 64px;
+    padding: 10px;
+  }
+
+  /* Storico chiusure */
+
+  .cash-closure-history-page
+  :has(> .cash-history-list) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .cash-closure-history-page .cash-history-item {
+    padding: 14px;
+    gap: 10px;
+    border: 1px solid #e5d4bf;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    background: transparent;
+    padding: 0;
+    border: 0;
+    gap: 8px;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) p {
+    padding: 10px;
+    background: #faf5ed;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) p:first-child {
+    grid-column: auto;
+    background: #e5f2eb;
+    color: #24734e;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) strong {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
+  .cash-closure-history-page .cash-history-item button {
+    display: block;
+    margin-left: auto;
+    width: fit-content;
+    min-height: 44px;
+  }
+
+  /* Chiusure da verificare */
+
+  .main-content .cash-review-card {
+    padding: 16px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .main-content .cash-review-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .cash-review-fields input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    font-size: 16px;
+    border-radius: 8px;
+  }
+
+  .cash-review-actions {
+    gap: 8px;
+  }
+
+  .cash-review-actions button {
+    min-height: 44px;
+  }
+
+  /* Modali */
+
+  .invoice-manual-modal,
+  .invoice-reconciliation-modal,
+  .document-info-modal {
+    padding: 20px;
+    border-radius: 14px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+  }
+}
+
+/* Tablet verticale: densità della dashboard */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .dashboard-kpi-card {
+    padding: 14px;
+    min-height: 0;
+    height: auto;
+    gap: 8px;
+  }
+
+  .dashboard-kpi-card .kpi-value {
+    margin-top: 12px;
+    margin-bottom: 8px;
+    font-size: 26px;
+  }
+
+  .dashboard-kpi-card .kpi-label {
+    font-size: 12px;
+    letter-spacing: 0.6px;
+  }
+
+  .dashboard-kpi-card::after {
+    width: 76px;
+    height: 76px;
+  }
+
+  .dashboard-chart-card {
+    padding: 14px;
+    min-height: 0;
+  }
+
+  .dashboard-chart-bars {
+    height: 240px;
+  }
+
+  .dashboard-chart-bars .bar-pair {
+    height: 210px;
+  }
+
+  .dashboard-content-grid {
+    margin-top: 12px;
+    gap: 12px;
+  }
+
+  .dashboard-header {
+    margin-bottom: 12px;
+  }
+
+  .daily-reminder-card {
+    margin-top: 12px;
+  }
+}
+
+/* Tablet verticale: intestazione comune compatta */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .dashboard-shell .sidebar-logo {
+    box-sizing: border-box;
+    padding: 10px 16px 10px 76px;
+    min-height: 64px;
+  }
+
+  .dashboard-shell .mobile-menu-toggle {
+    top: 10px;
+    left: 16px;
+  }
+
+  .dashboard-shell .sidebar-bottom {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 12px;
+    padding: 10px 16px;
+  }
+
+  .dashboard-shell .sidebar-account {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .dashboard-shell #active-bar-label {
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .dashboard-shell #active-bar {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .dashboard-shell .month-selector {
+    box-sizing: border-box;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    min-width: 0;
+    gap: 6px;
+    padding: 0;
+    border-radius: 10px;
+  }
+
+  .dashboard-shell .sidebar .month-nav-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+  }
+
+  .dashboard-shell .month-label-button {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .dashboard-shell .sidebar.mobile-menu-open
+  .sidebar-bottom {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-shell .sidebar.mobile-menu-open
+  .sidebar-account {
+    margin-bottom: 4px;
+  }
+
+  .dashboard-shell .month-picker-popover {
+    left: auto;
+    right: -50px;
+    transform: none;
+    max-width: calc(100vw - 32px);
+  }
+}
+
+/* Tablet verticale: uniformità grafica delle fatture */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .invoice-modern-table-card {
+    border-radius: 12px;
+  }
+}
+
+/* Tablet verticale: rifinitura caricamenti */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .upload-page {
+    gap: 12px;
+  }
+
+  .upload-page .upload-section {
+    margin: 0;
+    padding: 0;
+    gap: 10px;
+  }
+
+  .upload-page .upload-section-label {
+    margin: 4px 0 8px;
+  }
+
+  .upload-page .upload-mini-card {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 4px;
+    align-content: start;
+    align-items: center;
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .upload-page .upload-mini-card > .upload-mini-icon {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card > h3 {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    font-size: 17px;
+  }
+
+  .upload-page .upload-mini-card > p {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .upload-page .upload-mini-card >
+  :not(.upload-mini-icon):not(h3):not(p) {
+    grid-column: 1 / -1;
+  }
+
+  .upload-page .upload-secondary-grid
+  > .upload-mini-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .upload-page .upload-mini-box {
+    margin-top: 6px;
+  }
+
+  /* Storico documenti */
+
+  .upload-page .upload-history-card {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .upload-page
+  .upload-history-table-row.other-docs-table {
+    display: grid;
+    grid-template-columns:
+      minmax(0, 1fr) 44px 44px;
+    gap: 6px 10px;
+    align-items: center;
+    padding: 12px;
+  }
+
+  .upload-page .other-docs-table
+  .upload-history-name {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 15px;
+    overflow-wrap: anywhere;
+  }
+
+  .upload-page .other-docs-table
+  .upload-history-category {
+    grid-column: 1;
+    grid-row: 2;
+    font-size: 13px;
+  }
+
+  .upload-page .other-docs-table
+  > div:nth-child(3) {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .upload-page .other-docs-table
+  > div:nth-child(4) {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .upload-page .other-docs-table
+  > div:nth-child(5) {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+  }
+
+  .upload-page .other-docs-table
+  > div:nth-child(6) {
+    grid-column: 3;
+    grid-row: 1 / span 4;
+  }
+
+  .upload-page .upload-history-action-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .upload-page .upload-history-action-cell
+  .invoice-icon-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 9px;
+  }
+}
+
+/* Tablet verticale: simmetrie caricamenti */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .upload-page .upload-primary-grid,
+  .upload-page .upload-secondary-grid {
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .upload-page .upload-doc-head {
+    min-height: 76px;
+    align-items: flex-start;
+  }
+
+  .upload-page .upload-doc-card,
+  .upload-page .upload-mini-card {
+    box-sizing: border-box;
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .upload-page .upload-section {
+    margin: 0;
+    padding: 0;
+  }
+
+  .upload-page .upload-section-label {
+    margin: 0 0 10px;
+  }
+
+  .upload-page .upload-history-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0;
+  }
+
+  .upload-page .history-tab {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 4px;
+    text-align: center;
+    font-size: 13px;
+    border-radius: 9px;
+  }
+
+  .upload-page .upload-history-card {
+    margin-top: 0;
+    padding: 14px;
+    border-radius: 12px;
+  }
+}
+
+/* Tablet verticale: allineamento simmetrico filtri fatture */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .invoice-filters-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    margin-bottom: 16px;
+    align-items: stretch;
+  }
+
+  .invoice-filters-row > .invoice-status-filter {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .invoice-filters-row > .invoice-category-filter-bar {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .invoice-category-filter-bar
+  .invoice-category-dropdown-wrapper {
+    grid-column: 1;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .invoice-category-filter-bar .invoice-search-box {
+    grid-column: 2 / -1;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .invoice-filters-row .invoice-status-filter,
+  .invoice-filters-row .invoice-category-dropdown-btn,
+  .invoice-filters-row .invoice-search-box {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 48px;
+    min-height: 48px;
+    border-radius: 10px;
+    font-size: 13px;
+    padding: 8px 10px;
+    margin: 0;
+  }
+
+  .invoice-category-dropdown-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .invoice-filters-row >
+  :not(.invoice-status-filter):not(.invoice-category-filter-bar) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Tablet verticale: allineamento arretrati */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .invoice-filters-row > .invoice-status-filter:last-child {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Tablet verticale: simmetria chiusure da verificare */
+
+@media (min-width: 601px) and (max-width: 900px)
+and (orientation: portrait) {
+
+  .main-content:has(.cash-review-filter) {
+    box-sizing: border-box;
+    padding: 16px 24px;
+  }
+
+  .main-content:has(.cash-review-filter)
+  > .upload-section {
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .upload-history-card:has(> .cash-review-filter) {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 16px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .upload-history-card:has(> .cash-review-filter)
+  > h2 {
+    font-size: 28px;
+    line-height: 1.25;
+    margin: 0 0 8px;
+  }
+
+  .cash-review-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+    padding: 0;
+    margin: 16px 0;
+    border: 0;
+  }
+
+  .cash-review-filter legend {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    padding: 0;
+  }
+
+  .cash-review-filter > label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 10px;
+    margin: 0;
+    border: 1px solid #e5d4bf;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 13px;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .cash-review-filter > label:has(input:checked) {
+    background: #c98235;
+    border-color: #c98235;
+    color: #211408;
+    font-weight: 600;
+  }
+
+  .cash-review-filter input[type="radio"] {
+    accent-color: #86521d;
+    flex-shrink: 0;
+    margin: 0;
+  }
+
+  .cash-review-filter > label:has(input:focus-visible) {
+    outline: 2px solid #86521d;
+    outline-offset: 3px;
+  }
+}
+
+/* === TABLET VERTICALE: TIPOGRAFIA UNIFORME === */
+
+@media (min-width: 601px) and (max-width: 1024px)
+       and (orientation: portrait) {
+
+  .main-content h1 {
+    font-size: 28px;
+    line-height: 1.25;
+  }
+
+  .main-content h2,
+  .main-content .card-title {
+    font-size: 22px;
+    line-height: 1.3;
+  }
+
+  .main-content h3,
+  .main-content .upload-mini-card h3 {
+    font-size: 18px;
+    line-height: 1.3;
+  }
+
+  .main-content p,
+  .main-content .card-sub,
+  .main-content .small-muted {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .main-content button,
+  .main-content input,
+  .main-content select,
+  .main-content textarea,
+  .main-content label {
+    font-family: inherit;
+    font-size: 14px;
+  }
+
+  .main-content button {
+    min-height: 44px;
+  }
+
+  .main-content .cash-review-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .main-content .cash-review-filter > label {
+    min-height: 44px;
+    margin: 0;
+    font-size: 14px;
+    box-sizing: border-box;
+  }
+
+  .main-content .cash-review-card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .main-content .cash-review-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .main-content .cash-review-fields label,
+  .main-content .cash-review-fields input {
+    min-width: 0;
+  }
+
+  .main-content .cash-review-fields input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .main-content .cash-review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .main-content .cash-review-actions button {
+    flex: 1 1 180px;
+  }
+}
+
+}
+
+/* === DESKTOP: RIPRISTINO LAYOUT CHIUSURE DA VERIFICARE === */
+
+@media (min-width: 1025px) {
+
+  .dashboard-shell > main.main-content:has(.cash-review-filter) {
+    margin-left: 230px;
+    width: auto;
+    min-width: 0;
+    padding: 34px 34px 60px;
+    box-sizing: border-box;
+  }
+
+}
+
+/* === Tipografia Inter: tutte le risoluzioni === */
+
+.dashboard-shell {
+  font-family: "Inter", Arial, sans-serif;
+}
+
+.dashboard-shell h1,
+.dashboard-shell h2,
+.dashboard-shell h3,
+.dashboard-shell button,
+.dashboard-shell input,
+.dashboard-shell select,
+.dashboard-shell textarea,
+.dashboard-shell label,
+.dashboard-shell legend,
+.dashboard-shell table {
+  font-family: "Inter", Arial, sans-serif;
+}
+
+/* === Tipografia Inter: pesi uniformi su tutti i dispositivi === */
+
+.dashboard-shell {
+  font-weight: 400;
+}
+
+.dashboard-shell h1 {
+  font-weight: 600 !important;
+}
+
+.dashboard-shell h2,
+.dashboard-shell h3,
+.dashboard-shell .card-title,
+.dashboard-shell .daily-reminder-item strong,
+.dashboard-shell .upload-history-name,
+.dashboard-shell .upload-dropzone-title,
+.dashboard-shell .upload-mini-box-title {
+  font-weight: 500 !important;
+}
+
+.dashboard-shell .invoice-modern-total,
+.dashboard-shell .invoice-critical-amount,
+.dashboard-shell .premium-donut-total,
+.dashboard-shell .donut-center-value,
+.dashboard-shell .invoice-mini-stat strong,
+.dashboard-shell .product-stat {
+  font-weight: 600 !important;
+}
+
+.dashboard-shell button,
+.dashboard-shell .dashboard-upload-btn,
+.dashboard-shell .invoice-upload-btn,
+.dashboard-shell .daily-reminder-action,
+.dashboard-shell .see-all-btn,
+.dashboard-shell .previous-overdue-link {
+  font-weight: 500 !important;
+}
+
+.dashboard-shell .invoice-status-filter,
+.dashboard-shell .invoice-category-dropdown-btn,
+.dashboard-shell .history-tab,
+.dashboard-shell .invoice-mini-stat span,
+.dashboard-shell .upload-section-label,
+.dashboard-shell .invoice-clean-table-head,
+.dashboard-shell .invoice-modern-table-head {
+  font-weight: 400 !important;
+}
+
+.dashboard-shell .daily-reminder-badge,
+.dashboard-shell .invoice-due-status,
+.dashboard-shell .upload-doc-status,
+.dashboard-shell .upload-history-status,
+.dashboard-shell .invoice-payment-paid,
+.dashboard-shell .alert-banner__title,
+.dashboard-shell .sidebar-user-role,
+.dashboard-shell .invoice-modern-supplier {
+  font-weight: 500 !important;
+}
+
+.dashboard-shell .invoice-modern-due {
+  font-weight: 400 !important;
+}
+
+/* === TABLET ORIZZONTALE === */
+
+@media (min-width: 901px) and (max-width: 1180px)
+and (orientation: landscape) {
+
+  :root {
+    --bm-page-title: 28px;
+    --bm-section-title: 21px;
+    --bm-card-title: 17px;
+    --bm-kpi-size: 26px;
+    --bm-body-size: 14px;
+    --bm-card-padding: 16px;
+    --bm-card-gap: 12px;
+    --bm-card-radius: 12px;
+  }
+
+  .dashboard-shell .main-content {
+    padding: 16px;
+    min-width: 0;
+  }
+
+  /* Dashboard */
+
+  .dashboard-kpi-card {
+    min-height: 0;
+    height: auto;
+    padding: 16px;
+  }
+
+  .dashboard-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .dashboard-chart-card {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .dashboard-right-column {
+    gap: 12px;
+  }
+
+  .dashboard-right-column > .card {
+    min-height: 0;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .daily-reminder-card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .daily-reminder-scroll {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Fatture */
+
+  .invoice-kpi-card {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .invoice-filters-row {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .invoice-status-filter,
+  .invoice-search-box,
+  .invoice-category-dropdown-btn {
+    min-height: 44px;
+    font-size: 13px;
+    border-radius: 10px;
+  }
+
+  /* Caricamenti */
+
+  .upload-page {
+    gap: 12px;
+  }
+
+  .upload-page .upload-primary-grid,
+  .upload-page .upload-secondary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .upload-page .upload-doc-card,
+  .upload-page .upload-mini-card {
+    min-height: 0;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .upload-page .upload-doc-icon,
+  .upload-page .upload-mini-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+    border-radius: 10px;
+  }
+
+  .upload-page .upload-dropzone,
+  .upload-page .upload-mini-box {
+    min-height: 64px;
+    padding: 12px;
+    border-radius: 10px;
+  }
+
+  /* Chiusure da verificare */
+
+  .main-content .cash-review-card {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .main-content .cash-review-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .cash-review-fields input,
+  .cash-review-actions button {
+    min-height: 44px;
+  }
+
+  /* Storico chiusure */
+
+  .cash-closure-history-page .cash-history-item {
+    padding: 14px;
+    gap: 10px;
+    border-radius: 12px;
+  }
+
+  .cash-history-item > div:nth-child(2) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+
+  /* Rifinitura landscape */
+
+  /* Dashboard */
+
+  .dashboard-kpi-grid {
+    gap: 12px;
+  }
+
+  .dashboard-kpi-card {
+    padding: 14px;
+  }
+
+  .dashboard-kpi-card .kpi-value {
+    margin-top: 12px;
+    margin-bottom: 8px;
+    font-size: 26px;
+  }
+
+  .dashboard-kpi-card::after {
+    width: 76px;
+    height: 76px;
+  }
+
+  /* Fatture */
+
+  .invoices-dashboard-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .invoices-dashboard-header > div:first-child {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .invoices-dashboard-title,
+  .invoices-dashboard-subtitle {
+    white-space: normal;
+  }
+
+  .invoice-manual-btn,
+  .invoice-upload-btn {
+    min-height: 44px;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-card {
+    padding: 14px;
+    min-height: 0;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-card.overdue {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    justify-self: stretch;
+  }
+
+  .invoice-filters-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .invoice-filters-row > .invoice-status-filter {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .invoice-category-filter-bar {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .invoice-category-dropdown-wrapper {
+    grid-column: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .invoice-category-dropdown-btn {
+    width: 100%;
+  }
+
+  .invoice-search-box {
+    grid-column: 2 / -1;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .invoice-filters-row > .invoice-status-filter:last-child {
+    grid-column: 1 / -1;
+  }
+
+  /* Caricamenti */
+
+  .upload-page .upload-section {
+    margin: 0;
+    padding: 0;
+    gap: 10px;
+  }
+
+  .upload-page .upload-section-label {
+    margin: 4px 0 8px;
+    font-size: 12px;
+  }
+
+  .upload-page .upload-doc-head {
+    gap: 10px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+  }
+
+  .upload-page .upload-doc-text,
+  .upload-page .upload-mini-card p {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .upload-page .upload-dropzone,
+  .upload-page .upload-mini-box {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 3px;
+    min-height: 64px;
+    padding: 10px;
+    text-align: left;
+  }
+
+  .upload-page .upload-dropzone-icon,
+  .upload-page .upload-mini-box-icon {
+    grid-row: 1 / span 2;
+    font-size: 22px;
+    margin: 0;
+    text-align: center;
+  }
+
+  .upload-page .upload-dropzone-title,
+  .upload-page .upload-mini-box-title {
+    font-size: 13px;
+  }
+
+  .upload-page .upload-dropzone-sub,
+  .upload-page .upload-mini-box-sub {
+    font-size: 12px;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 4px;
+    align-items: center;
+    align-content: start;
+  }
+
+  .upload-page .upload-mini-card > .upload-mini-icon {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card > h3 {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card > p {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card >
+  :not(.upload-mini-icon):not(h3):not(p) {
+    grid-column: 1 / -1;
+  }
+
+  .upload-secondary-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .upload-page .upload-history-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .upload-page .history-tab {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 4px;
+    font-size: 13px;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  .upload-page .upload-history-table-row.other-docs-table {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+    gap: 6px 10px;
+    padding: 12px;
+    align-items: center;
+  }
+
+  .upload-page .upload-history-table-row .upload-history-name {
+    grid-column: 1;
+    grid-row: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .upload-page .upload-history-table-row .upload-history-category {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .upload-page .upload-history-table-row.other-docs-table > div:nth-child(3) {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .upload-page .upload-history-table-row.other-docs-table > div:nth-child(4) {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .upload-page .upload-history-table-row.other-docs-table > div:nth-child(5) {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+  }
+
+  .upload-page .upload-history-table-row.other-docs-table > div:nth-child(6) {
+    grid-column: 3;
+    grid-row: 1 / span 4;
+  }
+
+  .upload-page .upload-history-action-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .upload-page .upload-history-action-cell .invoice-icon-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  /* Chiusure da verificare: ripristino layout */
+
+  .dashboard-shell > main.main-content:has(.cash-review-filter) {
+    margin-left: 230px;
+    width: auto;
+    min-width: 0;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+
+  .main-content:has(.cash-review-filter) > .upload-section {
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .upload-history-card:has(> .cash-review-filter) {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 16px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .cash-review-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+    padding: 0;
+    margin: 16px 0;
+    border: 0;
+  }
+
+  .cash-review-filter > label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 48px;
+    padding: 10px;
+    margin: 0;
+    box-sizing: border-box;
+    border: 1px solid #e5d4bf;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 13px;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .cash-review-filter > label:has(input:checked) {
+    background: #c98235;
+    border-color: #c98235;
+    color: #211408;
+    font-weight: 600;
+  }
+
+  .cash-review-filter input {
+    accent-color: #86521d;
+    flex-shrink: 0;
+  }
+
+  .cash-review-fields input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    font-size: 16px;
+  }
+
+  /* Storico chiusure */
+
+  .cash-closure-history-page :has(> .cash-history-list) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .cash-closure-history-page .cash-history-item {
+    background: #fff;
+    border: 1px solid #e5d4bf;
+    box-shadow: none;
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    background: transparent;
+    border: 0;
+    padding: 0;
+    gap: 10px;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) p {
+    background: #faf5ed;
+    border-radius: 8px;
+    padding: 10px;
+    margin: 0;
+    font-size: 16px;
+    text-align: center;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) p:first-child {
+    background: #e5f2eb;
+    color: #24734e;
+  }
+
+  .cash-closure-history-page
+  .cash-history-item > div:nth-child(2) strong {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
+  .cash-closure-history-page .cash-history-item button {
+    display: block;
+    margin-left: auto;
+    width: fit-content;
+    min-height: 44px;
+    color: #984343;
+    background: #fff;
+  }
+}
+
+/* === GERARCHIA TIPOGRAFICA COMUNE === */
+
+.dashboard-shell .main-content h1,
+.dashboard-shell .dashboard-title,
+.dashboard-shell .invoices-dashboard-title,
+.dashboard-shell .upload-page-title,
+.dashboard-shell .upload-history-card:has(> .cash-review-filter) > h2 {
+  font-family: "Inter", Arial, sans-serif;
+  font-size: var(--bm-page-title);
+  font-weight: 600 !important;
+  line-height: 1.25;
+}
+
+.dashboard-shell .main-content h2,
+.dashboard-shell .card-title {
+  font-family: "Inter", Arial, sans-serif;
+  font-size: var(--bm-section-title);
+  font-weight: 500 !important;
+  line-height: 1.3;
+}
+
+.dashboard-shell .main-content h3,
+.dashboard-shell .upload-doc-title {
+  font-family: "Inter", Arial, sans-serif;
+  font-size: var(--bm-card-title);
+  font-weight: 500 !important;
+  line-height: 1.3;
+}
+
+.dashboard-shell .dashboard-kpi-card .kpi-value,
+.dashboard-shell .invoice-kpi-value {
+  font-size: var(--bm-kpi-size);
+  font-weight: 600 !important;
+  line-height: 1.2;
+}
+
+.dashboard-shell .invoice-kpi-label,
+.dashboard-shell .dashboard-kpi-card .kpi-label {
+  font-weight: 500 !important;
+  letter-spacing: 0.6px;
+}
+
+.dashboard-shell .invoice-kpi-pill,
+.dashboard-shell .invoice-due-status,
+.dashboard-shell .invoice-payment-paid,
+.dashboard-shell .invoice-modern-supplier {
+  font-weight: 500 !important;
+}
+
+.dashboard-shell .invoice-mini-stat strong {
+  font-weight: 500 !important;
+}
+
+.dashboard-shell .invoice-mini-stat span {
+  font-weight: 400 !important;
+}
+
+/* Densità del riepilogo fatture su tablet orizzontale */
+
+@media (min-width: 901px) and (max-width: 1180px)
+and (orientation: landscape) {
+
+  .dashboard-shell .dashboard-invoices-card {
+    padding: 14px;
+    min-height: 0;
+  }
+
+  .dashboard-invoices-card .invoice-card-head {
+    gap: 8px;
+    align-items: center;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat {
+    min-height: 0;
+    height: auto;
+    padding: 10px 4px;
+    border-radius: 9px;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat strong {
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat span {
+    font-size: 12px;
+    line-height: 1.3;
+    margin-top: 4px;
+  }
+
+  .dashboard-invoices-card .see-all-btn {
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: 12px;
+    border-radius: 9px;
+  }
+
+  .dashboard-right-column {
+    align-items: stretch;
+  }
+
+  .dashboard-right-column > .card {
+    min-height: 0;
+    height: auto;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-value {
+    margin: 10px 0 8px;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-pill {
+    font-size: 12px;
+    padding: 4px 8px;
+    margin-top: 4px;
+  }
+
+
+  /* Allineamento e proporzioni comuni */
+
+  .dashboard-shell .main-content,
+  .dashboard-shell > main.main-content:has(.cash-review-filter) {
+    padding: 24px;
+    box-sizing: border-box;
+  }
+
+  .dashboard-shell .dashboard-kpi-card .kpi-label,
+  .dashboard-shell .invoice-kpi-label {
+    font-size: 14px;
+    font-weight: 500 !important;
+    letter-spacing: 0.6px;
+  }
+
+  .dashboard-chart-card {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    margin-inline: 0;
+  }
+
+  .dashboard-chart-bars {
+    height: 240px;
+  }
+
+  .dashboard-chart-bars .bar-pair {
+    height: 210px;
+  }
+
+  .dashboard-right-column > .card {
+    align-self: stretch;
+    box-sizing: border-box;
+  }
+
+  .invoices-dashboard-header > div:last-child:not(:first-child) {
+    display: flex;
+    flex: 1 1 100%;
+    width: 100%;
+    gap: 12px;
+  }
+
+  .invoices-dashboard-header > div:last-child:not(:first-child) > button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px;
+    white-space: normal;
+    font-size: 13px;
+  }
+
+  .upload-page .upload-dropzone-sub,
+  .upload-page .upload-mini-box-sub {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .upload-history-card:has(> .cash-review-filter) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .cash-review-filter > label {
+    min-height: 44px;
+  }
+}
+
+/* === Rifinitura storico documenti e filtri chiusure === */
+
+.upload-history-card .upload-history-name,
+.upload-history-card .other-docs-name {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.4;
+}
+
+.upload-history-card .other-docs-table p,
+.upload-history-card .other-docs-table span,
+.upload-history-card .upload-history-status {
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 1.4;
+}
+
+.cash-review-filter > legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* === DESKTOP: COERENZA GRAFICA === */
+@media (min-width: 1025px) {
+
+  /* Titoli principali */
+  .dashboard-shell .main-content h1,
+  .dashboard-shell .upload-history-card:has(> .cash-review-filter) > h2 {
+    font-family: "Inter", Arial, sans-serif;
+    font-size: 32px !important;
+    font-weight: 600 !important;
+    line-height: 1.25;
+  }
+
+  /* Dashboard */
+  .dashboard-content-grid {
+    align-items: stretch;
+  }
+
+  .dashboard-right-column {
+    grid-template-rows: auto 1fr;
+    gap: 16px;
+  }
+
+  .dashboard-chart-card,
+  .dashboard-right-column > .card,
+  .dashboard-kpi-card,
+  .daily-reminder-card {
+    border-radius: 12px;
+  }
+
+  .dashboard-right-column > .card {
+    padding: 18px;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat {
+    min-height: 0;
+    padding: 12px 8px;
+    border-radius: 10px;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat strong {
+    font-size: 24px;
+    font-weight: 500 !important;
+  }
+
+  .dashboard-invoices-card .invoice-mini-stat span {
+    font-size: 13px;
+  }
+
+  /* Fatture */
+  .invoices-dashboard-page .invoice-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .invoices-dashboard-page .invoice-kpi-grid > .invoice-kpi-card {
+    grid-column: auto !important;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    box-sizing: border-box;
+    justify-self: stretch;
+    border-radius: 12px;
+    padding: 16px;
+    min-height: 150px;
+  }
+
+  .invoice-filters-row {
+    gap: 10px;
+    align-items: center;
+  }
+
+  .invoice-status-filter,
+  .invoice-category-dropdown-btn,
+  .invoice-search-box {
+    box-sizing: border-box;
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 400 !important;
+  }
+
+  /* Caricamenti */
+  .upload-page {
+    gap: 18px;
+  }
+
+  .upload-doc-card,
+  .upload-mini-card {
+    padding: 16px;
+    border-radius: 12px;
+    min-height: 0;
+  }
+
+  .upload-dropzone,
+  .upload-mini-box {
+    min-height: 76px;
+    padding: 16px;
+    border-radius: 10px;
+  }
+
+  .upload-secondary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .upload-mini-card {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 4px;
+    align-content: start;
+    align-items: center;
+  }
+
+  .upload-mini-card > * {
+    grid-column: 1 / -1;
+  }
+
+  .upload-mini-card > :first-child {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .upload-mini-card > h3 {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+  }
+
+  .upload-mini-card > p {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0;
+  }
+
+  /* Chiusure da verificare */
+  .upload-history-card:has(> .cash-review-filter) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .cash-review-filter {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 0;
+    margin: 16px 0;
+    border: 0;
+  }
+
+  .cash-review-filter > legend {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .cash-review-filter > label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 10px;
+    margin: 0;
+    box-sizing: border-box;
+    border: 1px solid #e5d4bf;
+    border-radius: 10px;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .cash-review-filter > label:has(input:checked) {
+    background: #c98235;
+    border-color: #c98235;
+    color: #211408;
+    font-weight: 500;
+  }
+
+  .cash-review-filter input {
+    accent-color: #86521d;
+  }
+
+  /* Storico chiusure */
+  .main-content :has(> .cash-history-list) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .cash-history-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .cash-history-item {
+    background: white;
+    border: 1px solid #e5d4bf;
+    border-radius: 12px;
+    padding: 18px;
+    gap: 12px;
+    box-shadow: none;
+  }
+
+  .cash-history-item > :nth-child(2) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+  }
+
+  .cash-history-item > :nth-child(2) > p {
+    background: #faf5ed;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 0;
+    text-align: center;
+    font-size: 17px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .cash-history-item > :nth-child(2) > p:first-child {
+    grid-column: auto;
+    background: #e5f2eb;
+    color: #24734e;
+  }
+
+  .cash-history-item > :nth-child(2) strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 5px;
+  }
+
+  .cash-history-item button {
+    display: block;
+    margin-left: auto;
+    width: fit-content;
+    min-height: 44px;
+    border-radius: 9px;
+    color: #984343;
+    background: white;
+  }
+}
+
+/* Desktop compatto: evita cinque schede troppo strette */
+@media (min-width: 1025px) and (max-width: 1279px) {
+  .invoices-dashboard-page .invoice-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .invoices-dashboard-page .invoice-kpi-grid > .invoice-kpi-card:last-child {
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* === DESKTOP: RIFINITURA GRAFICA === */
+@media (min-width: 1025px) {
+
+  /* Margini comuni delle pagine */
+  .dashboard-shell > main.main-content {
+    box-sizing: border-box;
+    padding: 34px 34px 48px !important;
+  }
+
+  /* Fatture: filtri uniformi */
+  .invoice-filters-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .invoice-filters-row .invoice-status-filter,
+  .invoice-filters-row .invoice-category-dropdown-btn,
+  .invoice-filters-row .invoice-search-box {
+    height: 44px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 9px;
+    font-size: 13px;
+    box-sizing: border-box;
+  }
+
+  /* Caricamenti: icone proporzionate */
+  .upload-page .upload-mini-card {
+    grid-template-columns: 44px minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 4px;
+  }
+
+  .upload-page .upload-mini-card > :first-child {
+    box-sizing: border-box;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px;
+    font-size: 23px !important;
+    border-radius: 10px;
+    margin: 0;
+  }
+
+  .upload-page .upload-mini-card > h3 {
+    font-size: 17px;
+    font-weight: 500 !important;
+    line-height: 1.3;
+    min-width: 0;
+  }
+
+  .upload-page .upload-mini-card > p {
+    font-size: 13px;
+    line-height: 1.4;
+    min-width: 0;
+  }
+
+  /* Storico: eliminazione contenitore esterno */
+  .dashboard-shell .main-content .card:has(> .cash-history-list),
+  .dashboard-shell .main-content .upload-history-card:has(.cash-history-list) {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .dashboard-shell .cash-history-item {
+    padding: 18px;
+    border-radius: 12px;
+    background: white;
+  }
+
+  .dashboard-shell .cash-history-item h2 {
+    font-size: 17px;
+    font-weight: 500 !important;
+  }
+
+  .dashboard-shell .cash-history-item > :nth-child(2) {
+    border: 0 !important;
+    padding: 0;
+    gap: 12px;
+  }
+
+  .dashboard-shell .cash-history-item > :nth-child(2) > p {
+    font-size: 20px !important;
+    font-weight: 600 !important;
+    line-height: 1.4;
+    padding: 14px;
+  }
+
+  .dashboard-shell .cash-history-item > :nth-child(2) strong {
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    margin-bottom: 6px;
+  }
+
+  .dashboard-shell .cash-history-item button {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 500 !important;
+  }
+}
+
+/* Fatture: filtri compatti sui desktop ampi */
+@media (min-width: 1440px) {
+  .invoice-filters-row .invoice-status-filter {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding-inline: 10px;
+    white-space: nowrap;
+  }
+
+  .invoice-filters-row .invoice-category-filter-bar {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .invoice-filters-row .invoice-search-box {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* === DESKTOP: ALLINEAMENTO FILTRI FATTURE === */
+@media (min-width: 1280px) {
+  .invoices-dashboard-page .invoice-filters-row {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .invoice-filters-row > .invoice-status-filter {
+    grid-row: 1;
+    grid-column: auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    margin: 0;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  .invoice-filters-row > .invoice-status-filter:last-child {
+    grid-column: 5;
+    grid-row: 1;
+  }
+
+  .invoice-filters-row > .invoice-category-filter-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: grid !important;
+    grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .invoice-category-filter-bar .invoice-category-dropdown-wrapper {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .invoice-category-filter-bar .invoice-search-box {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .invoice-category-filter-bar .invoice-category-dropdown-btn,
+  .invoice-category-filter-bar .invoice-search-box {
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    box-sizing: border-box;
   }
 }

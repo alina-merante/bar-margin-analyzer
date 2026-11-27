@@ -106,3 +106,12 @@ La suite `responsive.spec.js` verifica cinque pagine operative
 su otto risoluzioni, da 320 a 1920 px, includendo contenuti
 sintetici, filtri, modali e schede OCR senza modificare
 i dati contabili del database.
+
+### Sistema grafico responsive
+
+- Font Inter e gerarchia tipografica condivisa.
+- Layout adattivi per smartphone, tablet e desktop.
+- Schede, pulsanti, filtri e spaziature uniformati.
+- Tabelle adattive tramite container queries.
+- Storico documenti e chiusure con layout compatto.
+- Filtri di revisione accessibili anche senza legenda visibile.

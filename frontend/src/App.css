@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap");
 
 :root {
   --espresso: #1a0a00;
@@ -28,7 +28,7 @@
 }
 
 body {
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
   background: var(--milk-soft);
   color: var(--text-dark);
   min-height: 100vh;
@@ -70,7 +70,7 @@ body {
 }
 
 .logo-text {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 18px;
   font-weight: 700;
   color: #fff;
@@ -183,7 +183,7 @@ body {
 }
 
 .header-title {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 28px;
   font-weight: 700;
   color: var(--espresso);
@@ -208,7 +208,7 @@ body {
   border: none;
   padding: 11px 20px;
   border-radius: 12px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -224,7 +224,7 @@ body {
   border: 1.5px solid var(--border);
   padding: 10px 18px;
   border-radius: 12px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -288,7 +288,7 @@ body {
 }
 
 .kpi-value {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 30px;
   font-weight: 700;
   color: var(--espresso);
@@ -351,7 +351,7 @@ body {
 }
 
 .card-title {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 16px;
   font-weight: 700;
   color: var(--espresso);
@@ -473,7 +473,7 @@ body {
 }
 
 .product-rank {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 13px;
   font-weight: 700;
   color: var(--steam);
@@ -543,7 +543,7 @@ body {
 }
 
 .donut-center-value {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 22px;
   font-weight: 700;
   color: var(--espresso);
@@ -942,7 +942,7 @@ body {
 }
 
 .premium-donut-total {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 30px;
   font-weight: 700;
   color: var(--espresso);
@@ -1022,7 +1022,7 @@ body {
 }
 
 .upload-page-title {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 54px;
   line-height: 1.05;
   color: var(--espresso);
@@ -1099,7 +1099,7 @@ body {
 .upload-doc-title,
 .upload-mini-card h3,
 .upload-history-card h2 {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 28px;
   color: var(--espresso);
   margin: 0 0 8px;
@@ -1353,7 +1353,7 @@ body {
 }
 
 .invoice-summary-value {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 26px;
   color: var(--espresso);
 }
@@ -1881,7 +1881,7 @@ body {
 }
 
 .dashboard-title {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 46px;
   line-height: 1.05;
   color: var(--espresso);
@@ -2084,7 +2084,7 @@ body {
 
 .invoice-mini-stat strong {
   display: block;
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 32px;
   line-height: 1;
 }
@@ -2195,7 +2195,7 @@ body {
 }
 
 .daily-reminder-head h2 {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 34px;
 }
 
@@ -2417,7 +2417,7 @@ body {
 }
 
 .daily-reminder-head h2 {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 36px;
   line-height: 1.1;
   color: #fff;
@@ -2566,7 +2566,7 @@ body {
 }
 
 .invoices-dashboard-title {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 46px;
   line-height: 1.05;
   color: var(--espresso);
@@ -2719,7 +2719,7 @@ body {
   position: relative;
   z-index: 1;
   margin-top: 30px;
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 48px;
   font-weight: 900;
   line-height: 1;
@@ -2812,7 +2812,7 @@ body {
   outline: none;
   font-size: 17px;
   color: var(--text-mid);
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
 }
 
 .invoice-category-select {
@@ -2966,7 +2966,7 @@ body {
 }
 
 .invoice-manual-modal-head h2 {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 30px;
   color: var(--espresso);
 }
@@ -2999,7 +2999,7 @@ body {
   border-radius: 16px;
   padding: 0 16px;
   font-size: 15px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
 }
 
 .invoice-manual-field {
@@ -3043,7 +3043,7 @@ body {
 .document-info-modal h2 {
   margin: 0 0 12px;
   color: var(--espresso);
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 24px;
 }
 
@@ -3056,7 +3056,7 @@ body {
 .document-delete-confirm h2 {
   margin: 0 0 12px;
   color: var(--espresso);
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: 24px;
 }
 
@@ -3405,7 +3405,7 @@ body {
   background: transparent;
   color: var(--text-mid);
   font-size: 14px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", Arial, sans-serif;
 }
 
 .invoice-category-grid {
@@ -4223,7 +4223,7 @@ body {
 
 .invoice-reconciliation-head h2 {
   margin: 4px 0 6px;
-  font: 700 25px/1.2 "Playfair Display", Georgia, serif;
+  font: 700 25px/1.2 "Inter", Arial, sans-serif;
 }
 
 .invoice-reconciliation-head p {
@@ -5167,7 +5167,7 @@ body {
 }
 
 .cash-closure-history-page .upload-history-card > h1 {
-  font-family: "Playfair Display", serif;
+  font-family: "Inter", Arial, sans-serif;
   font-size: clamp(28px, 3vw, 38px);
   color: var(--espresso);
   margin: 0 0 10px;
